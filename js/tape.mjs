@@ -313,6 +313,9 @@ export class TapeReader {
       case E_DATA: {
         const len = this.readU32();
         const bytes = this.readBytes(len);
+        // Native base64 path is dramatically faster than String.fromCharCode + btoa.
+        // The Uint8Array view here aliases the tape buffer; toBase64 reads it directly.
+        if (bytes.toBase64) return ["bytes", bytes.toBase64()];
         let bin = "";
         for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
         return ["bytes", btoa(bin)];
