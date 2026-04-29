@@ -171,9 +171,16 @@ export class TapeWriter {
         case "bytes":
           this.writeU8(E_DATA);
           {
-            const bin = atob(v[1]);
-            const arr = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+            // Modern browsers provide Uint8Array.fromBase64 with native (often
+            // SIMD-accelerated) decode. Fall back to atob + charCodeAt loop.
+            let arr;
+            if (Uint8Array.fromBase64) {
+              arr = Uint8Array.fromBase64(v[1]);
+            } else {
+              const bin = atob(v[1]);
+              arr = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+            }
             this.writeU32(arr.length);
             this.writeBytes(arr);
           }
