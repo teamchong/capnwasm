@@ -9,6 +9,20 @@ RPC messages into Cap'n Proto wire bytes, with a single `wasm-opt` post-process
 pass to add advanced wasm features. Conformance is verified by round-tripping
 seven representative fixtures inside Chromium via Playwright.
 
+## Honest size comparison
+
+Comparing single-file bundles (inlined wasm, one network fetch):
+
+| Bundle                                   | Raw    | Gzip      |
+|------------------------------------------|--------|-----------|
+| capnwasm `dist/capnwasm.bundle.mjs`      | 55 KB  | **20.8 KB** |
+| capnweb `dist/index.js`                  | 103 KB | **21.1 KB** |
+
+We are 47% smaller raw but **essentially tied at gzip** because base64-encoding
+the wasm for inlining inflates the source by ~33%, eating most of the wasm
+compression win. Splitting wasm into a separate fetch shrinks the gzip total
+to ~16.7 KB but costs an extra round-trip.
+
 ## Build
 
 ```bash
