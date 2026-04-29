@@ -130,14 +130,13 @@ async function main() {
     if (browserResults.stack) console.log(browserResults.stack);
     return;
   }
-  const head = ["fixture", "cw enc", " (tape)", " (wasm)", "cwb enc", "spd", "cw dec", "cwb dec", "spd", "cw B", "cwb B", "B-ratio"];
-  console.log(head.map((c) => c.padStart(10)).join(""));
+  const head = ["fixture", "cw enc", "(t-W)", "(W)", "cwb enc", "x", "cw dec", "(W-t)", "(R-t)", "cwb dec", "x"];
+  console.log(head.map((c) => c.padStart(8)).join(""));
   for (const [name, p] of Object.entries(browserResults.perf ?? {})) {
     if (p.error) {
-      console.log(`${name.padStart(10)} ERROR: ${p.error}`);
+      console.log(`${name.padStart(8)} ERROR: ${p.error}`);
       continue;
     }
-    const sizeRatio = (p.capnwasm_bytes / Math.max(1, p.capnweb_bytes)).toFixed(2);
     const row = [
       name,
       p.capnwasm_encode_us?.toFixed(2),
@@ -146,14 +145,14 @@ async function main() {
       p.capnweb_encode_us?.toFixed(2),
       p.encode_speedup?.toFixed(2) + "x",
       p.capnwasm_decode_us?.toFixed(2),
+      p.capnwasm_wasmdecode_us?.toFixed(2),
+      p.capnwasm_readtape_us?.toFixed(2),
       p.capnweb_decode_us?.toFixed(2),
       p.decode_speedup?.toFixed(2) + "x",
-      p.capnwasm_bytes,
-      p.capnweb_bytes,
-      sizeRatio + "x",
     ];
-    console.log(row.map((c) => String(c ?? "-").padStart(10)).join(""));
+    console.log(row.map((c) => String(c ?? "-").padStart(8)).join(""));
   }
+  console.log("\nlegend: t-W = JS-tape-write, W = wasm-encode; W-t = wasm-decode-to-tape, R-t = JS-tape-read");
 
   console.log("\n" + sep);
   console.log("CORRECTNESS");

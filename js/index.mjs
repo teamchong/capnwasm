@@ -11,6 +11,8 @@
 
 import { TapeWriter, TapeReader } from "./tape.mjs";
 
+const SHARED_DECODER = new TextDecoder();
+
 const TAG_PUSH = 0;
 const TAG_PULL = 1;
 const TAG_RESOLVE = 2;
@@ -58,7 +60,7 @@ export class CapnWasm {
     this.#instance = instance;
     this.#exports = instance.exports;
     this.#memory = instance.exports.memory;
-    if (this.#exports.cw_abi_version() !== 3) {
+    if (this.#exports.cw_abi_version() !== 4) {
       throw new Error("Unsupported capnwasm ABI version");
     }
     this.#inPtr = this.#exports.cw_in_ptr();
@@ -110,21 +112,7 @@ export class CapnWasm {
   // ------------------------------------------------------------------------
 
   encodePush(text) {
-    const bh = this.#exports.cw_builder_create(16);
-    try {
-      const enc = new TextEncoder().encode(text);
-      const tp = this.#intoWasm(enc);
-      try {
-        const rc = this.#exports.cw_build_push_text(bh, tp, enc.length);
-        if (rc !== 0) throw new Error("cw_build_push_text failed");
-      } finally {
-        this.#freeWasm(tp, enc.length);
-      }
-      const bytesHandle = this.#exports.cw_builder_to_bytes(bh);
-      return this.#takeBytesHandle(bytesHandle);
-    } finally {
-      this.#exports.cw_builder_destroy(bh);
-    }
+    return this.serialize(["push", text]);
   }
 
   encodePull(importId) {
@@ -143,64 +131,9 @@ export class CapnWasm {
   // Decoder
   // ------------------------------------------------------------------------
 
+  /** Lightweight tag-only decode using the tape path. */
   decodeMessage(bytes) {
-    if (bytes.length > this.#inCap) {
-      // Large messages still use the handle-table path (not the hot path).
-      return this.#decodeMessageHeap(bytes);
-    }
-    this.#u8().set(bytes, this.#inPtr);
-    const tagInt = this.#exports.cw_decode_in(bytes.length);
-    if (tagInt < 0) throw new Error("cw_decode_in failed");
-    const tag = MESSAGE_TAGS[tagInt];
-    let result;
-    switch (tag) {
-      case "pull":
-        result = { tag, importId: Number(this.#exports.cw_get_pull_id()) };
-        break;
-      case "resolve":
-      case "reject":
-        result = { tag, exportId: Number(this.#exports.cw_get_resolve_id()) };
-        break;
-      case "release":
-        result = {
-          tag,
-          importId: Number(this.#exports.cw_get_pull_id()),
-          refcount: this.#exports.cw_get_release_refcount(),
-        };
-        break;
-      default:
-        result = { tag };
-    }
-    this.#exports.cw_decode_clear();
-    return result;
-  }
-
-  #decodeMessageHeap(bytes) {
-    const ptr = this.#intoWasm(bytes);
-    let parsed = 0;
-    try {
-      parsed = this.#exports.cw_parse_message(ptr, bytes.length);
-      if (!parsed) throw new Error("cw_parse_message failed");
-      const tagInt = this.#exports.cw_parsed_message_tag(parsed);
-      const tag = MESSAGE_TAGS[tagInt];
-      switch (tag) {
-        case "pull": return { tag, importId: Number(this.#exports.cw_parsed_pull_id(parsed)) };
-        case "resolve":
-        case "reject":
-          return { tag, exportId: Number(this.#exports.cw_parsed_resolve_id(parsed)) };
-        case "release":
-          return {
-            tag,
-            importId: Number(this.#exports.cw_parsed_pull_id(parsed)),
-            refcount: this.#exports.cw_parsed_release_refcount(parsed),
-          };
-        default:
-          return { tag };
-      }
-    } finally {
-      if (parsed) this.#exports.cw_parsed_destroy(parsed);
-      this.#freeWasm(ptr, bytes.length);
-    }
+    return this.deserializeViaTape(bytes);
   }
 
   // ------------------------------------------------------------------------
@@ -218,8 +151,51 @@ export class CapnWasm {
     return this.#u8().slice(this.#outPtr, this.#outPtr + len);
   }
 
-  /** Decode Cap'n Proto bytes into a capnweb-shape message value. */
+  /**
+   * Decode Cap'n Proto bytes into a capnweb-shape message value.
+   *
+   * Two paths are available:
+   *   - JSON: wasm emits a JSON string, JS calls JSON.parse. Best for
+   *     object/array-heavy payloads (V8's native parser beats hand-rolled
+   *     tree construction).
+   *   - Tape: wasm emits a tape, JS walks it. Best for binary-heavy payloads
+   *     (uses native Uint8Array.toBase64 for fast base64 encoding).
+   *
+   * The default switches between them based on a wasm-side probe.
+   */
   deserialize(bytes) {
+    const u8 = this.#u8();
+    if (bytes.length > this.#inCap) throw new Error("input larger than scratch buffer");
+    u8.set(bytes, this.#inPtr);
+    // Probe: if the message contains a Data expression of >= 1024 bytes, the
+    // tape path with native Uint8Array.toBase64 will be faster than wasm's
+    // scalar base64 emit.
+    const hasBinary = bytes.length > 1024 && this.#exports.cw_has_large_data(bytes.length, 1024) === 1;
+    if (hasBinary) {
+      const tapeLen = this.#exports.cw_decode_to_tape(bytes.length);
+      if (!tapeLen) throw new Error("cw_decode_to_tape failed");
+      const tape = this.#u8().subarray(this.#outPtr, this.#outPtr + tapeLen);
+      return new TapeReader(tape).readMessage();
+    }
+    const jsonLen = this.#exports.cw_decode_to_json(bytes.length);
+    if (!jsonLen) throw new Error("cw_decode_to_json failed");
+    const buf = this.#u8().subarray(this.#outPtr, this.#outPtr + jsonLen);
+    return JSON.parse(SHARED_DECODER.decode(buf));
+  }
+
+  /** Force the JSON-emit path (testing/benchmark only). */
+  deserializeViaJson(bytes) {
+    const u8 = this.#u8();
+    if (bytes.length > this.#inCap) throw new Error("input larger than scratch buffer");
+    u8.set(bytes, this.#inPtr);
+    const jsonLen = this.#exports.cw_decode_to_json(bytes.length);
+    if (!jsonLen) throw new Error("cw_decode_to_json failed");
+    const buf = this.#u8().subarray(this.#outPtr, this.#outPtr + jsonLen);
+    return JSON.parse(SHARED_DECODER.decode(buf));
+  }
+
+  /** Force the tape path (testing/benchmark only). */
+  deserializeViaTape(bytes) {
     const u8 = this.#u8();
     if (bytes.length > this.#inCap) throw new Error("input larger than scratch buffer");
     u8.set(bytes, this.#inPtr);
@@ -227,30 +203,6 @@ export class CapnWasm {
     if (!tapeLen) throw new Error("cw_decode_to_tape failed");
     const tape = this.#u8().subarray(this.#outPtr, this.#outPtr + tapeLen);
     return new TapeReader(tape).readMessage();
-  }
-
-  // ------------------------------------------------------------------------
-  // Packed encoding
-  // ------------------------------------------------------------------------
-
-  pack(bytes) {
-    const ptr = this.#intoWasm(bytes);
-    try {
-      const handle = this.#exports.cw_pack(ptr, bytes.length);
-      return this.#takeBytesHandle(handle);
-    } finally {
-      this.#freeWasm(ptr, bytes.length);
-    }
-  }
-
-  unpack(bytes) {
-    const ptr = this.#intoWasm(bytes);
-    try {
-      const handle = this.#exports.cw_unpack(ptr, bytes.length);
-      return this.#takeBytesHandle(handle);
-    } finally {
-      this.#freeWasm(ptr, bytes.length);
-    }
   }
 
   // ------------------------------------------------------------------------

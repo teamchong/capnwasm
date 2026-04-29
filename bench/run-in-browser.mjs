@@ -66,6 +66,8 @@ function perfFor(wasm, fx) {
   // Sub-step timings to attribute cost to JS-tape vs wasm-encode.
   const tWriteTape = benchWriteTape(wasm, v, iters);
   const tWasmEncode = benchWasmEncodeOnly(wasm, v, iters);
+  const tWasmDecode = benchWasmDecodeOnly(wasm, cwBytes, iters);
+  const tReadTape = benchReadTape(wasm, cwBytes, iters);
 
   let tCwbEnc = NaN, tCwbDec = NaN, cwbBytes = null;
   try {
@@ -86,6 +88,8 @@ function perfFor(wasm, fx) {
     capnwasm_decode_us: tCwDec.usPerOp,
     capnwasm_writetape_us: tWriteTape.usPerOp,
     capnwasm_wasmencode_us: tWasmEncode.usPerOp,
+    capnwasm_wasmdecode_us: tWasmDecode.usPerOp,
+    capnwasm_readtape_us: tReadTape.usPerOp,
     capnweb_encode_us: tCwbEnc.usPerOp,
     capnweb_decode_us: tCwbDec.usPerOp,
     encode_speedup: tCwbEnc.usPerOp / tCwEnc.usPerOp,
@@ -93,6 +97,26 @@ function perfFor(wasm, fx) {
     capnwasm_bytes: cwBytes.length,
     capnweb_bytes: cwbWireSize,
   };
+}
+
+function benchWasmDecodeOnly(wasm, bytes, iters) {
+  // Only the wasm cw_decode_to_tape call.
+  const u8 = new Uint8Array(wasm.memory.buffer);
+  const inPtr = wasm.exports.cw_in_ptr();
+  u8.set(bytes, inPtr);
+  return bench(iters, () => wasm.exports.cw_decode_to_tape(bytes.length));
+}
+
+function benchReadTape(wasm, bytes, iters) {
+  // Only the JS-side TapeReader walk over a pre-decoded tape.
+  const u8 = new Uint8Array(wasm.memory.buffer);
+  const inPtr = wasm.exports.cw_in_ptr();
+  u8.set(bytes, inPtr);
+  const tapeLen = wasm.exports.cw_decode_to_tape(bytes.length);
+  const outPtr = wasm.exports.cw_out_ptr();
+  const tape = new Uint8Array(wasm.memory.buffer, outPtr, tapeLen);
+  const { TapeReader } = window.__capnwasmTape;
+  return bench(iters, () => new TapeReader(tape).readMessage());
 }
 
 function benchWriteTape(wasm, v, iters) {
