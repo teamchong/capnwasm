@@ -10,6 +10,7 @@
 //   session.decodeMessage(bytes)                -> { tag, ... } (header-only fast path)
 
 import { TapeWriter, TapeReader } from "./tape.mjs";
+import { GcDecoder } from "./gc_decode.mjs";
 
 const SHARED_DECODER = new TextDecoder();
 
@@ -36,25 +37,36 @@ export class CapnWasm {
   /** @type {number} */
   #sessionHandle;
 
-  static async load(wasmSource) {
-    let bytes;
-    if (wasmSource instanceof Uint8Array) {
-      bytes = wasmSource;
-    } else if (typeof wasmSource === "string" || wasmSource instanceof URL) {
-      const res = await fetch(wasmSource);
-      bytes = new Uint8Array(await res.arrayBuffer());
-    } else if (wasmSource instanceof ArrayBuffer) {
-      bytes = new Uint8Array(wasmSource);
-    } else {
-      throw new TypeError("CapnWasm.load: expected Uint8Array, ArrayBuffer, URL, or string");
+  /**
+   * Load capnwasm. Optionally pass a second source for the experimental
+   * WasmGC decode module (built from wat/gc_decode.wat).
+   */
+  static async load(wasmSource, gcWasmSource) {
+    async function loadBytes(src) {
+      if (src instanceof Uint8Array) return src;
+      if (src instanceof ArrayBuffer) return new Uint8Array(src);
+      if (typeof src === "string" || src instanceof URL) {
+        return new Uint8Array(await (await fetch(src)).arrayBuffer());
+      }
+      throw new TypeError("Expected Uint8Array, ArrayBuffer, URL, or string");
     }
-
+    const bytes = await loadBytes(wasmSource);
     const { instance } = await WebAssembly.instantiate(bytes, {});
     const inst = new CapnWasm(instance);
     inst.#sessionHandle = inst.#exports.cw_session_create();
     if (!inst.#sessionHandle) throw new Error("cw_session_create failed");
+    if (gcWasmSource) {
+      try {
+        inst.#gcDecoder = await GcDecoder.load(await loadBytes(gcWasmSource), inst.#memory);
+      } catch (err) {
+        console.warn("capnwasm: WasmGC decode module failed to load, falling back:", err);
+      }
+    }
     return inst;
   }
+
+  /** @type {GcDecoder | null} */
+  #gcDecoder = null;
 
   constructor(instance) {
     this.#instance = instance;
@@ -204,6 +216,18 @@ export class CapnWasm {
     const tape = this.#u8().subarray(this.#outPtr, this.#outPtr + tapeLen);
     return new TapeReader(tape).readMessage();
   }
+
+  /** Force the WasmGC path (testing/benchmark only). Requires loading with gcWasmSource. */
+  deserializeViaGc(bytes) {
+    if (!this.#gcDecoder) throw new Error("WasmGC module not loaded");
+    if (bytes.length > this.#inCap) throw new Error("input larger than scratch buffer");
+    this.#u8().set(bytes, this.#inPtr);
+    const tapeLen = this.#exports.cw_decode_to_tape(bytes.length);
+    if (!tapeLen) throw new Error("cw_decode_to_tape failed");
+    return this.#gcDecoder.decodeTape(this.#outPtr, tapeLen);
+  }
+
+  hasGc() { return this.#gcDecoder !== null; }
 
   // ------------------------------------------------------------------------
   // Session lifecycle

@@ -60,6 +60,34 @@ pub fn build(b: *std.Build) void {
     const opt_step = b.step("opt", "Build + wasm-opt -O3");
     opt_step.dependOn(&install_opt.step);
 
+    // Hand-written WasmGC module: assemble WAT and run wasm-opt.
+    const gc_assemble = b.addSystemCommand(&.{
+        "wasm-as",
+        "wat/gc_decode.wat",
+        "--enable-gc",
+        "--enable-reference-types",
+        "--enable-bulk-memory",
+        "-o",
+    });
+    const gc_raw = gc_assemble.addOutputFileArg("gc_decode.raw.wasm");
+
+    const gc_opt = b.addSystemCommand(&.{
+        "wasm-opt",
+        "-Oz",
+        "--converge",
+        "--enable-gc",
+        "--enable-reference-types",
+        "--enable-bulk-memory",
+        "--strip-debug",
+        "--strip-producers",
+    });
+    gc_opt.addFileArg(gc_raw);
+    gc_opt.addArg("-o");
+    const gc_out = gc_opt.addOutputFileArg("gc_decode.wasm");
+
+    const install_gc = b.addInstallFile(gc_out, "gc_decode.wasm");
+    opt_step.dependOn(&install_gc.step);
+
     const test_step = b.step("test", "Run unit tests");
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{

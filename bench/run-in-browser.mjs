@@ -18,8 +18,8 @@ function setStatus(msg) {
 }
 
 async function run() {
-  setStatus("Loading capnwasm.wasm ...");
-  const wasm = await CapnWasm.load("/zig-out/capnwasm.opt.wasm");
+  setStatus("Loading capnwasm.wasm + gc_decode.wasm ...");
+  const wasm = await CapnWasm.load("/zig-out/capnwasm.opt.wasm", "/zig-out/gc_decode.wasm");
 
   const out = {
     sizes: await collectSizes(),
@@ -68,6 +68,9 @@ function perfFor(wasm, fx) {
   const tWasmEncode = benchWasmEncodeOnly(wasm, v, iters);
   const tWasmDecode = benchWasmDecodeOnly(wasm, cwBytes, iters);
   const tReadTape = benchReadTape(wasm, cwBytes, iters);
+  const tGcDecode = wasm.hasGc()
+    ? bench(iters, () => wasm.deserializeViaGc(cwBytes))
+    : { usPerOp: NaN };
 
   let tCwbEnc = NaN, tCwbDec = NaN, cwbBytes = null;
   try {
@@ -90,6 +93,7 @@ function perfFor(wasm, fx) {
     capnwasm_wasmencode_us: tWasmEncode.usPerOp,
     capnwasm_wasmdecode_us: tWasmDecode.usPerOp,
     capnwasm_readtape_us: tReadTape.usPerOp,
+    capnwasm_gcdecode_us: tGcDecode.usPerOp,
     capnweb_encode_us: tCwbEnc.usPerOp,
     capnweb_decode_us: tCwbDec.usPerOp,
     encode_speedup: tCwbEnc.usPerOp / tCwEnc.usPerOp,

@@ -130,29 +130,28 @@ async function main() {
     if (browserResults.stack) console.log(browserResults.stack);
     return;
   }
-  const head = ["fixture", "cw enc", "(t-W)", "(W)", "cwb enc", "x", "cw dec", "(W-t)", "(R-t)", "cwb dec", "x"];
-  console.log(head.map((c) => c.padStart(8)).join(""));
+  const head = ["fixture", "cw enc", "cwb enc", "x", "cw dec", "(GC)", "cwb dec", "x", "GCx"];
+  console.log(head.map((c) => c.padStart(9)).join(""));
   for (const [name, p] of Object.entries(browserResults.perf ?? {})) {
     if (p.error) {
-      console.log(`${name.padStart(8)} ERROR: ${p.error}`);
+      console.log(`${name.padStart(9)} ERROR: ${p.error}`);
       continue;
     }
+    const gcSpd = (p.capnweb_decode_us / p.capnwasm_gcdecode_us);
     const row = [
       name,
       p.capnwasm_encode_us?.toFixed(2),
-      p.capnwasm_writetape_us?.toFixed(2),
-      p.capnwasm_wasmencode_us?.toFixed(2),
       p.capnweb_encode_us?.toFixed(2),
       p.encode_speedup?.toFixed(2) + "x",
       p.capnwasm_decode_us?.toFixed(2),
-      p.capnwasm_wasmdecode_us?.toFixed(2),
-      p.capnwasm_readtape_us?.toFixed(2),
+      Number.isFinite(p.capnwasm_gcdecode_us) ? p.capnwasm_gcdecode_us.toFixed(2) : "-",
       p.capnweb_decode_us?.toFixed(2),
       p.decode_speedup?.toFixed(2) + "x",
+      Number.isFinite(gcSpd) ? gcSpd.toFixed(2) + "x" : "-",
     ];
-    console.log(row.map((c) => String(c ?? "-").padStart(8)).join(""));
+    console.log(row.map((c) => String(c ?? "-").padStart(9)).join(""));
   }
-  console.log("\nlegend: t-W = JS-tape-write, W = wasm-encode; W-t = wasm-decode-to-tape, R-t = JS-tape-read");
+  console.log("\nlegend: GC = WasmGC externref decode path; GCx = capnweb_dec / GC speedup");
 
   console.log("\n" + sep);
   console.log("CORRECTNESS");
