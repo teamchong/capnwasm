@@ -1,0 +1,20 @@
+{
+  "name": "capnwasm",
+  "version": "0.0.1",
+  "description": "Zig + WasmGC implementation of Cap'n Proto RPC for the browser",
+  "type": "module",
+  "main": "js/index.js",
+  "files": ["js", "dist"],
+  "scripts": {
+    "build:wasm": "zig build opt",
+    "build:js": "node js/bundle.mjs",
+    "build": "npm run build:wasm && npm run build:js",
+    "test": "zig build test && node --test js/*.test.mjs",
+    "bench": "node bench/run.mjs",
+    "size": "node bench/size.mjs"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "playwright": "^1.56.1"
+  }
+}
