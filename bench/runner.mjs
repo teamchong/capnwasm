@@ -63,17 +63,25 @@ async function main() {
   console.log(`[server] listening on http://127.0.0.1:${port}`);
 
   const wasmSize = await fileSize(resolve(ROOT, "zig-out", "capnwasm.opt.wasm"));
-  const glueSize = await fileSize(resolve(ROOT, "js", "index.mjs"));
+  const indexSize = await fileSize(resolve(ROOT, "js", "index.mjs"));
+  const tapeSize = await fileSize(resolve(ROOT, "js", "tape.mjs"));
   const capnwebSize = await fileSize(resolve(CAPNWEB_DIST, "index.js"));
+
+  // For an apples-to-apples comparison we use the inlined single-file bundle
+  // (one network fetch) and compare gzipped sizes — the actual cost on the wire.
+  let bundleSize = null;
+  try {
+    bundleSize = await fileSize(resolve(ROOT, "dist", "capnwasm.bundle.mjs"));
+  } catch (e) {
+    bundleSize = { raw: 0, gzip: 0, note: "run: node js/bundle.mjs" };
+  }
 
   const sizes = {
     capnwasm_wasm: wasmSize,
-    capnwasm_glue: glueSize,
-    capnwasm_total_raw: wasmSize.raw + glueSize.raw,
-    capnwasm_total_gzip: gzipSync(
-      Buffer.concat([await readFile(resolve(ROOT, "zig-out", "capnwasm.opt.wasm")), await readFile(resolve(ROOT, "js", "index.mjs"))]),
-      { level: 9 },
-    ).length,
+    capnwasm_index_js: indexSize,
+    capnwasm_tape_js: tapeSize,
+    capnwasm_two_file_total_raw: wasmSize.raw + indexSize.raw + tapeSize.raw,
+    capnwasm_bundle_inlined: bundleSize,
     capnweb: capnwebSize,
   };
 
@@ -101,14 +109,18 @@ async function main() {
   // Pretty summary
   const sep = "─".repeat(72);
   console.log("\n" + sep);
-  console.log("SIZE  (lower is better)");
+  console.log("SIZE  (single-file bundle, gzipped — the wire-transfer cost)");
   console.log(sep);
-  console.log(`  capnwasm wasm:   raw=${sizes.capnwasm_wasm.raw.toString().padStart(7)} gzip=${sizes.capnwasm_wasm.gzip.toString().padStart(7)}`);
-  console.log(`  capnwasm glue:   raw=${sizes.capnwasm_glue.raw.toString().padStart(7)} gzip=${sizes.capnwasm_glue.gzip.toString().padStart(7)}`);
-  console.log(`  capnwasm total:  raw=${sizes.capnwasm_total_raw.toString().padStart(7)} gzip=${sizes.capnwasm_total_gzip.toString().padStart(7)}`);
-  console.log(`  capnweb:         raw=${sizes.capnweb.raw.toString().padStart(7)} gzip=${sizes.capnweb.gzip.toString().padStart(7)}`);
-  const sizeRatio = (sizes.capnwasm_total_gzip / sizes.capnweb.gzip).toFixed(2);
-  console.log(`  capnwasm/capnweb gzip ratio: ${sizeRatio}x`);
+  console.log(`  capnwasm wasm only:        raw=${sizes.capnwasm_wasm.raw.toString().padStart(7)} gzip=${sizes.capnwasm_wasm.gzip.toString().padStart(7)}`);
+  console.log(`  capnwasm js (index+tape):  raw=${(sizes.capnwasm_index_js.raw + sizes.capnwasm_tape_js.raw).toString().padStart(7)} gzip=${(sizes.capnwasm_index_js.gzip + sizes.capnwasm_tape_js.gzip).toString().padStart(7)}`);
+  if (sizes.capnwasm_bundle_inlined && sizes.capnwasm_bundle_inlined.raw) {
+    console.log(`  capnwasm INLINED bundle:   raw=${sizes.capnwasm_bundle_inlined.raw.toString().padStart(7)} gzip=${sizes.capnwasm_bundle_inlined.gzip.toString().padStart(7)}  ← single network fetch`);
+  }
+  console.log(`  capnweb:                   raw=${sizes.capnweb.raw.toString().padStart(7)} gzip=${sizes.capnweb.gzip.toString().padStart(7)}`);
+  if (sizes.capnwasm_bundle_inlined && sizes.capnwasm_bundle_inlined.gzip) {
+    const sizeRatio = (sizes.capnwasm_bundle_inlined.gzip / sizes.capnweb.gzip).toFixed(2);
+    console.log(`  inlined gzip ratio: ${sizeRatio}x of capnweb`);
+  }
 
   console.log("\n" + sep);
   console.log("PERF  (lower µs is better)");
@@ -153,10 +165,12 @@ async function main() {
   // Headline summary.
   const okCount = Object.values(browserResults.correctness ?? {}).filter((c) => c.ok).length;
   const totalCount = Object.values(browserResults.correctness ?? {}).length;
-  const sizeRatioFmt = (sizes.capnwasm_total_gzip / sizes.capnweb.gzip).toFixed(2);
+  const sizeRatioFmt = sizes.capnwasm_bundle_inlined?.gzip
+    ? (sizes.capnwasm_bundle_inlined.gzip / sizes.capnweb.gzip).toFixed(2)
+    : "n/a";
   console.log("\n" + sep);
   console.log(`SUMMARY  conformance: ${okCount}/${totalCount} fixtures round-trip`);
-  console.log(`         bundle size: ${sizeRatioFmt}x of capnweb (gzip)`);
+  console.log(`         bundle size: ${sizeRatioFmt}x of capnweb (inlined gzip)`);
   console.log(sep);
 }
 
