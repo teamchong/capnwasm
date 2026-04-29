@@ -39,40 +39,40 @@ pub const TapeReader = struct {
     bytes: []const u8,
     pos: usize = 0,
 
-    pub fn readU8(self: *TapeReader) !u8 {
+    pub inline fn readU8(self: *TapeReader) !u8 {
         if (self.pos >= self.bytes.len) return error.TapeUnderflow;
         const b = self.bytes[self.pos];
         self.pos += 1;
         return b;
     }
 
-    pub fn readU32(self: *TapeReader) !u32 {
+    pub inline fn readU32(self: *TapeReader) !u32 {
         if (self.pos + 4 > self.bytes.len) return error.TapeUnderflow;
         const v = std.mem.readInt(u32, self.bytes[self.pos..][0..4], .little);
         self.pos += 4;
         return v;
     }
 
-    pub fn readI64(self: *TapeReader) !i64 {
+    pub inline fn readI64(self: *TapeReader) !i64 {
         if (self.pos + 8 > self.bytes.len) return error.TapeUnderflow;
         const v = std.mem.readInt(i64, self.bytes[self.pos..][0..8], .little);
         self.pos += 8;
         return v;
     }
 
-    pub fn readU64(self: *TapeReader) !u64 {
+    pub inline fn readU64(self: *TapeReader) !u64 {
         if (self.pos + 8 > self.bytes.len) return error.TapeUnderflow;
         const v = std.mem.readInt(u64, self.bytes[self.pos..][0..8], .little);
         self.pos += 8;
         return v;
     }
 
-    pub fn readF64(self: *TapeReader) !f64 {
+    pub inline fn readF64(self: *TapeReader) !f64 {
         const bits = try self.readU64();
         return @bitCast(bits);
     }
 
-    pub fn readSlice(self: *TapeReader, len: usize) ![]const u8 {
+    pub inline fn readSlice(self: *TapeReader, len: usize) ![]const u8 {
         if (self.pos + len > self.bytes.len) return error.TapeUnderflow;
         const s = self.bytes[self.pos .. self.pos + len];
         self.pos += len;
@@ -84,33 +84,33 @@ pub const TapeWriter = struct {
     bytes: []u8,
     pos: usize = 0,
 
-    pub fn writeU8(self: *TapeWriter, v: u8) !void {
+    pub inline fn writeU8(self: *TapeWriter, v: u8) !void {
         if (self.pos >= self.bytes.len) return error.TapeOverflow;
         self.bytes[self.pos] = v;
         self.pos += 1;
     }
 
-    pub fn writeU32(self: *TapeWriter, v: u32) !void {
+    pub inline fn writeU32(self: *TapeWriter, v: u32) !void {
         if (self.pos + 4 > self.bytes.len) return error.TapeOverflow;
         std.mem.writeInt(u32, self.bytes[self.pos..][0..4], v, .little);
         self.pos += 4;
     }
 
-    pub fn writeU64(self: *TapeWriter, v: u64) !void {
+    pub inline fn writeU64(self: *TapeWriter, v: u64) !void {
         if (self.pos + 8 > self.bytes.len) return error.TapeOverflow;
         std.mem.writeInt(u64, self.bytes[self.pos..][0..8], v, .little);
         self.pos += 8;
     }
 
-    pub fn writeI64(self: *TapeWriter, v: i64) !void {
+    pub inline fn writeI64(self: *TapeWriter, v: i64) !void {
         try self.writeU64(@bitCast(v));
     }
 
-    pub fn writeF64(self: *TapeWriter, v: f64) !void {
+    pub inline fn writeF64(self: *TapeWriter, v: f64) !void {
         try self.writeU64(@bitCast(v));
     }
 
-    pub fn writeSlice(self: *TapeWriter, s: []const u8) !void {
+    pub inline fn writeSlice(self: *TapeWriter, s: []const u8) !void {
         if (self.pos + s.len > self.bytes.len) return error.TapeOverflow;
         @memcpy(self.bytes[self.pos .. self.pos + s.len], s);
         self.pos += s.len;
