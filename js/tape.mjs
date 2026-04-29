@@ -74,29 +74,26 @@ export class TapeWriter {
   writeF64(v) { this.dv.setFloat64(this.pos, v, true); this.pos += 8; }
   writeBytes(b) { this.bytes.set(b, this.pos); this.pos += b.length; }
 
-  /// Encode `s` directly into the tape. Falls back to a copy for surrogate pair
-  /// safety on long strings, but the fast path avoids any intermediate Uint8Array.
+  /// Encode `s` directly into the tape. ASCII strings of any length copy
+  /// charCodes inline; non-ASCII falls back to TextEncoder.encodeInto.
   writeText(s) {
     const lenPos = this.pos;
     this.pos += 4;
-    if (s.length < 64) {
-      // Short ASCII fast path: avoid TextEncoder for common short keys.
-      let asciiOk = true;
-      const startPos = this.pos;
-      for (let i = 0; i < s.length; i++) {
-        const c = s.charCodeAt(i);
-        if (c >= 0x80) { asciiOk = false; break; }
-        this.bytes[startPos + i] = c;
-      }
-      if (asciiOk) {
-        this.pos = startPos + s.length;
-        this.dv.setUint32(lenPos, s.length, true);
-        return;
-      }
-      this.pos = startPos;
+    const startPos = this.pos;
+    const sLen = s.length;
+    let asciiOk = true;
+    for (let i = 0; i < sLen; i++) {
+      const c = s.charCodeAt(i);
+      if (c >= 0x80) { asciiOk = false; break; }
+      this.bytes[startPos + i] = c;
     }
-    const result = SHARED_ENCODER.encodeInto(s, this.bytes.subarray(this.pos));
-    this.pos += result.written;
+    if (asciiOk) {
+      this.pos = startPos + sLen;
+      this.dv.setUint32(lenPos, sLen, true);
+      return;
+    }
+    const result = SHARED_ENCODER.encodeInto(s, this.bytes.subarray(startPos));
+    this.pos = startPos + result.written;
     this.dv.setUint32(lenPos, result.written, true);
   }
 
