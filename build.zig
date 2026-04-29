@@ -40,11 +40,15 @@ pub fn build(b: *std.Build) void {
 
     const wasm_opt = b.addSystemCommand(&.{
         "wasm-opt",
-        "-O3",
+        "-Oz",
+        "--converge",
         "--enable-bulk-memory",
         "--enable-simd",
         "--enable-sign-ext",
         "--enable-nontrapping-float-to-int",
+        "--strip-debug",
+        "--strip-producers",
+        "--strip-target-features",
     });
     wasm_opt.addArtifactArg(wasm);
     wasm_opt.addArg("-o");
