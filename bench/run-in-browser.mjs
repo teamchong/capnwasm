@@ -81,6 +81,10 @@ function perfFor(wasm, fx) {
     return { error: String(err) };
   }
 
+  // Lazy access bench: measure "decode + access K fields" for fixtures whose
+  // shape is amenable. Compares against capnweb's decode + property access.
+  const lazy3 = lazyAccessBench(wasm, fx, cwBytes, cwbBytes, iters);
+
   const cwbWireSize = typeof cwbBytes === "string"
     ? new TextEncoder().encode(cwbBytes).length
     : (cwbBytes?.length ?? 0);
@@ -94,6 +98,9 @@ function perfFor(wasm, fx) {
     capnwasm_wasmdecode_us: tWasmDecode.usPerOp,
     capnwasm_readtape_us: tReadTape.usPerOp,
     capnwasm_gcdecode_us: tGcDecode.usPerOp,
+    capnwasm_lazy3_us: lazy3.cwUs,
+    capnweb_lazy3_us: lazy3.cwbUs,
+    lazy3_supported: lazy3.supported,
     capnweb_encode_us: tCwbEnc.usPerOp,
     capnweb_decode_us: tCwbDec.usPerOp,
     encode_speedup: tCwbEnc.usPerOp / tCwEnc.usPerOp,
@@ -101,6 +108,36 @@ function perfFor(wasm, fx) {
     capnwasm_bytes: cwBytes.length,
     capnweb_bytes: cwbWireSize,
   };
+}
+
+/**
+ * Decode + access K=3 fields. Only meaningful for fixtures whose top-level
+ * expression is an object with named fields (medium-payload). For others
+ * this returns supported:false and we report N/A in the table.
+ */
+function lazyAccessBench(wasm, fx, cwBytes, cwbBytes, iters) {
+  let fieldNames;
+  if (fx.name === "medium-payload") fieldNames = ["field0", "field5", "field31"];
+  else if (fx.name === "wide-payload") fieldNames = ["field0", "field256", "field511"];
+  else return { supported: false, cwUs: NaN, cwbUs: NaN };
+
+  const tCw = bench(iters, () => {
+    const r = wasm.openLazy(cwBytes);
+    let total = 0;
+    for (const f of fieldNames) {
+      const v = r.fieldText(f);
+      // Touch the value so the JIT can't dead-code it.
+      total += v.length;
+    }
+    return total;
+  });
+  const tCwb = bench(iters, () => {
+    const v = capnweb.deserialize(cwbBytes);
+    // v is ["push", {field0: "...", ...}]
+    const obj = v[1];
+    return obj[fieldNames[0]].length + obj[fieldNames[1]].length + obj[fieldNames[2]].length;
+  });
+  return { supported: true, cwUs: tCw.usPerOp, cwbUs: tCwb.usPerOp };
 }
 
 function benchWasmDecodeOnly(wasm, bytes, iters) {

@@ -153,6 +153,22 @@ async function main() {
   }
   console.log("\nlegend: GC = WasmGC externref decode path; GCx = capnweb_dec / GC speedup");
 
+  // Lazy access (decode + access K fields)
+  const lazyRows = Object.entries(browserResults.perf ?? {}).filter(([, p]) => p.lazy3_supported);
+  if (lazyRows.length > 0) {
+    console.log("\n" + sep);
+    console.log("LAZY ACCESS  (decode + read 3 fields, lower µs is better)");
+    console.log("This is the access pattern Cap'n Proto's wire format is designed for.");
+    console.log(sep);
+    const head2 = ["fixture", "cw lazy3", "cwb (full+access)", "speedup"];
+    console.log(head2.map((c) => c.padStart(18)).join(""));
+    for (const [name, p] of lazyRows) {
+      const speedup = (p.capnweb_lazy3_us / p.capnwasm_lazy3_us).toFixed(2);
+      const row = [name, p.capnwasm_lazy3_us.toFixed(2), p.capnweb_lazy3_us.toFixed(2), speedup + "x"];
+      console.log(row.map((c) => String(c).padStart(18)).join(""));
+    }
+  }
+
   console.log("\n" + sep);
   console.log("CORRECTNESS");
   console.log(sep);

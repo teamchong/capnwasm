@@ -182,9 +182,111 @@ inline fn isLargeDataExpr(reader: wire.StructReader, min_bytes: u32) bool {
 }
 
 // ---------------------------------------------------------------------------
+// Lazy reader — parses the message once, then JS pulls individual fields on
+// demand. This is the access pattern Cap'n Proto's wire format is designed
+// for: skip materializing the whole tree, fetch only what the caller reads.
+// ---------------------------------------------------------------------------
+
+var lazy_parsed: ?wire.ParsedMessage = null;
+var lazy_arena: std.heap.FixedBufferAllocator = .{ .end_index = 0, .buffer = &codec_arena_buf };
+
+inline fn lazyAllocator() std.mem.Allocator {
+    lazy_arena.reset();
+    return lazy_arena.allocator();
+}
+
+/// Open the bytes in scratch_in[0..len] for lazy access. Returns 0 on error,
+/// 1 on success. Subsequent cw_lazy_* calls navigate the parsed message.
+export fn cw_lazy_open(len: u32) i32 {
+    if (lazy_parsed) |*lp| {
+        lp.deinit();
+        lazy_parsed = null;
+    }
+    const allocator = lazyAllocator();
+    const parsed = wire.parseStreamFramed(allocator, scratch_in[0..len]) catch return 0;
+    lazy_parsed = parsed;
+    return 1;
+}
+
+/// Return the message tag of the current lazy message (0..7), or -1 if none.
+export fn cw_lazy_msg_tag() i32 {
+    const lp = lazy_parsed orelse return -1;
+    return @intFromEnum(rpc.readMessageTag(lp.root()));
+}
+
+/// For a push/resolve/reject/stream/abort message, navigate to the message's
+/// expression payload, then to the value of the named field within that
+/// expression's object payload, and copy its text into scratch_out.
+/// Returns the byte length of the text, or 0 if not found / not text.
+export fn cw_lazy_msg_obj_field_text(name_ptr: [*]const u8, name_len: u32) u32 {
+    const lp = lazy_parsed orelse return 0;
+    const expr = msgExpression(lp.root()) orelse return 0;
+    if (asObjectExpr(expr)) |list| {
+        const target = name_ptr[0..name_len];
+        var i: u32 = 0;
+        while (i < list.count) : (i += 1) {
+            const kv = list.getStruct(i);
+            const key = kv.readText(0);
+            if (std.mem.eql(u8, key, target)) {
+                const val_struct = kv.readStruct(1);
+                const tag_byte: u8 = @truncate(val_struct.readU16(0, 0));
+                const tag: tape.ExprTag = @enumFromInt(tag_byte);
+                if (tag != .text) return 0;
+                const text = val_struct.readText(0);
+                if (text.len > SCRATCH_OUT_CAP) return 0;
+                @memcpy(scratch_out[0..text.len], text);
+                return @intCast(text.len);
+            }
+        }
+    }
+    return 0;
+}
+
+/// Like the above but for an integer-typed field. Returns the value (as i64)
+/// via a 16-byte struct in scratch_out: bytes 0..8 = value, byte 8 = found
+/// flag (1 found, 0 not found).
+export fn cw_lazy_msg_obj_field_int(name_ptr: [*]const u8, name_len: u32) u32 {
+    const lp = lazy_parsed orelse return 0;
+    const expr = msgExpression(lp.root()) orelse return 0;
+    if (asObjectExpr(expr)) |list| {
+        const target = name_ptr[0..name_len];
+        var i: u32 = 0;
+        while (i < list.count) : (i += 1) {
+            const kv = list.getStruct(i);
+            const key = kv.readText(0);
+            if (std.mem.eql(u8, key, target)) {
+                const val_struct = kv.readStruct(1);
+                const tag_byte: u8 = @truncate(val_struct.readU16(0, 0));
+                const tag: tape.ExprTag = @enumFromInt(tag_byte);
+                if (tag != .int) return 0;
+                std.mem.writeInt(i64, scratch_out[0..8], @bitCast(val_struct.readU64(8, 0)), .little);
+                scratch_out[8] = 1;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+inline fn msgExpression(root: wire.StructReader) ?wire.StructReader {
+    const tag = rpc.readMessageTag(root);
+    return switch (tag) {
+        .push, .resolve, .reject, .stream, .abort => rpc.readExpression(root),
+        else => null,
+    };
+}
+
+inline fn asObjectExpr(reader: wire.StructReader) ?wire.ListReader {
+    const tag_byte: u8 = @truncate(reader.readU16(0, 0));
+    const tag: tape.ExprTag = @enumFromInt(tag_byte);
+    if (tag != .object) return null;
+    return reader.readList(0);
+}
+
+// ---------------------------------------------------------------------------
 // Version probe
 // ---------------------------------------------------------------------------
 
 export fn cw_abi_version() u32 {
-    return 4;
+    return 5;
 }

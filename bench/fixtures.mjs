@@ -49,6 +49,11 @@ export const fixtures = [
     value: ["push", buildLargeObject(32)],
   },
   {
+    name: "wide-payload",
+    desc: "Object with 512 string fields (~25KB) — for sparse-access lazy bench",
+    value: ["push", buildLargeObject(512)],
+  },
+  {
     name: "large-array",
     desc: "Array of 256 small objects (~16KB)",
     value: ["push", buildArrayOfObjects(256)],

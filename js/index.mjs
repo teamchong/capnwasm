@@ -72,7 +72,7 @@ export class CapnWasm {
     this.#instance = instance;
     this.#exports = instance.exports;
     this.#memory = instance.exports.memory;
-    if (this.#exports.cw_abi_version() !== 4) {
+    if (this.#exports.cw_abi_version() !== 5) {
       throw new Error("Unsupported capnwasm ABI version");
     }
     this.#inPtr = this.#exports.cw_in_ptr();
@@ -229,6 +229,30 @@ export class CapnWasm {
 
   hasGc() { return this.#gcDecoder !== null; }
 
+  /**
+   * Open `bytes` for lazy field access. Returns a LazyReader; calls on it pull
+   * individual fields from the wasm-side parsed message without materializing
+   * the full JS value tree.
+   *
+   * Honesty note: the work-saved-vs-eager-decode is only realized if the
+   * caller accesses few fields. For full materialization use `deserialize`.
+   */
+  openLazy(bytes) {
+    if (bytes.length > this.#inCap) throw new Error("input larger than scratch buffer");
+    this.#u8().set(bytes, this.#inPtr);
+    if (this.#exports.cw_lazy_open(bytes.length) !== 1) {
+      throw new Error("cw_lazy_open failed");
+    }
+    return new LazyReader(this);
+  }
+
+  /** @internal */
+  get _exports() { return this.#exports; }
+  /** @internal */
+  get _outPtr() { return this.#outPtr; }
+  /** @internal */
+  get _u8() { return this.#u8(); }
+
   // ------------------------------------------------------------------------
   // Session lifecycle
   // ------------------------------------------------------------------------
@@ -252,3 +276,62 @@ export class CapnWasm {
 }
 
 export const TAGS = { TAG_PUSH, TAG_PULL, TAG_RESOLVE, TAG_REJECT, TAG_RELEASE, TAG_STREAM, TAG_ABORT, TAG_PIPE };
+
+/**
+ * Lazy reader: pulls individual fields from a parsed message on demand.
+ * Designed for the Cap'n Proto access pattern where only a few fields are
+ * read after decode.
+ */
+export class LazyReader {
+  #wasm;
+  #encoder = new TextEncoder();
+
+  constructor(wasm) { this.#wasm = wasm; }
+
+  /** Returns the top-level message tag name. */
+  msgTag() {
+    const t = this.#wasm._exports.cw_lazy_msg_tag();
+    if (t < 0) throw new Error("no message loaded");
+    return MESSAGE_TAGS[t];
+  }
+
+  /**
+   * For an object-typed message expression payload, return the text value of
+   * the named field. Returns undefined if the field is missing or non-text.
+   */
+  fieldText(name) {
+    const enc = this.#encoder.encode(name);
+    const u8 = this.#wasm._u8;
+    // Stage the name into wasm input scratch (we own the input region after open).
+    const namePtr = this.#wasm._exports.cw_in_ptr() + this.#wasm._exports.cw_in_capacity() - 1024;
+    u8.set(enc, namePtr);
+    const len = this.#wasm._exports.cw_lazy_msg_obj_field_text(namePtr, enc.length);
+    if (len === 0) return undefined;
+    const bytes = u8.subarray(this.#wasm._outPtr, this.#wasm._outPtr + len);
+    // Inline ASCII fast-path
+    let asciiOk = true;
+    for (let i = 0; i < bytes.length; i++) if (bytes[i] >= 0x80) { asciiOk = false; break; }
+    if (asciiOk) {
+      let s = "";
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return s;
+    }
+    return new TextDecoder().decode(bytes);
+  }
+
+  /** For an object-typed expression, return the int value of the named field. */
+  fieldInt(name) {
+    const enc = this.#encoder.encode(name);
+    const u8 = this.#wasm._u8;
+    const namePtr = this.#wasm._exports.cw_in_ptr() + this.#wasm._exports.cw_in_capacity() - 1024;
+    u8.set(enc, namePtr);
+    const found = this.#wasm._exports.cw_lazy_msg_obj_field_int(namePtr, enc.length);
+    if (!found) return undefined;
+    const dv = new DataView(u8.buffer, this.#wasm._outPtr, 16);
+    const lo = dv.getUint32(0, true);
+    const hi = dv.getInt32(4, true);
+    return hi * 4294967296 + lo;
+  }
+}
+
+const MESSAGE_TAGS_NAMES = ["push", "pull", "resolve", "reject", "release", "stream", "abort", "pipe"];
