@@ -71,6 +71,12 @@ const SCRATCH_OUT_CAP: usize = 256 * 1024;
 var scratch_in: [SCRATCH_IN_CAP]u8 align(8) = undefined;
 var scratch_out: [SCRATCH_OUT_CAP]u8 align(8) = undefined;
 
+// Separate input region for lazy-mode side-channel calls (e.g.
+// fieldsText name list). Decoupled so it can't clobber a borrowed
+// scratch_in that an open lazy reader is pointing at.
+const LAZY_AUX_CAP: usize = 8 * 1024;
+var lazy_aux: [LAZY_AUX_CAP]u8 align(8) = undefined;
+
 export fn cw_in_ptr() [*]u8 {
     return @ptrCast(&scratch_in);
 }
@@ -85,6 +91,14 @@ export fn cw_out_ptr() [*]u8 {
 
 export fn cw_out_capacity() u32 {
     return SCRATCH_OUT_CAP;
+}
+
+export fn cw_lazy_aux_ptr() [*]u8 {
+    return @ptrCast(&lazy_aux);
+}
+
+export fn cw_lazy_aux_capacity() u32 {
+    return LAZY_AUX_CAP;
 }
 
 const CODEC_ARENA_SIZE: usize = 2 * 1024 * 1024;
@@ -197,13 +211,17 @@ inline fn lazyAllocator() std.mem.Allocator {
 
 /// Open the bytes in scratch_in[0..len] for lazy access. Returns 0 on error,
 /// 1 on success. Subsequent cw_lazy_* calls navigate the parsed message.
+///
+/// Uses parseStreamFramedBorrowed to skip the input copy — scratch_in is
+/// 8-aligned and stable until the next cw_lazy_open / scratch overwrite.
 export fn cw_lazy_open(len: u32) i32 {
     if (lazy_parsed) |*lp| {
         lp.deinit();
         lazy_parsed = null;
     }
     const allocator = lazyAllocator();
-    const parsed = wire.parseStreamFramed(allocator, scratch_in[0..len]) catch return 0;
+    const aligned: []align(8) const u8 = scratch_in[0..len];
+    const parsed = wire.parseStreamFramedBorrowed(allocator, aligned) catch return 0;
     lazy_parsed = parsed;
     return 1;
 }
@@ -240,6 +258,97 @@ export fn cw_lazy_msg_obj_field_text(name_ptr: [*]const u8, name_len: u32) u32 {
         }
     }
     return 0;
+}
+
+/// Batched lookup: fetch multiple text-typed fields in one boundary crossing.
+///
+/// Input layout in scratch_in[0..]:
+///   u32 count
+///   for i in 0..count:  u32 name_len
+///   bytes...           the name strings, packed back-to-back
+///
+/// Output layout in scratch_out[0..]:
+///   for i in 0..count:  u32 result_len  (0xFFFFFFFF if missing/non-text)
+///   bytes...           the result strings, packed back-to-back
+///
+/// Returns total bytes written to scratch_out. Walks the object's composite
+/// list once and stops when all requested names have been found.
+export fn cw_lazy_obj_fields_text(input_ptr: [*]const u8, input_len: u32) u32 {
+    const lp = lazy_parsed orelse return 0;
+    const expr = msgExpression(lp.root()) orelse return 0;
+    const list = (asObjectExpr(expr)) orelse return 0;
+
+    if (input_len < 4) return 0;
+    const count = std.mem.readInt(u32, input_ptr[0..4], .little);
+    if (count == 0 or count > 256) return 0;
+
+    // Parse the input header: name lengths + bytes.
+    const lens_off: usize = 4;
+    const names_off: usize = lens_off + @as(usize, count) * 4;
+    if (input_len < names_off) return 0;
+
+    var name_starts: [256]usize = undefined;
+    var name_lens: [256]u32 = undefined;
+    var found: [256]bool = .{false} ** 256;
+
+    var pos: usize = names_off;
+    var i: u32 = 0;
+    while (i < count) : (i += 1) {
+        const nl = std.mem.readInt(u32, input_ptr[lens_off + i * 4 ..][0..4], .little);
+        if (pos + nl > input_len) return 0;
+        name_starts[i] = pos;
+        name_lens[i] = nl;
+        pos += nl;
+    }
+
+    // Reserve the result-length header at the start of scratch_out.
+    const header_bytes: usize = @as(usize, count) * 4;
+    var write_pos: usize = header_bytes;
+    var found_count: u32 = 0;
+
+    // Walk the object's entries once. For each entry, check against unfound names.
+    var entry_idx: u32 = 0;
+    while (entry_idx < list.count) : (entry_idx += 1) {
+        if (found_count == count) break;
+        const kv = list.getStruct(entry_idx);
+        const key = kv.readText(0);
+
+        // Compare against each unfound name.
+        var ni: u32 = 0;
+        while (ni < count) : (ni += 1) {
+            if (found[ni]) continue;
+            if (key.len != name_lens[ni]) continue;
+            const name_bytes = input_ptr[name_starts[ni] .. name_starts[ni] + name_lens[ni]];
+            if (!std.mem.eql(u8, key, name_bytes)) continue;
+
+            // Match. Verify value is text.
+            const val_struct = kv.readStruct(1);
+            const tag_byte: u8 = @truncate(val_struct.readU16(0, 0));
+            const tag: tape.ExprTag = @enumFromInt(tag_byte);
+            if (tag != .text) {
+                std.mem.writeInt(u32, scratch_out[ni * 4 ..][0..4], 0xFFFFFFFF, .little);
+                found[ni] = true;
+                found_count += 1;
+                break;
+            }
+            const text = val_struct.readText(0);
+            if (write_pos + text.len > SCRATCH_OUT_CAP) return 0;
+            std.mem.writeInt(u32, scratch_out[ni * 4 ..][0..4], @intCast(text.len), .little);
+            @memcpy(scratch_out[write_pos .. write_pos + text.len], text);
+            write_pos += text.len;
+            found[ni] = true;
+            found_count += 1;
+            break;
+        }
+    }
+
+    // Mark unfound names as missing.
+    var mi: u32 = 0;
+    while (mi < count) : (mi += 1) {
+        if (!found[mi]) std.mem.writeInt(u32, scratch_out[mi * 4 ..][0..4], 0xFFFFFFFF, .little);
+    }
+
+    return @intCast(write_pos);
 }
 
 /// Like the above but for an integer-typed field. Returns the value (as i64)

@@ -99,6 +99,7 @@ function perfFor(wasm, fx) {
     capnwasm_readtape_us: tReadTape.usPerOp,
     capnwasm_gcdecode_us: tGcDecode.usPerOp,
     capnwasm_lazy3_us: lazy3.cwUs,
+    capnwasm_batch3_us: lazy3.cwBatchUs,
     capnweb_lazy3_us: lazy3.cwbUs,
     lazy3_supported: lazy3.supported,
     capnweb_encode_us: tCwbEnc.usPerOp,
@@ -131,13 +132,18 @@ function lazyAccessBench(wasm, fx, cwBytes, cwbBytes, iters) {
     }
     return total;
   });
+  const tCwBatch = bench(iters, () => {
+    const r = wasm.openLazy(cwBytes);
+    const vs = r.fieldsText(fieldNames);
+    return vs[0].length + vs[1].length + vs[2].length;
+  });
   const tCwb = bench(iters, () => {
     const v = capnweb.deserialize(cwbBytes);
     // v is ["push", {field0: "...", ...}]
     const obj = v[1];
     return obj[fieldNames[0]].length + obj[fieldNames[1]].length + obj[fieldNames[2]].length;
   });
-  return { supported: true, cwUs: tCw.usPerOp, cwbUs: tCwb.usPerOp };
+  return { supported: true, cwUs: tCw.usPerOp, cwBatchUs: tCwBatch.usPerOp, cwbUs: tCwb.usPerOp };
 }
 
 function benchWasmDecodeOnly(wasm, bytes, iters) {

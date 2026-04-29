@@ -282,9 +282,21 @@ export const TAGS = { TAG_PUSH, TAG_PULL, TAG_RESOLVE, TAG_REJECT, TAG_RELEASE, 
  * Designed for the Cap'n Proto access pattern where only a few fields are
  * read after decode.
  */
+// Module-scoped cache: re-encoding the same field name on every call is pure
+// waste. UTF-8 bytes for any name string are immutable, so we intern them.
+const NAME_ENCODE_CACHE = new Map();
+const SHARED_TEXT_ENCODER = new TextEncoder();
+function encodeName(name) {
+  let e = NAME_ENCODE_CACHE.get(name);
+  if (!e) {
+    e = SHARED_TEXT_ENCODER.encode(name);
+    NAME_ENCODE_CACHE.set(name, e);
+  }
+  return e;
+}
+
 export class LazyReader {
   #wasm;
-  #encoder = new TextEncoder();
 
   constructor(wasm) { this.#wasm = wasm; }
 
@@ -300,10 +312,11 @@ export class LazyReader {
    * the named field. Returns undefined if the field is missing or non-text.
    */
   fieldText(name) {
-    const enc = this.#encoder.encode(name);
+    const enc = encodeName(name);
     const u8 = this.#wasm._u8;
-    // Stage the name into wasm input scratch (we own the input region after open).
-    const namePtr = this.#wasm._exports.cw_in_ptr() + this.#wasm._exports.cw_in_capacity() - 1024;
+    // Stage the name into the dedicated lazy-aux scratch (so we don't clobber
+    // the borrowed input bytes that the wasm reader is still pointing at).
+    const namePtr = this.#wasm._exports.cw_lazy_aux_ptr();
     u8.set(enc, namePtr);
     const len = this.#wasm._exports.cw_lazy_msg_obj_field_text(namePtr, enc.length);
     if (len === 0) return undefined;
@@ -319,11 +332,68 @@ export class LazyReader {
     return new TextDecoder().decode(bytes);
   }
 
+  /**
+   * Batched: fetch text values for multiple fields in one wasm boundary
+   * crossing. Returns parallel array; entries are undefined if missing.
+   */
+  fieldsText(names) {
+    if (names.length === 0) return [];
+    if (names.length > 256) throw new Error("fieldsText limit is 256 names");
+    const u8 = this.#wasm._u8;
+    const inPtr = this.#wasm._exports.cw_lazy_aux_ptr();
+    const inCap = this.#wasm._exports.cw_lazy_aux_capacity();
+
+    // Stage input: count, lengths, bytes.
+    const dv = new DataView(u8.buffer, inPtr, inCap);
+    dv.setUint32(0, names.length, true);
+    const encoded = new Array(names.length);
+    let totalLen = 0;
+    for (let i = 0; i < names.length; i++) {
+      const e = encodeName(names[i]);
+      encoded[i] = e;
+      totalLen += e.length;
+      dv.setUint32(4 + i * 4, e.length, true);
+    }
+    let pos = 4 + names.length * 4;
+    for (let i = 0; i < names.length; i++) {
+      u8.set(encoded[i], inPtr + pos);
+      pos += encoded[i].length;
+    }
+
+    const written = this.#wasm._exports.cw_lazy_obj_fields_text(inPtr, pos);
+    if (written === 0) return new Array(names.length).fill(undefined);
+
+    const outPtr = this.#wasm._outPtr;
+    const outDv = new DataView(u8.buffer, outPtr, written);
+    const results = new Array(names.length);
+    let readPos = names.length * 4;
+    for (let i = 0; i < names.length; i++) {
+      const len = outDv.getUint32(i * 4, true);
+      if (len === 0xFFFFFFFF) {
+        results[i] = undefined;
+        continue;
+      }
+      const bytes = u8.subarray(outPtr + readPos, outPtr + readPos + len);
+      readPos += len;
+      // ASCII fast path.
+      let asciiOk = true;
+      for (let j = 0; j < bytes.length; j++) if (bytes[j] >= 0x80) { asciiOk = false; break; }
+      if (asciiOk) {
+        let s = "";
+        for (let j = 0; j < bytes.length; j++) s += String.fromCharCode(bytes[j]);
+        results[i] = s;
+      } else {
+        results[i] = new TextDecoder().decode(bytes);
+      }
+    }
+    return results;
+  }
+
   /** For an object-typed expression, return the int value of the named field. */
   fieldInt(name) {
-    const enc = this.#encoder.encode(name);
+    const enc = encodeName(name);
     const u8 = this.#wasm._u8;
-    const namePtr = this.#wasm._exports.cw_in_ptr() + this.#wasm._exports.cw_in_capacity() - 1024;
+    const namePtr = this.#wasm._exports.cw_lazy_aux_ptr();
     u8.set(enc, namePtr);
     const found = this.#wasm._exports.cw_lazy_msg_obj_field_int(namePtr, enc.length);
     if (!found) return undefined;

@@ -874,7 +874,7 @@ pub const ParsedMessage = struct {
 
     pub fn deinit(self: *ParsedMessage) void {
         self.seg_alloc.free(self.segments);
-        self.seg_alloc.free(self.bytes_owned);
+        if (self.bytes_owned.len > 0) self.seg_alloc.free(self.bytes_owned);
     }
 
     pub fn root(self: *const ParsedMessage) StructReader {
@@ -926,4 +926,49 @@ pub fn parseStreamFramed(allocator: std.mem.Allocator, bytes: []const u8) !Parse
     }
 
     return .{ .segments = segs, .bytes_owned = owned, .seg_alloc = allocator };
+}
+
+/// Zero-copy variant: borrows the input bytes directly. Caller must guarantee
+/// the input is 8-aligned and remains valid for the lifetime of the returned
+/// message. Returned ParsedMessage's `bytes_owned` is empty so deinit only
+/// frees the segments array.
+pub fn parseStreamFramedBorrowed(allocator: std.mem.Allocator, bytes: []align(8) const u8) !ParsedMessage {
+    if (bytes.len < 4) return error.MessageTooShort;
+    const seg_count_minus_one = std.mem.readInt(u32, bytes[0..4], .little);
+    if (seg_count_minus_one == 0xFFFFFFFF) return error.InvalidSegmentCount;
+    const seg_count: u32 = seg_count_minus_one + 1;
+    if (seg_count > max_segments) return error.TooManySegments;
+
+    const header_unpadded: u32 = 4 + 4 * seg_count;
+    const header_padded: u32 = (header_unpadded + 7) & ~@as(u32, 7);
+    if (bytes.len < header_padded) return error.MessageTooShort;
+
+    const segs = try allocator.alloc(Segment, seg_count);
+    errdefer allocator.free(segs);
+
+    var cursor: usize = header_padded;
+    var i: u32 = 0;
+    while (i < seg_count) : (i += 1) {
+        const off = 4 + 4 * i;
+        const sw = std.mem.readInt(u32, bytes[off..][0..4], .little);
+        if (sw > max_segment_words) return error.SegmentTooLarge;
+        const len = @as(usize, sw) * word_size;
+        if (cursor + len > bytes.len) return error.MessageTooShort;
+        // Slice into the borrowed buffer; alignment preserved because
+        // `bytes` is 8-aligned and `cursor` is at a word boundary.
+        const slice_const: []const u8 = bytes[cursor .. cursor + len];
+        // The Segment owns []u8 (mutable slice) for the writer paths; here
+        // we reuse Segment for read-only access via @constCast, valid because
+        // we never mutate through these segments in the lazy reader.
+        const slice_mut = @constCast(slice_const);
+        segs[i] = .{ .bytes = @alignCast(slice_mut) };
+        cursor += len;
+    }
+
+    // Return a parsed message with no owned buffer; deinit frees only segs.
+    return .{
+        .segments = segs,
+        .bytes_owned = &[_]u8{},
+        .seg_alloc = allocator,
+    };
 }
