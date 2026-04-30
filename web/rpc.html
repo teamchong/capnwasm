@@ -36,8 +36,8 @@
       </nav>
     </header>
 
-    <div id="server-status" class="server-status">
-      <span id="server-dot" class="dot"></span>
+    <div id="server-status" class="server-status" role="status" aria-live="polite">
+      <span id="server-dot" class="dot" aria-hidden="true"></span>
       <span id="server-msg">Checking RPC server&hellip;</span>
       <a id="server-help" class="server-help" href="https://github.com/teamchong/capnwasm/blob/main/web/README.md">help</a>
     </div>
@@ -52,7 +52,7 @@
           <option value="10">10 (median)</option>
         </select>
       </label>
-      <span id="status"></span>
+      <span id="status" role="status" aria-live="polite" aria-atomic="true"></span>
     </div>
 
     <div id="results-rpc">
@@ -122,7 +122,7 @@
       </div>
     </div>
 
-    <div id="summary"></div>
+    <div id="summary" role="status" aria-live="polite"></div>
   </div>
 
   <script type="module" src="./src/rpc/main.ts"></script>

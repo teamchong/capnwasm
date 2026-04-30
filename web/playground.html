@@ -53,7 +53,7 @@
           <option value="10">10 (median)</option>
         </select>
       </label>
-      <span id="status"></span>
+      <span id="status" role="status" aria-live="polite" aria-atomic="true"></span>
     </div>
 
     <div id="results">
@@ -106,7 +106,7 @@
       </div>
     </div>
 
-    <div id="summary"></div>
+    <div id="summary" role="status" aria-live="polite"></div>
   </div>
 
   <script type="module" src="./src/playground/main.ts"></script>
