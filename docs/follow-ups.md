@@ -60,11 +60,16 @@ the wasm-side cursor would be invalidated by sibling access otherwise.
 Null-pointer slots return a default-initialized object (each field at
 its type's default), matching codegen reader semantics.
 
-Still on the list:
+**Update (2026-04-30, fourth pass):** lists of structs landed too. Use
+`{ kind: "listStruct", slot: N, element: defineSchema(...) }`. Each
+element is materialized via the same eager pattern as nested structs.
+The reader re-opens the outer list between elements so any inner-list
+read on an element doesn't disturb the iterator's cursor. Empty list →
+`[]`, matching capnp wire-format defaults.
 
-- **Lists of structs** — `cpp_any_enter_list_at(i)` is exported; would
-  walk into element i, materialize via the element schema, leave. Same
-  eager-object pattern as nested structs.
+The dynamic reader now covers everything the codegen path does on the
+read side: primitives, lists of primitives, nested structs, lists of
+structs. No remaining capability gaps for reads.
 
 ## 3. RPC pipelining is implemented but not pipelined under `await`
 

@@ -113,6 +113,16 @@ export function defineSchema(spec) {
       fields[name] = Object.freeze({ kind: -2, off: raw.slot, type: "struct", schema: raw.schema });
       continue;
     }
+    if (raw.kind === "listStruct") {
+      if (typeof raw.slot !== "number" || raw.slot < 0 || !Number.isInteger(raw.slot)) {
+        throw new TypeError(`field "${name}": listStruct missing or invalid "slot"`);
+      }
+      if (!raw.element || !raw.element.fields) {
+        throw new TypeError(`field "${name}": listStruct missing "element" (use defineSchema(...))`);
+      }
+      fields[name] = Object.freeze({ kind: -3, off: raw.slot, type: "listStruct", element: raw.element });
+      continue;
+    }
     const meta = KIND_TABLE[raw.kind];
     if (!meta) throw new TypeError(`field "${name}": unknown kind "${raw.kind}"`);
     const off = raw[meta.offKey];
@@ -241,9 +251,10 @@ function _readSingle(cpp, desc) {
       return v;
     }
     case "bool":   return exp.cpp_any_bool_at(desc.off, 0) === 1;
-    case "list":   return _readList(cpp, desc);
-    case "struct": return _readNestedStruct(cpp, desc);
-    default:       return undefined;
+    case "list":       return _readList(cpp, desc);
+    case "struct":     return _readNestedStruct(cpp, desc);
+    case "listStruct": return _readListOfStructs(cpp, desc);
+    default:           return undefined;
   }
 }
 
@@ -269,6 +280,40 @@ function _readNestedStruct(cpp, desc) {
   } finally {
     exp.cpp_any_leave_struct();
   }
+}
+
+// List<Struct>. cpp_any_open_list returns the size; cpp_any_enter_list_at(i)
+// pushes element i onto the same any_stack the struct accessors read from.
+// We materialize each element fully before moving to the next, so memory is
+// O(N × fields) but the cursor state is always coherent.
+function _readListOfStructs(cpp, desc) {
+  const exp = cpp._exports;
+  const size = exp.cpp_any_open_list(desc.off);
+  if (size === 0) return [];
+  const elementFields = Object.entries(desc.element.fields);
+  const out = new Array(size);
+  for (let i = 0; i < size; i++) {
+    if (exp.cpp_any_enter_list_at(i) !== 1) {
+      out[i] = null;
+      continue;
+    }
+    try {
+      const obj = {};
+      for (const [name, sub] of elementFields) {
+        obj[name] = _readSingle(cpp, sub);
+      }
+      out[i] = obj;
+    } finally {
+      exp.cpp_any_leave_struct();
+    }
+    // Re-open the list for the next iteration: each cpp_any_enter_list_at
+    // calls .as<List<AnyStruct>>()[i] which doesn't disturb any_list_reader,
+    // but reading any sub-struct's list field via cpp_any_open_list during
+    // _readSingle would. Defensively re-open to keep the size + reader
+    // pointing at our outer list across element boundaries.
+    if (i + 1 < size) exp.cpp_any_open_list(desc.off);
+  }
+  return out;
 }
 
 // Materialize a list-of-primitive into a JS array. The wasm exposes a

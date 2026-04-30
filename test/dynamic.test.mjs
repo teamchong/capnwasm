@@ -269,3 +269,71 @@ test("dynamic.struct: pick falls back to per-field reads when nested struct is p
   const got = r.pick(["inner"]);
   assert.deepEqual(got.inner, { value: 42 });
 });
+
+// Hand-crafted struct ItemList { items :List(Item) } with two Items.
+// Item { id :UInt32; }. items = [ {id:1}, {id:2} ].
+// Composite-list wire format: items ptr → list ptr with elementSize=7,
+// followed by a tag word describing element layout, followed by the
+// elements' data.
+function buildItemList() {
+  const bytes = new Uint8Array(56);
+  const dv = new DataView(bytes.buffer);
+  // Frame: segCount-1 = 0, segSize = 5 words.
+  dv.setUint32(0, 0, true);
+  dv.setUint32(4, 5, true);
+  // Word 0 (bytes 8-15): root ptr → ItemList { dataWords=0, ptrWords=1 } at word 1.
+  dv.setUint32(8, 0, true);
+  dv.setUint32(12, 1 << 16, true);
+  // Word 1 (bytes 16-23): items list ptr.
+  // Composite list: kind=1 (list), B=0 (data starts immediately after this ptr),
+  // elementSize=7 (composite), totalWords = 2 (2 elements * 1 word, EXCLUDING tag).
+  const lo = (0 << 2) | 1;          // kind=1 list
+  const elementSize = 7;             // composite
+  const totalWords = 2;              // 2 elements × 1 word each, NOT counting tag
+  const hi = (totalWords << 3) | elementSize;
+  dv.setUint32(16, lo, true);
+  dv.setUint32(20, hi, true);
+  // Word 2 (bytes 24-31): tag word for composite list.
+  // Format = struct ptr with B=element count. dataWords=1, ptrWords=0.
+  dv.setUint32(24, 2 << 2, true);   // B = count = 2 (two elements)
+  dv.setUint32(28, 1, true);         // dataWords=1, ptrWords=0
+  // Word 3 (bytes 32-39): element 0 data — uint32 id = 1.
+  dv.setUint32(32, 1, true);
+  // Word 4 (bytes 40-47): element 1 data — uint32 id = 2.
+  dv.setUint32(40, 2, true);
+  return bytes.subarray(0, 48);  // segSize 5 = bytes 8..47, frame 0..47
+}
+
+const ItemSchema = defineSchema({
+  id: { kind: "uint32", offset: 0 },
+});
+const ItemListSchema = defineSchema({
+  items: { kind: "listStruct", slot: 0, element: ItemSchema },
+});
+
+test("dynamic.listStruct: walks each element and returns array of plain objects", () => {
+  const r = openDynamic(cpp, ItemListSchema, buildItemList());
+  assert.deepEqual(r.get("items"), [{ id: 1 }, { id: 2 }]);
+});
+
+test("dynamic.listStruct: empty list returns []", () => {
+  const empty = new Uint8Array(16);
+  new DataView(empty.buffer).setUint32(0, 0, true);
+  new DataView(empty.buffer).setUint32(4, 1, true);
+  const r = openDynamic(cpp, ItemListSchema, empty);
+  assert.deepEqual(r.get("items"), []);
+});
+
+test("defineSchema: listStruct requires element schema", () => {
+  assert.throws(
+    () => defineSchema({ x: { kind: "listStruct", slot: 0 } }),
+    /missing "element"/,
+  );
+});
+
+test("defineSchema: listStruct requires slot", () => {
+  assert.throws(
+    () => defineSchema({ x: { kind: "listStruct", element: ItemSchema } }),
+    /missing or invalid "slot"/,
+  );
+});
