@@ -12,6 +12,7 @@
     "./stream":      "./js/stream.mjs",
     "./rpc":         "./js/rpc.mjs",
     "./dynamic":     "./js/dynamic.mjs",
+    "./client":      "./js/client.mjs",
     "./codegen":     "./dist/codegen.mjs",
     "./vite-plugin": {
       "types":   "./js/vite-plugin.d.ts",
