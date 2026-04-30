@@ -4,6 +4,7 @@
 #include "schema.capnp.h"
 #include "typed_schema.capnp.h"
 #include "big_schema.capnp.h"
+#include "conformance_schema.capnp.h"
 #include <capnp/serialize.h>
 #include <capnp/message.h>
 #include <capnp/any.h>
@@ -656,6 +657,64 @@ uint32_t cpp_make_big_user_bytes() {
 }
 
 #endif  // CW_BENCH
+
+// ---------------------------------------------------------------------------
+// Conformance: build a Primitives message with caller-supplied values via
+// fixed offsets in cpp_in. Layout:
+//   bytes  0..1   u8 + i8
+//   bytes  2..3   i8 (already in)
+//   bytes  4..7   u16 + i16
+//   bytes  8..11  u32
+//   bytes 12..15  i32
+//   bytes 16..23  u64
+//   bytes 24..31  i64
+//   bytes 32..35  f32
+//   bytes 36..43  f64
+//   byte  44      flag0 (bit 0), flag1 (bit 1), flag2 (bit 2)
+//   bytes 45..48  text_len
+//   bytes 49..    text bytes followed by data_len + data bytes
+//
+// Returns serialized framed bytes in cpp_out.
+uint32_t cpp_conformance_serialize(uint32_t input_len) {
+  if (input_len < 49) return 0;
+  capnp::MallocMessageBuilder builder;
+  auto root = builder.initRoot<Primitives>();
+
+  root.setU8 (cpp_in[0]);
+  root.setI8 (static_cast<int8_t>(cpp_in[1]));
+  uint16_t u16; std::memcpy(&u16, cpp_in + 4, 2); root.setU16(u16);
+  int16_t  i16; std::memcpy(&i16, cpp_in + 6, 2); root.setI16(i16);
+  uint32_t u32; std::memcpy(&u32, cpp_in + 8, 4); root.setU32(u32);
+  int32_t  i32; std::memcpy(&i32, cpp_in + 12, 4); root.setI32(i32);
+  uint64_t u64; std::memcpy(&u64, cpp_in + 16, 8); root.setU64(u64);
+  int64_t  i64; std::memcpy(&i64, cpp_in + 24, 8); root.setI64(i64);
+  float    f32; std::memcpy(&f32, cpp_in + 32, 4); root.setF32(f32);
+  double   f64; std::memcpy(&f64, cpp_in + 36, 8); root.setF64(f64);
+
+  uint8_t flags = cpp_in[44];
+  root.setFlag0((flags & 1) != 0);
+  root.setFlag1((flags & 2) != 0);
+  root.setFlag2((flags & 4) != 0);
+
+  uint32_t text_len; std::memcpy(&text_len, cpp_in + 45, 4);
+  size_t pos = 49;
+  if (pos + text_len > input_len) return 0;
+  root.setText(capnp::Text::Reader(reinterpret_cast<const char*>(cpp_in + pos), text_len));
+  pos += text_len;
+
+  if (pos + 4 > input_len) return 0;
+  uint32_t data_len; std::memcpy(&data_len, cpp_in + pos, 4); pos += 4;
+  if (pos + data_len > input_len) return 0;
+  root.setData(capnp::Data::Reader(cpp_in + pos, data_len));
+
+  // emptyText / emptyData stay default (null).
+
+  auto words = capnp::messageToFlatArray(builder);
+  auto bytes = words.asBytes();
+  if (bytes.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, bytes.begin(), bytes.size());
+  return static_cast<uint32_t>(bytes.size());
+}
 
 // ---------------------------------------------------------------------------
 // Generic AnyStruct navigation. One wasm binary serves every user schema:

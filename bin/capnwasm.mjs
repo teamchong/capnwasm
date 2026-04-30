@@ -315,34 +315,65 @@ function parseCanonicalCapnp(text) {
 }
 
 /**
- * Assign each field a wire-format offset following Cap'n Proto's layout:
- *   - Text/Data/struct/list -> pointer section, sequential slot index
- *   - Primitives -> data section, aligned to their size in bits
+ * Assign each field its wire-format offset following Cap'n Proto's actual
+ * data-section layout algorithm:
  *
- * The order matches the field's declared @-ordinal. Cap'n Proto's compiler
- * additionally re-uses padding holes for later-numbered fields; this
- * codegen produces forward-compatible reads against the canonical layout
- * the upstream compiler emits when the schema is written in ascending
- * @-ordinal order, which is the recommended style.
+ *   1. Pointer-typed fields go in the pointer section, sequential index.
+ *   2. For data fields, walk @-ordinal order. Try to place in the first
+ *      existing "hole" (padding gap from a previous larger field) that
+ *      both fits the size and has correct alignment.
+ *   3. If no hole works, extend the data section. Aligning may create a
+ *      new hole between the previous high-water mark and the new field.
+ *
+ * Without hole-filling, layouts diverge from upstream `capnp compile`
+ * whenever fields are not in size-decreasing order — readers get garbage
+ * because the offset they compute doesn't match where the writer put the
+ * value.
  */
 function computeOffsets(structs) {
   for (const s of structs) {
     let nextPtr = 0;
     let dataBits = 0;
+    const holes = [];  // each: {start, size}
+
     for (const f of s.fields) {
       if (isPointerType(f.type)) {
         f.kind = "pointer";
         f.ptrIndex = nextPtr++;
-      } else {
-        const size = primitiveBitSize(f.type);
-        f.kind = "data";
-        f.bitSize = size;
-        if (size > 0 && (dataBits % size) !== 0) {
-          dataBits += size - (dataBits % size);
-        }
-        f.bitOffset = dataBits;
-        dataBits += size;
+        continue;
       }
+      const size = primitiveBitSize(f.type);
+      f.kind = "data";
+      f.bitSize = size;
+      if (size === 0) { f.bitOffset = 0; continue; }
+
+      // Try existing holes (smallest-first, then by position).
+      holes.sort((a, b) => a.size - b.size || a.start - b.start);
+      let placed = false;
+      for (let i = 0; i < holes.length; i++) {
+        const h = holes[i];
+        if (h.size < size) continue;
+        if (h.start % size !== 0) continue;
+        f.bitOffset = h.start;
+        if (h.size === size) {
+          holes.splice(i, 1);
+        } else {
+          h.start += size;
+          h.size -= size;
+        }
+        placed = true;
+        break;
+      }
+      if (placed) continue;
+
+      // No hole worked — extend the data section. Alignment padding becomes
+      // a new hole that later fields can fill.
+      const aligned = Math.ceil(dataBits / size) * size;
+      if (aligned > dataBits) {
+        holes.push({ start: dataBits, size: aligned - dataBits });
+      }
+      f.bitOffset = aligned;
+      dataBits = aligned + size;
     }
   }
 }
@@ -403,6 +434,17 @@ function generateJs(structs, schemaName) {
       for (const line of getter) lines.push(`    ${line}`);
       lines.push(`  }`);
     }
+    // Materializing helper: pulls every field at once. Avoids N wasm
+    // boundary crossings when the caller really wants the whole object.
+    // For sparse access prefer the per-field getters.
+    lines.push("");
+    lines.push(`  toObject() {`);
+    lines.push(`    return {`);
+    for (const f of s.fields) {
+      lines.push(`      ${f.name}: this.${f.name},`);
+    }
+    lines.push(`    };`);
+    lines.push(`  }`);
     lines.push(`}`);
     lines.push("");
   }
@@ -422,6 +464,58 @@ function generateJs(structs, schemaName) {
   }
 
   return lines.join("\n") + "\n";
+}
+
+/**
+ * Emit a `.d.ts` for the same set of structs. Each Cap'n Proto type maps
+ * back to its closest TS type so consumers get autocomplete + type errors
+ * on field misuse. Map mirrors TS_TO_CAPNP from parseTsInterfaces.
+ */
+function generateDts(structs, schemaName) {
+  const lines = [];
+  lines.push(`// Generated from ${schemaName} by capnwasm-gen — do not edit by hand.`);
+  lines.push("");
+  lines.push(`import type { CapnCpp } from "capnwasm";`);
+  lines.push("");
+
+  const declared = new Set(structs.map((s) => s.name));
+  for (const s of structs) {
+    lines.push(`export declare class ${s.name}Reader {`);
+    lines.push(`  constructor(cpp: CapnCpp);`);
+    for (const f of s.fields) {
+      const tsType = capnpToTs(f.type, declared);
+      lines.push(`  readonly ${f.name}: ${tsType};`);
+    }
+    // Plain-object materialization shape for toObject().
+    lines.push(`  toObject(): {`);
+    for (const f of s.fields) {
+      const tsType = capnpToTs(f.type, declared);
+      lines.push(`    ${f.name}: ${tsType};`);
+    }
+    lines.push(`  };`);
+    lines.push(`}`);
+    lines.push("");
+  }
+  if (structs.length > 0) {
+    const root = structs[0];
+    lines.push(`export declare function open${root.name}(cpp: CapnCpp, bytes: Uint8Array): ${root.name}Reader;`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+function capnpToTs(capnpType, declaredStructs) {
+  if (declaredStructs.has(capnpType)) return capnpType + "Reader";
+  switch (capnpType) {
+    case "Bool":   return "boolean";
+    case "Text":   return "string";
+    case "Data":   return "Uint8Array";
+    case "Int8": case "Int16": case "Int32":
+    case "UInt8": case "UInt16": case "UInt32":
+    case "Float32": case "Float64": return "number";
+    case "Int64": case "UInt64":    return "number | bigint";
+    case "Void":   return "void";
+    default:       return "unknown";
+  }
 }
 
 function generateGetter(field) {
@@ -452,15 +546,37 @@ function generateGetter(field) {
       return [`return this._cpp._exports.cpp_any_bool_at(${field.bitOffset}, 0) === 1;`];
     case "UInt8":
       return [`return this._cpp._exports.cpp_any_uint8_at(${off}, 0);`];
+    case "Int8":
+      // sign-extend 8 -> 32 via <<24 >>24
+      return [`return (this._cpp._exports.cpp_any_uint8_at(${off}, 0) << 24) >> 24;`];
     case "UInt16":
       return [`return this._cpp._exports.cpp_any_uint16_at(${off}, 0);`];
+    case "Int16":
+      return [`return (this._cpp._exports.cpp_any_uint16_at(${off}, 0) << 16) >> 16;`];
     case "UInt32":
       return [`return this._cpp._exports.cpp_any_uint32_at(${off}, 0);`];
-    case "UInt64":
-    case "Int64":
-      return [`return this._cpp._exports.cpp_any_int64_at(${off}, 0n);`];
     case "Int32":
       return [`return this._cpp._exports.cpp_any_uint32_at(${off}, 0) | 0;`];
+    case "UInt64":
+      return [`return this._cpp._exports.cpp_any_int64_at(${off}, 0n);`];
+    case "Int64":
+      return [`return this._cpp._exports.cpp_any_int64_at(${off}, 0n);`];
+    case "Float32":
+      // Reinterpret u32 bits as f32 via a stack-allocated typed-array view.
+      return [
+        `const u = this._cpp._exports.cpp_any_uint32_at(${off}, 0) >>> 0;`,
+        `if (!this._f32buf) { this._f32buf = new ArrayBuffer(4); this._f32u32 = new Uint32Array(this._f32buf); this._f32f32 = new Float32Array(this._f32buf); }`,
+        `this._f32u32[0] = u;`,
+        `return this._f32f32[0];`,
+      ];
+    case "Float64":
+      return [
+        `const lo = this._cpp._exports.cpp_any_uint32_at(${off}, 0) >>> 0;`,
+        `const hi = this._cpp._exports.cpp_any_uint32_at(${off + 4}, 0) >>> 0;`,
+        `if (!this._f64buf) { this._f64buf = new ArrayBuffer(8); this._f64u32 = new Uint32Array(this._f64buf); this._f64f64 = new Float64Array(this._f64buf); }`,
+        `this._f64u32[0] = lo; this._f64u32[1] = hi;`,
+        `return this._f64f64[0];`,
+      ];
     default:
       return [`throw new Error("unsupported field type: ${field.type}");`];
   }
@@ -476,6 +592,14 @@ async function cmdGen(argv) {
   const js = generateJs(structs, basename(args.schema));
   await writeFile(args.output, js);
   console.log(`Wrote ${args.output}`);
+
+  // Emit a sibling .d.ts so TypeScript callers get type-checked field access.
+  // Same struct model as the .mjs — one source of truth for both.
+  const dtsPath = args.output.replace(/\.mjs$/, ".d.ts");
+  const dts = generateDts(structs, basename(args.schema));
+  await writeFile(dtsPath, dts);
+  console.log(`Wrote ${dtsPath}`);
+
   console.log(`  ${structs.length} struct(s):`);
   for (const s of structs) {
     console.log(`    ${s.name}  (${s.fields.length} fields)`);
