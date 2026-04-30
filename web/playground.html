@@ -62,6 +62,21 @@
         <ul class="render-target" id="rest-list"></ul>
       </div>
 
+      <div class="protocol" id="cwb-col">
+        <div class="protocol-header">
+          <span class="protocol-name">capnweb</span>
+          <span class="protocol-tag">fetch + capnweb.deserialize</span>
+        </div>
+        <table class="metrics">
+          <tr><th>fetch</th><td id="cwb-fetch">&mdash;</td></tr>
+          <tr><th>decode</th><td id="cwb-decode">&mdash;</td></tr>
+          <tr><th>render</th><td id="cwb-render">&mdash;</td></tr>
+          <tr class="total"><th>total</th><td id="cwb-total">&mdash;</td></tr>
+          <tr><th>wire bytes</th><td id="cwb-bytes">&mdash;</td></tr>
+        </table>
+        <ul class="render-target" id="cwb-list"></ul>
+      </div>
+
       <div class="protocol" id="capnp-col">
         <div class="protocol-header">
           <span class="protocol-name">capnwasm</span>

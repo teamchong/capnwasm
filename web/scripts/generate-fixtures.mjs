@@ -1,7 +1,8 @@
-// Pre-generate fixture data the playground fetches at runtime. Both the
-// JSON (REST baseline) and the Cap'n Proto bytes ship as static assets so
-// neither path pays any server-side encoding cost — the bench measures
-// just network transfer + client decode + render.
+// Pre-generate fixture data the playground fetches at runtime. All three
+// formats — JSON (REST baseline), capnweb's wire format, and Cap'n Proto
+// bytes — ship as static assets so neither path pays any server-side
+// encoding cost. The bench measures network transfer + client decode +
+// render only.
 //
 // Two workloads, picked to show the honest tradeoff:
 //   small/  — 200 user records with a 32 B avatar. JSON wins on decode
@@ -17,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { load } from "../../dist/inlined.mjs";
 import { buildUser } from "../src/playground/users.gen.mjs";
+import { serialize as cwbSerialize } from "capnweb";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = resolve(HERE, "..", "public", "data");
@@ -27,8 +29,9 @@ async function emit(workload, count, avatarBytes) {
   const dir = resolve(PUBLIC, workload);
   await mkdir(dir, { recursive: true });
 
-  let totalJsonRaw = 0, totalJsonGz = 0;
+  let totalJsonRaw = 0,  totalJsonGz = 0;
   let totalCapnpRaw = 0, totalCapnpGz = 0;
+  let totalCwbRaw = 0,   totalCwbGz = 0;
 
   for (let i = 0; i < count; i++) {
     const id = i + 1;
@@ -51,6 +54,14 @@ async function emit(workload, count, avatarBytes) {
     totalJsonRaw += jsonText.length;
     totalJsonGz += gzipSync(jsonText, { level: 6 }).length;
 
+    // capnweb wire format — JSON-shaped with typed-value escapes
+    // (Uint8Array becomes ["bytes", "<base64>"]). serialize returns a
+    // string we ship verbatim.
+    const cwbText = cwbSerialize(user);
+    await writeFile(resolve(dir, `user-${id}.cwb`), cwbText);
+    totalCwbRaw += cwbText.length;
+    totalCwbGz += gzipSync(cwbText, { level: 6 }).length;
+
     const b = buildUser(cpp);
     b.id = BigInt(user.id);
     b.name = user.name;
@@ -65,10 +76,11 @@ async function emit(workload, count, avatarBytes) {
   }
 
   console.log(`[${workload}] ${count} records, ${avatarBytes} B avatar:`);
-  console.log(`  JSON:  ${totalJsonRaw} B raw  ${totalJsonGz} B gz   (avg ${(totalJsonRaw / count).toFixed(0)} B/record)`);
-  console.log(`  capnp: ${totalCapnpRaw} B raw  ${totalCapnpGz} B gz   (avg ${(totalCapnpRaw / count).toFixed(0)} B/record)`);
-  console.log(`  ratio (raw): capnp ${(totalJsonRaw / totalCapnpRaw).toFixed(2)}x smaller`);
-  console.log(`  ratio (gz):  capnp ${(totalJsonGz / totalCapnpGz).toFixed(2)}x smaller`);
+  console.log(`  JSON:    ${totalJsonRaw} B raw  ${totalJsonGz} B gz   (avg ${(totalJsonRaw / count).toFixed(0)} B/record)`);
+  console.log(`  capnweb: ${totalCwbRaw} B raw  ${totalCwbGz} B gz   (avg ${(totalCwbRaw / count).toFixed(0)} B/record)`);
+  console.log(`  capnp:   ${totalCapnpRaw} B raw  ${totalCapnpGz} B gz   (avg ${(totalCapnpRaw / count).toFixed(0)} B/record)`);
+  console.log(`  ratio raw vs JSON: capnweb ${(totalJsonRaw / totalCwbRaw).toFixed(2)}x  capnp ${(totalJsonRaw / totalCapnpRaw).toFixed(2)}x`);
+  console.log(`  ratio gz  vs JSON: capnweb ${(totalJsonGz / totalCwbGz).toFixed(2)}x  capnp ${(totalJsonGz / totalCapnpGz).toFixed(2)}x`);
 }
 
 await emit("small", 200, 32);

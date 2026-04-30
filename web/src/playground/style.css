@@ -13,7 +13,7 @@ body {
 }
 
 #app {
-  max-width: 1024px;
+  max-width: 1280px;
   margin: 0 auto;
 }
 
@@ -111,9 +111,15 @@ nav a:hover {
 
 #results {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   margin-bottom: 24px;
+}
+
+@media (max-width: 1000px) {
+  #results {
+    grid-template-columns: 1fr;
+  }
 }
 
 .protocol {
@@ -234,8 +240,3 @@ nav a:hover {
   color: #fff;
 }
 
-@media (max-width: 700px) {
-  #results {
-    grid-template-columns: 1fr;
-  }
-}

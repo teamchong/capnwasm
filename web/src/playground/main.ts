@@ -9,6 +9,7 @@
 import { load } from "../../../js/browser.mjs";
 // @ts-ignore — generated reader/builder for the demo schema.
 import { openUser } from "./users.gen.mjs";
+import { deserialize as cwbDeserialize } from "capnweb";
 
 const $ = (id: string) => document.getElementById(id)!;
 const status = $("status");
@@ -90,6 +91,46 @@ async function fetchJson(workload: string, count: number): Promise<{ phase: Phas
   };
 }
 
+async function fetchCwb(workload: string, count: number): Promise<{ phase: Phase }> {
+  const t0 = performance.now();
+  const promises: Promise<Response>[] = [];
+  for (let i = 1; i <= count; i++) {
+    promises.push(fetch(`/data/${workload}/user-${i}.cwb`));
+  }
+  const responses = await Promise.all(promises);
+  const texts = await Promise.all(responses.map((r) => r.text()));
+  const tFetch = performance.now();
+
+  let bytes = 0;
+  const users = new Array(count);
+  for (let i = 0; i < count; i++) {
+    bytes += texts[i].length;
+    users[i] = cwbDeserialize(texts[i]) as any;
+  }
+  const tDecode = performance.now();
+
+  const list = $("cwb-list");
+  list.replaceChildren();
+  const frag = document.createDocumentFragment();
+  for (const u of users) {
+    const li = document.createElement("li");
+    li.textContent = `${u.id}  ${u.name}  ${u.email}  ${u.active ? "✓" : "·"}`;
+    frag.appendChild(li);
+  }
+  list.appendChild(frag);
+  void list.offsetHeight;
+  const tRender = performance.now();
+
+  return {
+    phase: {
+      fetchMs: tFetch - t0,
+      decodeMs: tDecode - tFetch,
+      renderMs: tRender - tDecode,
+      bytes,
+    },
+  };
+}
+
 async function fetchCapnp(workload: string, count: number): Promise<{ phase: Phase; rendered: number }> {
   await ensureWasm();
   const t0 = performance.now();
@@ -165,13 +206,17 @@ async function runBench() {
   // One warmup round so neither side pays HTTP-cache or wasm-init cost
   // in the measured iterations.
   await fetchJson(workload, count);
+  await fetchCwb(workload, count);
   await fetchCapnp(workload, count);
 
   const restRuns: Phase[] = [];
+  const cwbRuns: Phase[] = [];
   const capnpRuns: Phase[] = [];
   for (let i = 0; i < iters; i++) {
     status.textContent = `Iteration ${i + 1}/${iters} — REST…`;
     restRuns.push((await fetchJson(workload, count)).phase);
+    status.textContent = `Iteration ${i + 1}/${iters} — capnweb…`;
+    cwbRuns.push((await fetchCwb(workload, count)).phase);
     status.textContent = `Iteration ${i + 1}/${iters} — capnwasm…`;
     capnpRuns.push((await fetchCapnp(workload, count)).phase);
   }
@@ -182,60 +227,87 @@ async function runBench() {
     renderMs: median(restRuns.map((r) => r.renderMs)),
     bytes:    restRuns[0].bytes,
   };
+  const cwb: Phase = {
+    fetchMs:  median(cwbRuns.map((r) => r.fetchMs)),
+    decodeMs: median(cwbRuns.map((r) => r.decodeMs)),
+    renderMs: median(cwbRuns.map((r) => r.renderMs)),
+    bytes:    cwbRuns[0].bytes,
+  };
   const capnp: Phase = {
     fetchMs:  median(capnpRuns.map((r) => r.fetchMs)),
     decodeMs: median(capnpRuns.map((r) => r.decodeMs)),
     renderMs: median(capnpRuns.map((r) => r.renderMs)),
     bytes:    capnpRuns[0].bytes,
   };
-  const restTotal  = rest.fetchMs  + rest.decodeMs  + rest.renderMs;
-  const capnpTotal = capnp.fetchMs + capnp.decodeMs + capnp.renderMs;
-
-  // Render metrics tables. Highlight the winner per row.
-  const setCell = (id: string, ms: number, isWin: boolean | null) => {
-    const td = $(id);
-    td.textContent = fmtMs(ms);
-    td.className = isWin === true ? "win" : isWin === false ? "lose" : "";
+  const totals = {
+    rest:  rest.fetchMs  + rest.decodeMs  + rest.renderMs,
+    cwb:   cwb.fetchMs   + cwb.decodeMs   + cwb.renderMs,
+    capnp: capnp.fetchMs + capnp.decodeMs + capnp.renderMs,
   };
 
-  // Phase-by-phase: lower wins for fetch/decode/render/total.
-  // Bytes: lower also wins.
-  const restWinsFetch   = rest.fetchMs   < capnp.fetchMs;
-  const restWinsDecode  = rest.decodeMs  < capnp.decodeMs;
-  const restWinsRender  = rest.renderMs  < capnp.renderMs;
-  const restWinsTotal   = restTotal      < capnpTotal;
-  const restWinsBytes   = rest.bytes     < capnp.bytes;
+  // Find the per-row minimum (lower-is-better) so the winner gets the
+  // green "win" styling and the others get neutral.
+  const minOf = (a: number, b: number, c: number) => Math.min(a, Math.min(b, c));
+  const fillCol = (prefix: string, p: Phase, total: number, isMinFetch: boolean, isMinDecode: boolean, isMinRender: boolean, isMinTotal: boolean, isMinBytes: boolean) => {
+    const setCell = (id: string, ms: number, win: boolean) => {
+      const td = $(id);
+      td.textContent = fmtMs(ms);
+      td.className = win ? "win" : "";
+    };
+    setCell(`${prefix}-fetch`,  p.fetchMs,  isMinFetch);
+    setCell(`${prefix}-decode`, p.decodeMs, isMinDecode);
+    setCell(`${prefix}-render`, p.renderMs, isMinRender);
+    setCell(`${prefix}-total`,  total,      isMinTotal);
+    const bytes = $(`${prefix}-bytes`);
+    bytes.textContent = fmtBytes(p.bytes);
+    bytes.className = isMinBytes ? "win" : "";
+  };
 
-  setCell("rest-fetch",  rest.fetchMs,  restWinsFetch);
-  setCell("rest-decode", rest.decodeMs, restWinsDecode);
-  setCell("rest-render", rest.renderMs, restWinsRender);
-  setCell("rest-total",  restTotal,     restWinsTotal);
-  $("rest-bytes").textContent = fmtBytes(rest.bytes);
-  $("rest-bytes").className = restWinsBytes ? "win" : "lose";
+  const minFetch  = minOf(rest.fetchMs,  cwb.fetchMs,  capnp.fetchMs);
+  const minDecode = minOf(rest.decodeMs, cwb.decodeMs, capnp.decodeMs);
+  const minRender = minOf(rest.renderMs, cwb.renderMs, capnp.renderMs);
+  const minTotal  = minOf(totals.rest,   totals.cwb,   totals.capnp);
+  const minBytes  = minOf(rest.bytes,    cwb.bytes,    capnp.bytes);
 
-  setCell("capnp-fetch",  capnp.fetchMs,  !restWinsFetch);
-  setCell("capnp-decode", capnp.decodeMs, !restWinsDecode);
-  setCell("capnp-render", capnp.renderMs, !restWinsRender);
-  setCell("capnp-total",  capnpTotal,     !restWinsTotal);
-  $("capnp-bytes").textContent = fmtBytes(capnp.bytes);
-  $("capnp-bytes").className = !restWinsBytes ? "win" : "lose";
+  fillCol("rest",  rest,  totals.rest,  rest.fetchMs===minFetch,  rest.decodeMs===minDecode,  rest.renderMs===minRender,  totals.rest===minTotal,  rest.bytes===minBytes);
+  fillCol("cwb",   cwb,   totals.cwb,   cwb.fetchMs===minFetch,   cwb.decodeMs===minDecode,   cwb.renderMs===minRender,   totals.cwb===minTotal,   cwb.bytes===minBytes);
+  fillCol("capnp", capnp, totals.capnp, capnp.fetchMs===minFetch, capnp.decodeMs===minDecode, capnp.renderMs===minRender, totals.capnp===minTotal, capnp.bytes===minBytes);
 
-  const ratio = restTotal / capnpTotal;
-  if (capnpTotal < restTotal) {
+  // Summary picks the winner and explains the finish order.
+  const sorted = [
+    { name: "REST/JSON", t: totals.rest,  b: rest.bytes  },
+    { name: "capnweb",   t: totals.cwb,   b: cwb.bytes   },
+    { name: "capnwasm",  t: totals.capnp, b: capnp.bytes },
+  ].sort((a, b) => a.t - b.t);
+  const winner = sorted[0];
+  const honestLink = `<a href="https://github.com/anthropics/capnwasm/blob/main/docs/honest-comparison.md" style="color:inherit;text-decoration:underline">honest comparison doc</a>`;
+
+  if (winner.name === "capnwasm") {
     summary.className = "win";
-    summary.innerHTML = `capnwasm <strong>${ratio.toFixed(2)}× faster</strong> end-to-end (${fmtMs(restTotal)} → ${fmtMs(capnpTotal)}). Wire bytes: ${fmtBytes(rest.bytes)} → ${fmtBytes(capnp.bytes)}.`;
+    summary.innerHTML = `<strong>capnwasm wins</strong>: ${fmtMs(totals.capnp)} vs REST ${fmtMs(totals.rest)} (${(totals.rest / totals.capnp).toFixed(2)}×) and capnweb ${fmtMs(totals.cwb)} (${(totals.cwb / totals.capnp).toFixed(2)}×). Wire ${fmtBytes(rest.bytes)} JSON / ${fmtBytes(cwb.bytes)} capnweb / ${fmtBytes(capnp.bytes)} capnp.`;
   } else {
-    const byteRatio = rest.bytes / capnp.bytes;
     summary.className = "lose";
-    summary.innerHTML = `capnwasm <strong>${(1 / ratio).toFixed(2)}× slower</strong> end-to-end (${fmtMs(capnpTotal)} vs ${fmtMs(restTotal)}). Wire bytes ${fmtBytes(rest.bytes)} → ${fmtBytes(capnp.bytes)} (<strong>${byteRatio.toFixed(2)}× smaller</strong>) but on localhost the bytes savings can&apos;t pay back the wasm load + per-record decode cost. Capnwasm&apos;s wins (3.2× burst RPC, binary wire interop with C++/Rust/Go peers, sparse-read perf) need a different workload than parallel HTTP fetches to surface &mdash; the <a href="https://github.com/anthropics/capnwasm/blob/main/docs/honest-comparison.md" style="color:inherit;text-decoration:underline">honest comparison doc</a> covers when each one wins.`;
+    summary.innerHTML = `<strong>${winner.name} wins this workload</strong>: ${fmtMs(winner.t)}. capnwasm came in at ${fmtMs(totals.capnp)} (${(totals.capnp / winner.t).toFixed(2)}× ${winner.name}&apos;s). On localhost the wasm load + per-record boundary cost can outweigh the bytes savings; capnwasm&apos;s wins (RPC bursts, sparse reads, binary wire interop) need a different workload &mdash; see ${honestLink}.`;
   }
 
   status.textContent = `done — ${workload} workload, ${count} records × ${iters} iter (median)`;
   runBtn.disabled = false;
 }
 
-runBtn.addEventListener("click", runBench);
-// Auto-run on load so visitors see numbers without clicking.
+// Single-flight: ignore re-entrant clicks while a run is in progress so
+// the test rig (and the user) can never start a new bench on top of a
+// pending one. Auto-run goes through the same gate.
+let inFlight = false;
+async function runBenchSafe() {
+  if (inFlight) return;
+  inFlight = true;
+  try {
+    await runBench();
+  } finally {
+    inFlight = false;
+  }
+}
+runBtn.addEventListener("click", runBenchSafe);
 window.addEventListener("DOMContentLoaded", () => {
-  setTimeout(runBench, 100);
+  setTimeout(runBenchSafe, 100);
 });
