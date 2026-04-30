@@ -3,6 +3,7 @@
 // to read).
 
 import { CapnWasm } from "/js/index.mjs";
+import { CapnCpp } from "/js/cpp_loader.mjs";
 import { fixtures } from "./fixtures.mjs";
 import * as capnweb from "/capnweb-vendor/index.js";
 import { encodeFromValue, decodeToValue } from "./codec-capnwasm.mjs";
@@ -18,8 +19,10 @@ function setStatus(msg) {
 }
 
 async function run() {
-  setStatus("Loading capnwasm.wasm + gc_decode.wasm ...");
+  setStatus("Loading wasm modules ...");
   const wasm = await CapnWasm.load("/zig-out/capnwasm.opt.wasm", "/zig-out/gc_decode.wasm");
+  const cpp = await CapnCpp.load("/zig-out/capnp_cpp.opt.wasm");
+  window.__cpp = cpp;
 
   const out = {
     sizes: await collectSizes(),
@@ -55,13 +58,24 @@ async function collectSizes() {
 }
 
 function perfFor(wasm, fx) {
-  const iters = fx.name.includes("large") || fx.name.includes("blob") ? 200 : 2000;
+  const iters = fx.name.includes("large") || fx.name.includes("blob") || fx.name.includes("wide") ? 200 : 2000;
   const v = fx.value;
+  const cpp = window.__cpp;
 
   // Encode benchmark
   const tCwEnc = bench(iters, () => encodeFromValue(wasm, v));
   const cwBytes = encodeFromValue(wasm, v);
   const tCwDec = bench(iters, () => decodeToValue(wasm, cwBytes));
+
+  // Real C++ capnproto via wasm
+  let tCppEnc = NaN, tCppDec = NaN, cppBytes = null;
+  try {
+    cppBytes = cpp.serialize(v);
+    tCppEnc = bench(iters, () => cpp.serialize(v));
+    tCppDec = bench(iters, () => cpp.deserialize(cppBytes));
+  } catch (e) {
+    console.warn("cpp path failed for", fx.name, e);
+  }
 
   // Sub-step timings to attribute cost to JS-tape vs wasm-encode.
   const tWriteTape = benchWriteTape(wasm, v, iters);
@@ -100,6 +114,9 @@ function perfFor(wasm, fx) {
     capnwasm_gcdecode_us: tGcDecode.usPerOp,
     capnwasm_lazy3_us: lazy3.cwUs,
     capnwasm_batch3_us: lazy3.cwBatchUs,
+    capnwasm_cpp_encode_us: typeof tCppEnc === "object" ? tCppEnc.usPerOp : NaN,
+    capnwasm_cpp_decode_us: typeof tCppDec === "object" ? tCppDec.usPerOp : NaN,
+    capnwasm_cpp_bytes: cppBytes?.length ?? 0,
     capnweb_lazy3_us: lazy3.cwbUs,
     capnwasm_lazyall_us: lazy3.cwAllUs,
     capnweb_fullread_us: lazy3.cwbAllUs,

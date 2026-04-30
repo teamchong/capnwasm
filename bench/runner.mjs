@@ -130,28 +130,27 @@ async function main() {
     if (browserResults.stack) console.log(browserResults.stack);
     return;
   }
-  const head = ["fixture", "cw enc", "cwb enc", "x", "cw dec", "(GC)", "cwb dec", "x", "GCx"];
-  console.log(head.map((c) => c.padStart(9)).join(""));
+  console.log("\nLegend: cw=our hand-Zig, cpp=real capnproto C++ via wasm, cwb=capnweb (JSON)");
+  const head = ["fixture", "cw enc", "cpp enc", "cwb enc", "cw dec", "cpp dec", "cwb dec", "cppB"];
+  console.log(head.map((c) => c.padStart(10)).join(""));
   for (const [name, p] of Object.entries(browserResults.perf ?? {})) {
     if (p.error) {
-      console.log(`${name.padStart(9)} ERROR: ${p.error}`);
+      console.log(`${name.padStart(10)} ERROR: ${p.error}`);
       continue;
     }
-    const gcSpd = (p.capnweb_decode_us / p.capnwasm_gcdecode_us);
+    const fmt = (x) => Number.isFinite(x) ? x.toFixed(2) : "-";
     const row = [
       name,
-      p.capnwasm_encode_us?.toFixed(2),
-      p.capnweb_encode_us?.toFixed(2),
-      p.encode_speedup?.toFixed(2) + "x",
-      p.capnwasm_decode_us?.toFixed(2),
-      Number.isFinite(p.capnwasm_gcdecode_us) ? p.capnwasm_gcdecode_us.toFixed(2) : "-",
-      p.capnweb_decode_us?.toFixed(2),
-      p.decode_speedup?.toFixed(2) + "x",
-      Number.isFinite(gcSpd) ? gcSpd.toFixed(2) + "x" : "-",
+      fmt(p.capnwasm_encode_us),
+      fmt(p.capnwasm_cpp_encode_us),
+      fmt(p.capnweb_encode_us),
+      fmt(p.capnwasm_decode_us),
+      fmt(p.capnwasm_cpp_decode_us),
+      fmt(p.capnweb_decode_us),
+      String(p.capnwasm_cpp_bytes ?? "-"),
     ];
-    console.log(row.map((c) => String(c ?? "-").padStart(9)).join(""));
+    console.log(row.map((c) => String(c).padStart(10)).join(""));
   }
-  console.log("\nlegend: GC = WasmGC externref decode path; GCx = capnweb_dec / GC speedup");
 
   // Lazy access (decode + access K fields)
   const lazyRows = Object.entries(browserResults.perf ?? {}).filter(([, p]) => p.lazy3_supported);
