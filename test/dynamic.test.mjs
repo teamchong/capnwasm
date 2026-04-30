@@ -135,3 +135,70 @@ test("dynamic schema can be derived from the codegen _FIELDS shape", () => {
   assert.equal(got.u16, 1234);
   assert.equal(got.text, "hello");
 });
+
+// Hand-crafted Post message with scores=[10, 20, 30] — same bytes
+// list.test.mjs uses to verify codegen list reads. We use them here to
+// verify the dynamic reader's list-of-primitive support produces the
+// same array.
+function buildPostWithScores() {
+  const bytes = new Uint8Array(64);
+  const dv = new DataView(bytes.buffer);
+  // Root struct ptr at bytes 8-15: struct(0 data, 4 ptrs).
+  dv.setUint32(8, 0, true);
+  dv.setUint32(12, 4 << 16, true);
+  // scores list ptr at byte 32 (pointer slot 2, 16-byte offset into ptr section).
+  // Encoded list pointer: kind=1 list, B=1 word offset, elementSize=4 (4-byte), count=3.
+  const B = 1;
+  const lo = (B << 2) | 1;
+  const elementSize = 4;
+  const count = 3;
+  const hi = (count << 3) | elementSize;
+  dv.setUint32(32, lo, true);
+  dv.setUint32(36, hi, true);
+  // List data at byte 48: three u32s.
+  dv.setUint32(48, 10, true);
+  dv.setUint32(52, 20, true);
+  dv.setUint32(56, 30, true);
+  // Frame header: segCount-1=0, segSize=7 words.
+  dv.setUint32(0, 0, true);
+  dv.setUint32(4, 7, true);
+  return bytes;
+}
+
+const PostSchema = defineSchema({
+  title:   { kind: "text",       slot: 0 },
+  scores:  { kind: "listUint32", slot: 2 },
+});
+
+test("dynamic.list: list-of-uint32 materializes as a JS array", () => {
+  const bytes = buildPostWithScores();
+  const r = openDynamic(cpp, PostSchema, bytes);
+  assert.deepEqual(r.get("scores"), [10, 20, 30]);
+});
+
+test("dynamic.list: pick falls back to per-field reads when a list is included", () => {
+  const bytes = buildPostWithScores();
+  const r = openDynamic(cpp, PostSchema, bytes);
+  const got = r.pick(["title", "scores"]);
+  assert.equal(got.title, "");          // null pointer → default "" via codegen semantics
+  assert.deepEqual(got.scores, [10, 20, 30]);
+});
+
+test("dynamic.list: empty list returns empty array", () => {
+  // Frame with null root pointer → all fields default. List defaults to [].
+  const empty = new Uint8Array(16);
+  new DataView(empty.buffer).setUint32(0, 0, true);
+  new DataView(empty.buffer).setUint32(4, 1, true);
+  const r = openDynamic(cpp, PostSchema, empty);
+  assert.deepEqual(r.get("scores"), []);
+});
+
+test("dynamic.list: Proxy access for list fields", () => {
+  const bytes = buildPostWithScores();
+  const r = openDynamic(cpp, PostSchema, bytes);
+  assert.deepEqual(r.fields.scores, [10, 20, 30]);
+});
+
+test("defineSchema: listUint32 requires slot, not offset", () => {
+  assert.throws(() => defineSchema({ x: { kind: "listUint32", offset: 0 } }), /invalid "slot"/);
+});

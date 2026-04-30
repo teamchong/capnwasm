@@ -46,9 +46,20 @@ Supported kinds: text, data, uint8/16/32, int8/16/32, int64, uint64,
 float32/64, bool. Tests round-trip against the codegen reader for the
 conformance schema's Primitives type.
 
-Still a follow-up if anyone needs it: lists and nested structs. The wasm
-exposes `cpp_any_enter_struct` and `cpp_any_enter_list_at` already; the JS
-wrapper would build on the same descriptor format. ~half a day.
+**Update (2026-04-30, second pass):** lists of primitives also landed.
+Add `{ kind: "listUint32", slot: N }` (or any of `listUint8/16/32/64`,
+`listInt8/16/32/64`, `listFloat32/64`, `listBool`, `listText`, `listData`)
+to a schema descriptor. Lists go through per-element reads — `pick()`
+detects a list and falls back to the slow path; the fast batch_read
+remains intact when fields are pure primitives.
+
+Still on the list:
+
+- **Lists of structs** — `cpp_any_enter_list_at(i)` is exported; the JS
+  wrapper would return either a sub-DynamicReader or an array of plain
+  objects depending on a flag on the schema entry.
+- **Nested structs** — same shape via `cpp_any_enter_struct(slot)` +
+  `cpp_any_leave_struct()`.
 
 ## 3. RPC pipelining is implemented but not pipelined under `await`
 

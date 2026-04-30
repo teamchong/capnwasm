@@ -61,6 +61,25 @@ const KIND_TABLE = {
   // bits, JS does the bit-cast through a typed-array view.
   float32: { wireKind: 3, offKey: "offset",    type: "float32" },
   float64: { wireKind: 4, offKey: "offset",    type: "float64" },
+  // List-of-primitive types. Reads happen through `cpp_any_open_list` +
+  // per-element `cpp_any_list_get_*`, materialized into a JS array. Lists
+  // are pointer-typed in the wire format, so they live at a slot index.
+  // Not in cpp_any_batch_read — these go through `_readSingle` even from
+  // pick(), which means N+1 wasm calls per list (open + size + N gets);
+  // codegen-emitted readers are unchanged and stay faster on hot paths.
+  listUint8:   { wireKind: -1, offKey: "slot", type: "list",   element: "uint8" },
+  listUint16:  { wireKind: -1, offKey: "slot", type: "list",   element: "uint16" },
+  listUint32:  { wireKind: -1, offKey: "slot", type: "list",   element: "uint32" },
+  listUint64:  { wireKind: -1, offKey: "slot", type: "list",   element: "uint64" },
+  listInt8:    { wireKind: -1, offKey: "slot", type: "list",   element: "int8" },
+  listInt16:   { wireKind: -1, offKey: "slot", type: "list",   element: "int16" },
+  listInt32:   { wireKind: -1, offKey: "slot", type: "list",   element: "int32" },
+  listInt64:   { wireKind: -1, offKey: "slot", type: "list",   element: "int64" },
+  listFloat32: { wireKind: -1, offKey: "slot", type: "list",   element: "float32" },
+  listFloat64: { wireKind: -1, offKey: "slot", type: "list",   element: "float64" },
+  listBool:    { wireKind: -1, offKey: "slot", type: "list",   element: "bool" },
+  listText:    { wireKind: -1, offKey: "slot", type: "list",   element: "text" },
+  listData:    { wireKind: -1, offKey: "slot", type: "list",   element: "data" },
 };
 
 /**
@@ -82,11 +101,13 @@ export function defineSchema(spec) {
     if (typeof off !== "number" || off < 0 || !Number.isInteger(off)) {
       throw new TypeError(`field "${name}": missing or invalid "${meta.offKey}"`);
     }
-    fields[name] = Object.freeze({
+    const desc = {
       kind: meta.wireKind,
       off,
       type: meta.type,
-    });
+    };
+    if (meta.element) desc.element = meta.element;
+    fields[name] = Object.freeze(desc);
   }
   Object.freeze(fields);
   return { fields };
@@ -202,13 +223,98 @@ function _readSingle(cpp, desc) {
       return v;
     }
     case "bool":   return exp.cpp_any_bool_at(desc.off, 0) === 1;
+    case "list":   return _readList(cpp, desc);
     default:       return undefined;
+  }
+}
+
+// Materialize a list-of-primitive into a JS array. The wasm exposes a
+// single any_list_reader slot (last list opened), so opening another list
+// invalidates this one — readers materialize the whole list before
+// returning, rather than handing back a lazy iterator that could outlive
+// the underlying state.
+function _readList(cpp, desc) {
+  const exp = cpp._exports;
+  const size = exp.cpp_any_open_list(desc.off);
+  if (size === 0) return [];
+  const out = new Array(size);
+  switch (desc.element) {
+    case "uint8":
+      for (let i = 0; i < size; i++) out[i] = exp.cpp_any_list_get_uint8(i);
+      return out;
+    case "uint16":
+      for (let i = 0; i < size; i++) out[i] = exp.cpp_any_list_get_uint16(i);
+      return out;
+    case "uint32":
+      for (let i = 0; i < size; i++) out[i] = exp.cpp_any_list_get_uint32(i) >>> 0;
+      return out;
+    case "int8":
+      for (let i = 0; i < size; i++) {
+        const v = exp.cpp_any_list_get_uint8(i); out[i] = (v << 24) >> 24;
+      }
+      return out;
+    case "int16":
+      for (let i = 0; i < size; i++) {
+        const v = exp.cpp_any_list_get_uint16(i); out[i] = (v << 16) >> 16;
+      }
+      return out;
+    case "int32":
+      for (let i = 0; i < size; i++) out[i] = exp.cpp_any_list_get_uint32(i) | 0;
+      return out;
+    case "uint64":
+    case "int64": {
+      for (let i = 0; i < size; i++) {
+        const big = exp.cpp_any_list_get_uint64(i);
+        out[i] = (typeof big === "bigint" && big >= -9007199254740992n && big <= 9007199254740992n)
+          ? Number(big) : big;
+      }
+      return out;
+    }
+    case "float32":
+      for (let i = 0; i < size; i++) {
+        _F32_U32[0] = exp.cpp_any_list_get_float32_bits(i) >>> 0;
+        out[i] = _F32_F32[0];
+      }
+      return out;
+    case "float64":
+      for (let i = 0; i < size; i++) {
+        const bits = exp.cpp_any_list_get_float64_bits(i);
+        // bits comes back as BigInt from i64-returning wasm exports.
+        const v = typeof bits === "bigint" ? bits : BigInt(bits);
+        _F64_U32[0] = Number(v & 0xffffffffn) >>> 0;
+        _F64_U32[1] = Number((v >> 32n) & 0xffffffffn) >>> 0;
+        out[i] = _F64_F64[0];
+      }
+      return out;
+    case "bool":
+      for (let i = 0; i < size; i++) out[i] = exp.cpp_any_list_get_bool(i) === 1;
+      return out;
+    case "text":
+      for (let i = 0; i < size; i++) {
+        const len = exp.cpp_any_list_get_text(i);
+        if (len === 0) { out[i] = ""; continue; }
+        out[i] = SHARED_DECODER.decode(cpp._u8.subarray(cpp._outPtr, cpp._outPtr + len));
+      }
+      return out;
+    case "data":
+      for (let i = 0; i < size; i++) {
+        const len = exp.cpp_any_list_get_data(i);
+        out[i] = cpp._u8.slice(cpp._outPtr, cpp._outPtr + len);
+      }
+      return out;
+    default:
+      return out;
   }
 }
 
 // Batched pick — single wasm call returning all requested fields in order.
 // Mirrors the codegen-generated `_capnwasmPick` helper but reads the field
 // list from the dynamic schema instead of a baked _FIELDS object.
+//
+// Lists fall back to per-field reads because cpp_any_batch_read doesn't
+// know about list types. The fallback is whole-pick: as soon as any field
+// is a list, we route every field through _readSingle. The fast batch
+// path stays intact for the common pure-primitive case.
 function _batchPick(cpp, fields, names) {
   const u8 = cpp._u8;
   const dv = new DataView(u8.buffer);
@@ -219,12 +325,19 @@ function _batchPick(cpp, fields, names) {
   const reqLen = 4 + count * 5;
   dv.setUint32(aux, count, true);
   const descs = new Array(count);
+  let needsFallback = false;
   for (let i = 0; i < count; i++) {
     const d = fields[names[i]];
     if (!d) throw new Error(`unknown field: ${names[i]}`);
     descs[i] = d;
-    u8[aux + 4 + i * 5] = d.kind;
+    if (d.kind < 0) needsFallback = true;
+    u8[aux + 4 + i * 5] = d.kind & 0xff;
     dv.setUint32(aux + 4 + i * 5 + 1, d.off, true);
+  }
+  if (needsFallback) {
+    const result = {};
+    for (let i = 0; i < count; i++) result[names[i]] = _readSingle(cpp, descs[i]);
+    return result;
   }
 
   const written = cpp._exports.cpp_any_batch_read(reqLen);
