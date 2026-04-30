@@ -1,11 +1,13 @@
 // Vite plugin that mounts the playground's RPC server onto Vite's own
-// HTTP server during dev. Lets the WebSocket bench page connect to
-// ws://localhost:5173/capnwasm and /capnweb without spinning up a
-// second process — `npm run dev` is enough.
+// HTTP server. Two attach points:
 //
-// The plugin only runs in the dev server (`vite serve`); production
-// `vite build` is static, so users running `vite preview` against the
-// built site need to start the server out-of-band (`npm run server`).
+//   configureServer        — `vite dev`. RPC endpoints sit alongside
+//                            HMR on the same port.
+//   configurePreviewServer — `vite preview`. Same endpoints attached
+//                            to the static-file server, so the same
+//                            `npm run preview` produces a working
+//                            production-shaped bench without anyone
+//                            running a second process.
 //
 // Implementation: attach our own WebSocketServer in `noServer` mode to
 // the underlying http.Server's `upgrade` event. Vite has its own HMR
@@ -49,42 +51,46 @@ class CapnwebEcho extends RpcTarget {
   getChild()    { return new CapnwebEcho(); }
 }
 
+// Wire RPC handling onto an existing http.Server. Used identically by
+// the dev hook and the preview hook so dev/preview behaviour matches.
+function attachRpc(httpServer, registry, label, log) {
+  const wss = new WebSocketServer({ noServer: true });
+
+  wss.on("connection", (ws, req, kind) => {
+    if (kind === "capnwasm") {
+      loadWasm().then((cpp) => {
+        new RpcSession(cpp, wsTransport(ws), registry, { bootstrap: { kind: "root" } });
+      });
+    } else if (kind === "capnweb") {
+      newWebSocketRpcSession(ws, new CapnwebEcho());
+    }
+  });
+
+  httpServer?.on("upgrade", (req, socket, head) => {
+    const url = req.url ?? "";
+    const isCapnwasm = url.startsWith("/capnwasm");
+    const isCapnweb  = url.startsWith("/capnweb");
+    if (!isCapnwasm && !isCapnweb) return;  // Vite's own HMR upgrades pass through
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req, isCapnwasm ? "capnwasm" : "capnweb");
+    });
+  });
+
+  log?.info(`  \x1b[36m\x1b[1m➜\x1b[0m  RPC bench server attached at /capnwasm and /capnweb (${label})`);
+  return wss;
+}
+
 export function rpcDevServer() {
   const reg = buildRegistry();
   let wss = null;
 
   return {
     name: "capnwasm-rpc-dev-server",
-    apply: "serve",
     configureServer(server) {
-      // Vite's HTTP server handles the HMR /__vite/ upgrade. We attach a
-      // separate noServer-mode WSS and route based on URL path so HMR
-      // keeps working alongside the bench endpoints.
-      wss = new WebSocketServer({ noServer: true });
-
-      wss.on("connection", (ws, req, kind) => {
-        if (kind === "capnwasm") {
-          loadWasm().then((cpp) => {
-            new RpcSession(cpp, wsTransport(ws), reg, { bootstrap: { kind: "root" } });
-          });
-        } else if (kind === "capnweb") {
-          newWebSocketRpcSession(ws, new CapnwebEcho());
-        }
-      });
-
-      server.httpServer?.on("upgrade", (req, socket, head) => {
-        const url = req.url ?? "";
-        const isCapnwasm = url.startsWith("/capnwasm");
-        const isCapnweb  = url.startsWith("/capnweb");
-        if (!isCapnwasm && !isCapnweb) return;  // let Vite's HMR handle it
-        wss.handleUpgrade(req, socket, head, (ws) => {
-          wss.emit("connection", ws, req, isCapnwasm ? "capnwasm" : "capnweb");
-        });
-      });
-
-      server.config.logger.info(
-        "  \x1b[36m\x1b[1m➜\x1b[0m  RPC bench server attached at /capnwasm and /capnweb"
-      );
+      wss = attachRpc(server.httpServer, reg, "dev", server.config.logger);
+    },
+    configurePreviewServer(server) {
+      wss = attachRpc(server.httpServer, reg, "preview", server.config.logger);
     },
     closeBundle() {
       wss?.close();

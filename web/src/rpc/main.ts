@@ -262,7 +262,7 @@ runBtn.addEventListener("click", runSafe);
     setTimeout(runSafe, 100);
   } else {
     serverDot.classList.add("down");
-    serverMsg.innerHTML = `<strong>RPC server unreachable.</strong> In dev mode, <code>npm run dev</code> embeds the server automatically &mdash; if you&rsquo;re running <code>vite preview</code> of a built site, start it with <code>npm run server</code> in the <code>web/</code> directory.`;
+    serverMsg.innerHTML = `<strong>RPC server unreachable.</strong> Both <code>npm run dev</code> and <code>npm run preview</code> embed the bench server automatically; if you&rsquo;re hosting the static <code>dist/</code> behind a CDN, run <code>npm run server</code> separately and update <code>SERVER</code> in <code>src/rpc/main.ts</code> to point at it.`;
     status.textContent = "RPC server unreachable — see banner above.";
   }
 })();

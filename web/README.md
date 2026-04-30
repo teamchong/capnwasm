@@ -30,8 +30,15 @@ npm run build        # static output in web/dist
 npm run preview      # serve the built site at http://localhost:4173
 ```
 
-The build emits hashed asset filenames for the wasm + JS, so it&rsquo;s safe
-to deploy behind any CDN with long-cache headers.
+`npm run preview` also attaches the RPC bench server to its HTTP port,
+so `/rpc.html` works against the production build out of the box. The
+build emits hashed asset filenames for the wasm + JS, so the static
+`dist/` is safe to drop behind any CDN with long-cache headers.
+
+If you do drop the static `dist/` behind a CDN, the RPC bench page
+will need a real WebSocket backend somewhere &mdash; `npm run server` runs
+the same handlers as a standalone process at `ws://HOST:8081`. Or wire
+the handlers in `vite-rpc-server.mjs` into your own deployment.
 
 ## Wiring
 
