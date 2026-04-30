@@ -78,6 +78,32 @@ the wasm instance; the JS host catches `proc_exit` from the WASI shim.
 Bundle size: capnp_cpp.opt.wasm is **35 KB gzip** vs capnweb's 21 KB —
 **1.68x larger** on the wire.
 
+## Two import paths, your choice
+
+```js
+// Default: small JS bundle (~6 KB gzip), wasm fetched separately and cached.
+import { CapnCpp } from "capnwasm";
+const cpp = await CapnCpp.load("/path/to/capnp_cpp.opt.wasm");
+
+// Single-file: wasm inlined as base64. One fetch, larger bundle.
+import { load } from "capnwasm/inlined";
+const cpp = await load();
+```
+
+Honest size comparison (gzip):
+
+| Path | JS | wasm | total |
+|---|---|---|---|
+| `capnwasm` (split) | **6 KB** | 39 KB (separate, cacheable, parallel) | 45 KB |
+| `capnwasm/inlined` | 54 KB (single file) | — | 54 KB |
+| capnweb | 21 KB | — | 21 KB |
+
+The JS-glue alone (6 KB gzip) is smaller than capnweb. The wasm is the
+~33 KB bulk because it bundles the full Cap'n Proto + KJ runtime.
+Splitting wins for HTTP/2 parallel fetch and long-term caching of the
+wasm across app updates; inlining wins for setups that can't ship a
+separate `.wasm` asset.
+
 ## CLI: `npx capnwasm`
 
 One package, one CLI, library import all share the name:

@@ -137,3 +137,6 @@ wasm-opt "$OUT" \
   -o "$OPT_OUT"
 echo "Optimized: $OPT_OUT"
 ls -la "$OPT_OUT"
+
+# Generate the inlined single-file bundle for users who want one-fetch.
+node js/build_inlined.mjs
