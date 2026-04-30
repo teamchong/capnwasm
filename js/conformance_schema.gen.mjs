@@ -131,17 +131,13 @@ export class PrimitivesReader {
     return this._exp.cpp_any_int64_at(24, 0n);
   }
   get f32() {
-    const u = this._exp.cpp_any_uint32_at(32, 0) >>> 0;
-    if (!this._f32buf) { this._f32buf = new ArrayBuffer(4); this._f32u32 = new Uint32Array(this._f32buf); this._f32f32 = new Float32Array(this._f32buf); }
-    this._f32u32[0] = u;
-    return this._f32f32[0];
+    _F32_VIEW_U32[0] = this._exp.cpp_any_uint32_at(32, 0) >>> 0;
+    return _F32_VIEW_F32[0];
   }
   get f64() {
-    const lo = this._exp.cpp_any_uint32_at(40, 0) >>> 0;
-    const hi = this._exp.cpp_any_uint32_at(44, 0) >>> 0;
-    if (!this._f64buf) { this._f64buf = new ArrayBuffer(8); this._f64u32 = new Uint32Array(this._f64buf); this._f64f64 = new Float64Array(this._f64buf); }
-    this._f64u32[0] = lo; this._f64u32[1] = hi;
-    return this._f64f64[0];
+    _F64_VIEW_U32[0] = this._exp.cpp_any_uint32_at(40, 0) >>> 0;
+    _F64_VIEW_U32[1] = this._exp.cpp_any_uint32_at(44, 0) >>> 0;
+    return _F64_VIEW_F64[0];
   }
   get flag0() {
     return this._exp.cpp_any_bool_at(144, 0) === 1;

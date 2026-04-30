@@ -10,7 +10,7 @@ Read and write Cap'n Proto messages without running `npx capnwasm gen`. The sche
 | Schema arrives at runtime (tenant uploads, admin tools, GraphQL fragments) | **only option** | not applicable |
 | Subset of fields varies per request | **fast** — `pick(names)` is one wasm call | works, same speed |
 | Bundle-size sensitive (no per-schema codegen output) | **smaller** — one runtime, every schema | adds 2-3 KB per generated `.gen.mjs` |
-| Production hot path | works (read is competitive, write is ~1.45× slower) | **slightly faster** writes |
+| Production hot path | works — reads ~1.17× slower, batched picks slightly faster, writes ~1.6× slower | **faster** on per-field reads and writes |
 
 If the schema doesn't change between deploys, codegen is the right answer. The dynamic API exists for the cases codegen can't reach.
 

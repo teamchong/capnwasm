@@ -1270,20 +1270,18 @@ function generateGetter(field) {
     case "Int64":
       return [`return this._exp.cpp_any_int64_at(${off}, 0n);`];
     case "Float32":
-      // Reinterpret u32 bits as f32 via a stack-allocated typed-array view.
+      // Reinterpret u32 bits as f32 via the module-scoped shared view (one
+      // ArrayBuffer per module load, not per reader instance — the latter
+      // showed up in the bench at hundreds of nanoseconds per field access).
       return [
-        `const u = this._exp.cpp_any_uint32_at(${off}, 0) >>> 0;`,
-        `if (!this._f32buf) { this._f32buf = new ArrayBuffer(4); this._f32u32 = new Uint32Array(this._f32buf); this._f32f32 = new Float32Array(this._f32buf); }`,
-        `this._f32u32[0] = u;`,
-        `return this._f32f32[0];`,
+        `_F32_VIEW_U32[0] = this._exp.cpp_any_uint32_at(${off}, 0) >>> 0;`,
+        `return _F32_VIEW_F32[0];`,
       ];
     case "Float64":
       return [
-        `const lo = this._exp.cpp_any_uint32_at(${off}, 0) >>> 0;`,
-        `const hi = this._exp.cpp_any_uint32_at(${off + 4}, 0) >>> 0;`,
-        `if (!this._f64buf) { this._f64buf = new ArrayBuffer(8); this._f64u32 = new Uint32Array(this._f64buf); this._f64f64 = new Float64Array(this._f64buf); }`,
-        `this._f64u32[0] = lo; this._f64u32[1] = hi;`,
-        `return this._f64f64[0];`,
+        `_F64_VIEW_U32[0] = this._exp.cpp_any_uint32_at(${off}, 0) >>> 0;`,
+        `_F64_VIEW_U32[1] = this._exp.cpp_any_uint32_at(${off + 4}, 0) >>> 0;`,
+        `return _F64_VIEW_F64[0];`,
       ];
     default:
       return [`throw new Error("unsupported field type: ${field.type}");`];
