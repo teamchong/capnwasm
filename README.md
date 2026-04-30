@@ -139,7 +139,7 @@ What's there:
 - **Capability passing** — handler returns `{ caps: [target] }`; client receives a working `RpcCap` it can call methods on. Round-trip confirmed including `senderHosted` CapDescriptor encoding.
 - **Auto-release** — `RpcCap` GC fires `FinalizationRegistry`, sends `Release` to peer, server's `localCaps` shrinks. No leaks.
 - **Streaming** — `cap.callStream(...)` returns `AsyncIterable<Uint8Array>`; server registers an async generator handler. Custom STREAM_CHUNK frame extension — server-push, no per-chunk round-trip.
-- **Auto-batching** (opt-in) — `newBatchedRpcSession()` coalesces multiple calls in one tick into one `transport.send`. Capnweb's `newHttpBatchRpcSession` shape; default is one-frame-per-call for predictable wire timing.
+- **Microtask batching** — multiple calls fired in the same tick coalesce into one `transport.send` at the next microtask boundary. Always on; the latency cost (≤ one microtask, ~1 µs) is invisible behind any network. Call `session.flush()` to force a send before the boundary if you need it.
 - **Nested groups, unions, lists of structs** — codegen emits typed accessors for all of them.
 
 ---

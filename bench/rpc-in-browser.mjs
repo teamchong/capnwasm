@@ -8,7 +8,6 @@ import {
   RpcSession,
   InterfaceRegistry,
   createMemoryTransportPair,
-  newBatchedRpcSession,
 } from "/js/rpc.mjs";
 import {
   PrimitivesBuilder,
@@ -61,8 +60,8 @@ const M_ECHO_U8 = 0;
 const M_ECHO_TEXT = 1;
 const M_GET_CHILD = 2;
 
-async function setupCapnwasm({ batched } = {}) {
-  setStatus(`Loading wasm (batched=${!!batched})…`);
+async function setupCapnwasm() {
+  setStatus(`Loading wasm…`);
   const cppA = await loadWasm();
   const cppB = await loadWasm();
   const { a, b } = createMemoryTransportPair();
@@ -81,10 +80,7 @@ async function setupCapnwasm({ batched } = {}) {
   });
   reg.register(IFC, M_GET_CHILD, () => ({ caps: [{ kind: "child" }] }));
   new RpcSession(cppB, b, reg, { bootstrap: { kind: "root" } });
-  const Sess = batched ? newBatchedRpcSession : RpcSession;
-  const client = batched
-    ? newBatchedRpcSession(cppA, a, undefined, {})
-    : new RpcSession(cppA, a);
+  const client = new RpcSession(cppA, a);
   return client.bootstrap();
 }
 
@@ -111,15 +107,13 @@ async function timedBurst(fn, count, iters) {
 async function run() {
   const cwbRoot = setupCapnweb();
   const ourRoot = await setupCapnwasm();
-  const ourBatched = await setupCapnwasm({ batched: true });
 
   const N = 1000;
 
   log(`In-browser RPC bench (Chromium V8). N=${N} per workload.\n`);
-  log(`workload                            cwb (JSON)   ours (default)   ours (batched)`);
-  log(`──────────────────────────────────  ───────────  ───────────────  ──────────────`);
+  log(`workload                            capnweb (JSON)   capnwasm (binary)`);
+  log(`──────────────────────────────────  ───────────────  ─────────────────`);
 
-  // Tiny: u8 echo
   {
     const cwb = await timed(() => cwbRoot.echoU8({ u8: 42 }), N);
     const our = await timed(() => {
@@ -127,15 +121,9 @@ async function run() {
       r.params.u8 = 42;
       return r.send({ resultsReader: PrimitivesReader, extract: rdr => rdr.u8 }).promise;
     }, N);
-    const batched = await timed(() => {
-      const r = ourBatched.callBuilder(IFC, M_ECHO_U8, PrimitivesBuilder);
-      r.params.u8 = 42;
-      return r.send({ resultsReader: PrimitivesReader, extract: rdr => rdr.u8 }).promise;
-    }, N);
-    log(`u8 echo (single call)               ${fmt(cwb)}   ${fmt(our)}   ${fmt(batched)}`);
+    log(`u8 echo (single call)               ${fmt(cwb)}   ${fmt(our)}`);
   }
 
-  // Medium text
   {
     const t256 = "x".repeat(256);
     const cwb = await timed(() => cwbRoot.echoText(t256), N);
@@ -144,15 +132,9 @@ async function run() {
       r.params.text = t256;
       return r.send({ resultsReader: PrimitivesReader, extract: rdr => rdr.text }).promise;
     }, N);
-    const batched = await timed(() => {
-      const r = ourBatched.callBuilder(IFC, M_ECHO_TEXT, PrimitivesBuilder);
-      r.params.text = t256;
-      return r.send({ resultsReader: PrimitivesReader, extract: rdr => rdr.text }).promise;
-    }, N);
-    log(`text echo 256B (single call)        ${fmt(cwb)}   ${fmt(our)}   ${fmt(batched)}`);
+    log(`text echo 256B (single call)        ${fmt(cwb)}   ${fmt(our)}`);
   }
 
-  // Burst — fan-out 100 in parallel, then await.
   {
     const COUNT = 100, ITERS = 100;
     const cwb = await timedBurst(() => cwbRoot.echoU8({ u8: 1 }), COUNT, ITERS);
@@ -161,15 +143,9 @@ async function run() {
       r.params.u8 = 1;
       return r.send({ resultsReader: PrimitivesReader, extract: rdr => rdr.u8 }).promise;
     }, COUNT, ITERS);
-    const batched = await timedBurst(() => {
-      const r = ourBatched.callBuilder(IFC, M_ECHO_U8, PrimitivesBuilder);
-      r.params.u8 = 1;
-      return r.send({ resultsReader: PrimitivesReader, extract: rdr => rdr.u8 }).promise;
-    }, COUNT, ITERS);
-    log(`burst 100 calls/iter (per-call)     ${fmt(cwb)}   ${fmt(our)}   ${fmt(batched)}`);
+    log(`burst 100 calls/iter (per-call)     ${fmt(cwb)}   ${fmt(our)}`);
   }
 
-  // Cap-passing: getChild then call on returned cap.
   {
     const cwb = await timed(async () => {
       const child = cwbRoot.getChild();
@@ -181,13 +157,7 @@ async function run() {
       r2.params.u8 = 9;
       return r2.send({ resultsReader: PrimitivesReader, extract: rdr => rdr.u8 }).promise;
     }, N);
-    const batched = await timed(() => {
-      const r1 = ourBatched.callBuilder(IFC, M_GET_CHILD, PrimitivesBuilder).send();
-      const r2 = r1.cap.callBuilder(IFC, M_ECHO_U8, PrimitivesBuilder);
-      r2.params.u8 = 9;
-      return r2.send({ resultsReader: PrimitivesReader, extract: rdr => rdr.u8 }).promise;
-    }, N);
-    log(`cap-passing: getChild + echo        ${fmt(cwb)}   ${fmt(our)}   ${fmt(batched)}`);
+    log(`cap-passing: getChild + echo        ${fmt(cwb)}   ${fmt(our)}`);
   }
 
   // Wire-byte comparison (counts characters / bytes per round-trip frame).

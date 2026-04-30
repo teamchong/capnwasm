@@ -124,11 +124,16 @@ export class RpcSession {
   // the corresponding export entry. Critical for long-running sessions —
   // without this, every cap-passing Call would leak peer-side state.
   #importRefs;
-  // Batching state. OFF by default: each call goes on the wire as its own
-  // transport.send (matches capnweb's regular RpcSession behavior, and is
-  // what most users expect — no surprise microtask deferrals). Enable via
-  // { batching: true } in the constructor options or newBatchedRpcSession().
-  #batching = false;
+  // Cached reference to the wasm exports object. V8 inlines call sites
+  // more aggressively when the access chain is short and monomorphic —
+  // `this.#exp.fn()` is a single hidden-class lookup vs the original
+  // `this.#cpp._exports.fn()` which walks two property chains per call.
+  #exp;
+  // RpcSession always microtask-batches outbound sends. The cost is
+  // ≤ one microtask of first-byte latency (~1µs, invisible behind any
+  // network); the win is N→1 transport.send calls when the user makes
+  // multiple calls in the same tick. There is no "no-batch mode" — the
+  // tradeoff is one-sided.
   #sendQueue = null;
   #sendQueueBytes = 0;
   #flushScheduled = false;
@@ -143,18 +148,18 @@ export class RpcSession {
    * @param {InterfaceRegistry} [registry] - typed wrappers for known interfaces
    * @param {object} [options]
    * @param {object} [options.bootstrap] - object exposed when peer requests Bootstrap
-   * @param {boolean} [options.batching] - if true, coalesce multiple sends made in
-   *        the same tick into one transport.send at the next microtask boundary.
-   *        Off by default (each call goes on the wire as its own send), matching
-   *        capnweb's regular RpcSession. For HTTP-batch-style behavior, prefer
-   *        the dedicated newBatchedRpcSession() helper.
+   *
+   * Multiple sends made in the same tick are always coalesced into one
+   * transport.send at the next microtask boundary — there is no
+   * "no-batch" mode because the latency cost is invisible. If you need
+   * to force a send before the microtask boundary, call session.flush().
    */
   constructor(cpp, transport, registry, options = {}) {
     this.#cpp = cpp;
+    this.#exp = cpp._exports;        // shorthand the hot paths use
     this.#transport = transport;
     this.#registry = registry || new InterfaceRegistry();
     if (options.bootstrap) this.#localBootstrap = options.bootstrap;
-    if (options.batching) this.#batching = true;
     // FinalizationRegistry callback runs (sometime) after the RpcCap is GC'd.
     // We don't get strong timing guarantees, but for cap accounting that's
     // exactly the right semantic: release when nobody is using it anymore.
@@ -175,7 +180,7 @@ export class RpcSession {
    */
   bootstrap() {
     const questionId = this.#allocQuestionId();
-    const len = this.#cpp._exports.cpp_rpc_build_bootstrap(questionId);
+    const len = this.#exp.cpp_rpc_build_bootstrap(questionId);
     if (!len) throw new Error("cpp_rpc_build_bootstrap failed");
     // The bootstrap cap is addressable as importedCap(0) once the Return
     // arrives. Construct it now (so callers can pipeline immediately) and
@@ -202,7 +207,7 @@ export class RpcSession {
     const questionId = this.#allocQuestionId();
     const targetKind = target.kind === "promise" ? TARGET_PROMISED_ANSWER : TARGET_IMPORTED_CAP;
     this.#stageIn(paramsBytes);
-    const len = this.#cpp._exports.cpp_rpc_build_call(
+    const len = this.#exp.cpp_rpc_build_call(
       questionId,
       targetKind,
       BigInt(target.id),
@@ -239,7 +244,7 @@ export class RpcSession {
     }
     const questionId = this.#allocQuestionId();
     const targetKind = target.kind === "promise" ? TARGET_PROMISED_ANSWER : TARGET_IMPORTED_CAP;
-    const ok = this.#cpp._exports.cpp_rpc_begin_call(
+    const ok = this.#exp.cpp_rpc_begin_call(
       questionId, targetKind, BigInt(target.id), BigInt(interfaceId), methodId,
       BuilderClass._DATA_WORDS, BuilderClass._PTR_WORDS,
     );
@@ -253,7 +258,7 @@ export class RpcSession {
     const sendFn = (opts) => {
       // cpp_rpc_finalize writes the 4-byte length prefix + Cap'n Proto bytes
       // straight to cpp_out — no intermediate JS allocation, no frameWrite.
-      const framedLen = this.#cpp._exports.cpp_rpc_finalize();
+      const framedLen = this.#exp.cpp_rpc_finalize();
       if (!framedLen) throw new Error("cpp_rpc_finalize failed");
       const d = deferred();
       const q = { deferred: d, kind: "call" };
@@ -272,7 +277,7 @@ export class RpcSession {
   /** Send Finish to release the peer's hold on a question's resources. */
   finish(questionId) {
     if (this.#closed) return;
-    const len = this.#cpp._exports.cpp_rpc_build_finish(questionId);
+    const len = this.#exp.cpp_rpc_build_finish(questionId);
     if (!len) throw new Error("cpp_rpc_build_finish failed");
     this.#sendFromOut(len);
   }
@@ -284,7 +289,7 @@ export class RpcSession {
     if (this.#closed) return;
     if (!this.#imports.has(importId)) return;  // already released or never imported
     this.#imports.delete(importId);
-    const len = this.#cpp._exports.cpp_rpc_build_release(importId, refcount);
+    const len = this.#exp.cpp_rpc_build_release(importId, refcount);
     if (!len) return;  // best-effort; nothing to do if build fails
     try { this.#sendFromOut(len); } catch { /* transport closed mid-release */ }
   }
@@ -298,8 +303,8 @@ export class RpcSession {
 
   close() {
     if (this.#closed) return;
-    // Flush any pending batched sends before tearing down — otherwise a
-    // call right before close() could be lost.
+    // Drain queued sends before tearing down — otherwise a call right
+    // before close() could be dropped.
     this.#flush();
     this.#closed = true;
     for (const q of this.#questions.values()) q.deferred.reject(new Error("session closed"));
@@ -329,7 +334,7 @@ export class RpcSession {
       return;
     }
     this.#stageIn(payload);
-    const kind = this.#cpp._exports.cpp_rpc_decode(payload.length);
+    const kind = this.#exp.cpp_rpc_decode(payload.length);
     switch (kind) {
       case KIND_BOOTSTRAP: this.#handleBootstrap(); break;
       case KIND_CALL:      this.#handleCall(); break;
@@ -344,7 +349,7 @@ export class RpcSession {
   }
 
   #handleBootstrap() {
-    const questionId = this.#cpp._exports.cpp_rpc_get_bootstrap_question_id();
+    const questionId = this.#exp.cpp_rpc_get_bootstrap_question_id();
     // Register the local bootstrap as an export under local cap id 0, then
     // send Return with empty results. The current minimal wire skips
     // CapDescriptor encoding; instead, the peer addresses the bootstrap as
@@ -361,7 +366,7 @@ export class RpcSession {
     // just needs the answer to arrive; the cap is addressed by import id 0.
     const empty = emptyAnyPointerMessage();
     this.#stageIn(empty);
-    const len = this.#cpp._exports.cpp_rpc_build_return(questionId, 0, empty.length);
+    const len = this.#exp.cpp_rpc_build_return(questionId, 0, empty.length);
     if (!len) throw new Error("cpp_rpc_build_return (bootstrap) failed");
     this.#sendFromOut(len);
   }
@@ -370,12 +375,12 @@ export class RpcSession {
     // One wasm call returns all the per-Call accessors we need (saves
     // 4 boundary crossings vs the per-field accessors). Layout matches
     // cpp_rpc_get_call_summary in cpp/wrapper.cpp.
-    if (this.#cpp._exports.cpp_rpc_get_call_summary() !== 1) {
+    if (this.#exp.cpp_rpc_get_call_summary() !== 1) {
       // Shouldn't happen — we only land here for KIND_CALL — but be defensive.
       return;
     }
     const u8  = this.#cpp._u8;
-    const out = this.#cpp._exports.cpp_out_ptr();
+    const out = this.#exp.cpp_out_ptr();
     const dv  = new DataView(u8.buffer, out, 28);
     const answerId    = dv.getUint32(0,  true);
     const targetKind  = dv.getUint32(4,  true);
@@ -444,11 +449,11 @@ export class RpcSession {
     const ctx = {
       cpp: this.#cpp,
       paramsBytes: () => {
-        const len = this.#cpp._exports.cpp_rpc_get_call_params();
+        const len = this.#exp.cpp_rpc_get_call_params();
         return this.#snapshotOut(len);
       },
       openParams: (ReaderClass) => {
-        if (this.#cpp._exports.cpp_rpc_open_call_params() !== 1) {
+        if (this.#exp.cpp_rpc_open_call_params() !== 1) {
           throw new Error("cpp_rpc_open_call_params failed");
         }
         return new ReaderClass(this.#cpp);
@@ -457,7 +462,7 @@ export class RpcSession {
         if (typeof BuilderClass?._DATA_WORDS !== "number") {
           throw new Error("BuilderClass must expose static _DATA_WORDS / _PTR_WORDS");
         }
-        const ok = this.#cpp._exports.cpp_rpc_begin_return(
+        const ok = this.#exp.cpp_rpc_begin_return(
           answerId, BuilderClass._DATA_WORDS, BuilderClass._PTR_WORDS,
         );
         if (!ok) throw new Error("cpp_rpc_begin_return failed");
@@ -505,7 +510,7 @@ export class RpcSession {
       // Zero-copy results path: rpc_builder is already populated with the
       // Return + Payload + content. cpp_rpc_finalize writes prefix + bytes
       // straight to cpp_out so we can subarray and send without allocating.
-      const framedLen = this.#cpp._exports.cpp_rpc_finalize();
+      const framedLen = this.#exp.cpp_rpc_finalize();
       if (!framedLen) throw new Error("cpp_rpc_finalize failed");
       this.#sendFromOut(framedLen);
     } else if (capTargets) {
@@ -519,13 +524,13 @@ export class RpcSession {
         ids[i] = id;
       }
       this.#stageIn(new Uint8Array(ids.buffer, 0, ids.byteLength));
-      const len = this.#cpp._exports.cpp_rpc_build_return_with_caps(answerId, capTargets.length);
+      const len = this.#exp.cpp_rpc_build_return_with_caps(answerId, capTargets.length);
       if (!len) throw new Error("cpp_rpc_build_return_with_caps failed");
       this.#sendFromOut(len);
     } else {
       if (!resultsBytes) resultsBytes = emptyAnyPointerMessage();
       this.#stageIn(resultsBytes);
-      const len = this.#cpp._exports.cpp_rpc_build_return(answerId, 0, resultsBytes.length);
+      const len = this.#exp.cpp_rpc_build_return(answerId, 0, resultsBytes.length);
       if (!len) throw new Error("cpp_rpc_build_return (results) failed");
       this.#sendFromOut(len);
     }
@@ -554,8 +559,8 @@ export class RpcSession {
   }
 
   #handleReturn() {
-    const answerId = this.#cpp._exports.cpp_rpc_get_return_answer_id();
-    const retKind  = this.#cpp._exports.cpp_rpc_get_return_kind();
+    const answerId = this.#exp.cpp_rpc_get_return_answer_id();
+    const retKind  = this.#exp.cpp_rpc_get_return_kind();
     const q = this.#questions.get(answerId);
     if (!q) return;
     this.#questions.delete(answerId);
@@ -563,11 +568,11 @@ export class RpcSession {
       // Read the capTable first (it lives inside the Payload but doesn't
       // touch cpp_out), then either run the synchronous extractor against
       // the live rpc_reader, or copy out the result bytes for the caller.
-      const capCount = this.#cpp._exports.cpp_rpc_get_return_cap_count();
+      const capCount = this.#exp.cpp_rpc_get_return_cap_count();
       const caps = new Array(capCount);
       for (let i = 0; i < capCount; i++) {
-        const kind = this.#cpp._exports.cpp_rpc_get_return_cap_kind(i);
-        const id   = this.#cpp._exports.cpp_rpc_get_return_cap_id(i);
+        const kind = this.#exp.cpp_rpc_get_return_cap_kind(i);
+        const id   = this.#exp.cpp_rpc_get_return_cap_id(i);
         if (kind === 1 /* senderHosted */) {
           const cap = new RpcCap(this, { kind: "import", id }, this.#registry);
           this.#trackImport(cap, id);
@@ -589,7 +594,7 @@ export class RpcSession {
         // rpc_reader is still live. The promise resolves with whatever the
         // extractor returns — no result-bytes Uint8Array allocated, no
         // wasm-to-JS copy of the payload.
-        if (this.#cpp._exports.cpp_rpc_open_return_results() !== 1) {
+        if (this.#exp.cpp_rpc_open_return_results() !== 1) {
           q.deferred.reject(new Error("cpp_rpc_open_return_results failed"));
         } else {
           let extracted;
@@ -604,12 +609,12 @@ export class RpcSession {
           q.deferred.resolve(extracted);
         }
       } else {
-        const len = this.#cpp._exports.cpp_rpc_get_return_results();
+        const len = this.#exp.cpp_rpc_get_return_results();
         const bytes = this.#snapshotOut(len);
         q.deferred.resolve({ bytes, caps });
       }
     } else if (retKind === RET_EXCEPTION) {
-      const len = this.#cpp._exports.cpp_rpc_get_return_exception();
+      const len = this.#exp.cpp_rpc_get_return_exception();
       const reason = textDecode(this.#snapshotOut(len));
       q.deferred.reject(new Error(reason));
     } else if (retKind === RET_CANCELED) {
@@ -622,7 +627,7 @@ export class RpcSession {
   }
 
   #handleFinish() {
-    const questionId = this.#cpp._exports.cpp_rpc_get_finish_question_id();
+    const questionId = this.#exp.cpp_rpc_get_finish_question_id();
     this.#answers.delete(questionId);
   }
 
@@ -642,7 +647,7 @@ export class RpcSession {
     const questionId = this.#allocQuestionId();
     const targetKind = target.kind === "promise" ? TARGET_PROMISED_ANSWER : TARGET_IMPORTED_CAP;
     this.#stageIn(paramsBytes);
-    const len = this.#cpp._exports.cpp_rpc_build_call(
+    const len = this.#exp.cpp_rpc_build_call(
       questionId, targetKind, BigInt(target.id), BigInt(interfaceId), methodId, paramsBytes.length,
     );
     if (!len) throw new Error("cpp_rpc_build_call failed");
@@ -690,7 +695,7 @@ export class RpcSession {
     const ctx = {
       cpp: this.#cpp,
       paramsBytes: () => {
-        const len = this.#cpp._exports.cpp_rpc_get_call_params();
+        const len = this.#exp.cpp_rpc_get_call_params();
         return this.#snapshotOut(len);
       },
     };
@@ -779,8 +784,8 @@ export class RpcSession {
   // doesn't get freed prematurely. When the count hits zero, drop the
   // entry from #localCaps so the JS object can be GC'd by the runtime.
   #handleRelease() {
-    const id = this.#cpp._exports.cpp_rpc_get_release_id();
-    const dec = this.#cpp._exports.cpp_rpc_get_release_refcount();
+    const id = this.#exp.cpp_rpc_get_release_id();
+    const dec = this.#exp.cpp_rpc_get_release_refcount();
     const entry = this.#localCaps.get(id);
     if (!entry) return;
     entry.refcount = (entry.refcount ?? 1) - dec;
@@ -794,7 +799,7 @@ export class RpcSession {
     if (a && !a.resolved) a.readyDeferred.reject(new Error(reason));
     const enc = textEncode(reason);
     this.#stageIn(enc);
-    const len = this.#cpp._exports.cpp_rpc_build_return(answerId, 1, enc.length);
+    const len = this.#exp.cpp_rpc_build_return(answerId, 1, enc.length);
     if (!len) throw new Error("cpp_rpc_build_return (exception) failed");
     this.#sendFromOut(len);
   }
@@ -803,8 +808,8 @@ export class RpcSession {
 
   #stageIn(bytes) {
     const u8 = this.#cpp._u8;
-    const inPtr = this.#cpp._exports.cpp_in_ptr();
-    const cap = this.#cpp._exports.cpp_in_capacity();
+    const inPtr = this.#exp.cpp_in_ptr();
+    const cap = this.#exp.cpp_in_capacity();
     if (bytes.length > cap) throw new Error("payload exceeds scratch buffer");
     u8.set(bytes, inPtr);
   }
@@ -823,13 +828,12 @@ export class RpcSession {
   // We have to copy because cpp_out gets reused on the next wasm call.
   // The copy is into a JS-owned buffer — the transport sees one final
   // concatenated Uint8Array, no memory aliasing surprises.
+  // Queue cpp_out bytes; flush all queued sends at the next microtask
+  // boundary as one transport.send. We slice (not subarray) into JS-owned
+  // bytes because cpp_out gets reused by the next wasm call.
   #sendFromOut(framedLen) {
     const u8 = this.#cpp._u8;
-    const outPtr = this.#cpp._exports.cpp_out_ptr();
-    if (this.#batching === false) {
-      this.#transport.send(u8.subarray(outPtr, outPtr + framedLen));
-      return;
-    }
+    const outPtr = this.#exp.cpp_out_ptr();
     if (!this.#sendQueue) this.#sendQueue = [];
     this.#sendQueueBytes += framedLen;
     this.#sendQueue.push(u8.slice(outPtr, outPtr + framedLen));
@@ -839,19 +843,9 @@ export class RpcSession {
     }
   }
 
-  /**
-   * Force any queued outgoing frames out NOW. Useful when the caller knows
-   * they're done sending for this tick and wants to force the wire.
-   * Auto-batching schedules a flush at every microtask boundary already,
-   * so manual flush() is rarely needed.
-   */
+  /** Force any queued frames out NOW. Rarely needed — the microtask
+   *  boundary already does this. Useful when about to close the session. */
   flush() { this.#flush(); }
-
-  /**
-   * Disable auto-batching for ultra-low-latency single-call scenarios.
-   * Default is enabled because batching wins for nearly every workload.
-   */
-  setBatching(enabled) { this.#batching = !!enabled; }
 
   #flush() {
     this.#flushScheduled = false;
@@ -860,10 +854,7 @@ export class RpcSession {
     this.#sendQueue = null;
     const total = this.#sendQueueBytes;
     this.#sendQueueBytes = 0;
-    if (q.length === 1) {
-      this.#transport.send(q[0]);
-      return;
-    }
+    if (q.length === 1) { this.#transport.send(q[0]); return; }
     const out = new Uint8Array(total);
     let p = 0;
     for (let i = 0; i < q.length; i++) { out.set(q[i], p); p += q[i].length; }
@@ -875,7 +866,7 @@ export class RpcSession {
   // independent JS-owned buffer the user can hold across wasm calls.
   #snapshotOut(len) {
     const u8 = this.#cpp._u8;
-    const outPtr = this.#cpp._exports.cpp_out_ptr();
+    const outPtr = this.#exp.cpp_out_ptr();
     return u8.slice(outPtr, outPtr + len);
   }
 
@@ -1055,20 +1046,6 @@ export async function connectWebSocket(cpp, url, opts = {}) {
   });
 }
 
-/**
- * Convenience wrapper that constructs an RpcSession with batching enabled.
- * Equivalent to `new RpcSession(..., { ..., batching: true })`. Mirrors
- * capnweb's `newHttpBatchRpcSession` opt-in shape — pick this when you want
- * the throughput characteristics of fan-out / hot-loop call patterns,
- * accepting at-most one microtask of additional first-byte latency.
- *
- *   const s = newBatchedRpcSession(cpp, transport, registry, { bootstrap });
- *   for (let i = 0; i < 1000; i++) cap.call(...);  // all coalesced
- *   await session.flush();  // optional manual flush
- */
-export function newBatchedRpcSession(cpp, transport, registry, options = {}) {
-  return new RpcSession(cpp, transport, registry, { ...options, batching: true });
-}
 
 // In-process transport pair used by tests. Each side gets a callback queue;
 // .send() on side A delivers asynchronously to side B's onMessage (and vice

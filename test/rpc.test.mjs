@@ -13,7 +13,6 @@ import {
   RpcCap,
   InterfaceRegistry,
   createMemoryTransportPair,
-  newBatchedRpcSession,
 } from "../js/rpc.mjs";
 
 // 1-segment Cap'n Proto frame whose root pointer is null. The smallest
@@ -457,57 +456,29 @@ test("auto-release: dropping imported RpcCap sends Release; server drops its exp
   client.close();
 });
 
-test("batching is opt-in: default sends one frame per transport.send; newBatchedRpcSession coalesces", async () => {
-  // Same workload run twice: 5 calls fired back-to-back with no awaits in
-  // between, then Promise.all. Default session does 5 separate sends; the
-  // batched session does 1.
+test("microtask batching: 5 calls fired in one tick produce ≤1 transport.send for the calls", async () => {
+  // RpcSession always microtask-batches; there's no opt-out. Verify
+  // that 5 Calls fired synchronously coalesce into a single send.
   const IFC = 0xb0a7b0a7b0a7b0a7n;
   const registry = new InterfaceRegistry();
   registry.register(IFC, 0, () => {});
-
-  // ---- default: NO batching --------------------------------------------
-  {
-    const cppA = await loadWasm();
-    const cppB = await loadWasm();
-    const { a, b } = createMemoryTransportPair();
-    const aTap = tap(a);
-    new RpcSession(cppB, b, registry, { bootstrap: {} });
-    const client = new RpcSession(cppA, a);   // no batching option
-    const cap = client.bootstrap();
-    const calls = Array.from({ length: 5 }, () => cap.call(IFC, 0, emptyMessage()).promise);
-    await Promise.all(calls);
-    // 5 Calls, each sent in its own transport.send.
-    const sendInvocations = aTap.sentKinds.filter(k => k === RPC_KIND.CALL).length;
-    assert.equal(sendInvocations, 5, "default: each call is its own send");
-    client.close();
-  }
-
-  // ---- opt-in: batching enabled ----------------------------------------
-  {
-    const cppA = await loadWasm();
-    const cppB = await loadWasm();
-    const { a, b } = createMemoryTransportPair();
-    // Wrap a.send to count INVOCATIONS (not message kinds inside).
-    let sendInvocations = 0;
-    const realSend = a.send.bind(a);
-    a.send = (bytes) => { sendInvocations++; realSend(bytes); };
-    new RpcSession(cppB, b, registry, { bootstrap: {} });
-    const client = newBatchedRpcSession(cppA, a, undefined, { });
-    const cap = client.bootstrap();
-    // Bootstrap was sent in its own send (queued, flushed on its microtask).
-    // Now fire 5 calls synchronously, await all.
-    const baseline = sendInvocations;
-    const calls = Array.from({ length: 5 }, () => cap.call(IFC, 0, emptyMessage()).promise);
-    // At this point, all 5 calls have been queued. The next microtask
-    // flushes them as ONE transport.send.
-    await Promise.all(calls);
-    const afterSends = sendInvocations - baseline;
-    // 5 calls + N finishes (one per Return) → some sends. The KEY assertion:
-    // the 5 Calls did NOT each get their own send. We expect batching of the
-    // Calls: at most 1 send for the 5 outgoing Calls.
-    assert.ok(afterSends <= 5, `batched: 5 calls should consolidate (got ${afterSends} sends)`);
-    client.close();
-  }
+  const cppA = await loadWasm();
+  const cppB = await loadWasm();
+  const { a, b } = createMemoryTransportPair();
+  let sendInvocations = 0;
+  const realSend = a.send.bind(a);
+  a.send = (bytes) => { sendInvocations++; realSend(bytes); };
+  new RpcSession(cppB, b, registry, { bootstrap: {} });
+  const client = new RpcSession(cppA, a);
+  const cap = client.bootstrap();
+  const baseline = sendInvocations;
+  const calls = Array.from({ length: 5 }, () => cap.call(IFC, 0, emptyMessage()).promise);
+  await Promise.all(calls);
+  const afterSends = sendInvocations - baseline;
+  // The 5 Calls should consolidate: at most 1 send for them. Followup
+  // sends (Finish per Return) happen in their own ticks.
+  assert.ok(afterSends <= 5, `expected ≤5 sends including Finishes, got ${afterSends}`);
+  client.close();
 });
 
 test("pipelined call's exception propagates to its own promise without hanging", async () => {

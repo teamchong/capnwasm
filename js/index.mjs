@@ -13,5 +13,4 @@ export {
   createMemoryTransportPair,
   wsTransport,
   connectWebSocket,
-  newBatchedRpcSession,
 } from "./rpc.mjs";
