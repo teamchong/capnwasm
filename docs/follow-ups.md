@@ -53,13 +53,18 @@ to a schema descriptor. Lists go through per-element reads — `pick()`
 detects a list and falls back to the slow path; the fast batch_read
 remains intact when fields are pure primitives.
 
+**Update (2026-04-30, third pass):** nested structs landed. Use
+`{ kind: "struct", slot: N, schema: defineSchema(...) }`. The reader
+materializes the whole nested struct as a plain object — eager, because
+the wasm-side cursor would be invalidated by sibling access otherwise.
+Null-pointer slots return a default-initialized object (each field at
+its type's default), matching codegen reader semantics.
+
 Still on the list:
 
-- **Lists of structs** — `cpp_any_enter_list_at(i)` is exported; the JS
-  wrapper would return either a sub-DynamicReader or an array of plain
-  objects depending on a flag on the schema entry.
-- **Nested structs** — same shape via `cpp_any_enter_struct(slot)` +
-  `cpp_any_leave_struct()`.
+- **Lists of structs** — `cpp_any_enter_list_at(i)` is exported; would
+  walk into element i, materialize via the element schema, leave. Same
+  eager-object pattern as nested structs.
 
 ## 3. RPC pipelining is implemented but not pipelined under `await`
 

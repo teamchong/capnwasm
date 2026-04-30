@@ -202,3 +202,70 @@ test("dynamic.list: Proxy access for list fields", () => {
 test("defineSchema: listUint32 requires slot, not offset", () => {
   assert.throws(() => defineSchema({ x: { kind: "listUint32", offset: 0 } }), /invalid "slot"/);
 });
+
+// Hand-crafted Outer { inner :Inner } where Inner { value :UInt32 } = 42.
+function buildOuterWithInner() {
+  const bytes = new Uint8Array(32);
+  const dv = new DataView(bytes.buffer);
+  // Frame header: segCount-1=0, segSize=3 words (bytes 8..31).
+  dv.setUint32(0, 0, true);
+  dv.setUint32(4, 3, true);
+  // Word 0 (bytes 8-15): root struct ptr → Outer { dataWords=0, ptrWords=1 }
+  // at word 1 (offset B=0). lo: kind=0,B=0; hi: dataWords=0,ptrWords=1<<16.
+  dv.setUint32(8, 0, true);
+  dv.setUint32(12, 1 << 16, true);
+  // Word 1 (bytes 16-23): Outer's inner ptr → Inner { dataWords=1, ptrWords=0 }
+  // at word 2 (offset B=0). lo: kind=0,B=0; hi: dataWords=1,ptrWords=0.
+  dv.setUint32(16, 0, true);
+  dv.setUint32(20, 1, true);
+  // Word 2 (bytes 24-31): Inner's data section, uint32 value at offset 0.
+  dv.setUint32(24, 42, true);
+  return bytes;
+}
+
+const InnerSchema = defineSchema({
+  value: { kind: "uint32", offset: 0 },
+});
+const OuterSchema = defineSchema({
+  inner: { kind: "struct", slot: 0, schema: InnerSchema },
+});
+
+test("dynamic.struct: nested struct materializes as a plain object", () => {
+  const r = openDynamic(cpp, OuterSchema, buildOuterWithInner());
+  assert.deepEqual(r.get("inner"), { value: 42 });
+});
+
+test("dynamic.struct: missing nested struct returns default-valued fields", () => {
+  // Outer with a null pointer slot. Cap'n Proto's wire-format convention
+  // treats a null pointer as the default-initialized struct, so each
+  // field comes back at its type's default (zero / "" / etc.). Matches
+  // the codegen reader's behavior for nullable nested fields.
+  const empty = new Uint8Array(24);
+  const dv = new DataView(empty.buffer);
+  dv.setUint32(0, 0, true);
+  dv.setUint32(4, 2, true);
+  dv.setUint32(8, 0, true);
+  dv.setUint32(12, 1 << 16, true);
+  const r = openDynamic(cpp, OuterSchema, empty);
+  assert.deepEqual(r.get("inner"), { value: 0 });
+});
+
+test("defineSchema: nested struct requires a schema", () => {
+  assert.throws(
+    () => defineSchema({ x: { kind: "struct", slot: 0 } }),
+    /missing "schema"/,
+  );
+});
+
+test("defineSchema: nested struct requires a slot", () => {
+  assert.throws(
+    () => defineSchema({ x: { kind: "struct", schema: InnerSchema } }),
+    /missing or invalid "slot"/,
+  );
+});
+
+test("dynamic.struct: pick falls back to per-field reads when nested struct is present", () => {
+  const r = openDynamic(cpp, OuterSchema, buildOuterWithInner());
+  const got = r.pick(["inner"]);
+  assert.deepEqual(got.inner, { value: 42 });
+});

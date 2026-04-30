@@ -89,12 +89,30 @@ const KIND_TABLE = {
  * Returns an opaque DynamicSchema object that `openDynamic` accepts. Throws
  * synchronously on malformed input — so that schema bugs surface at load
  * time, not on the first read.
+ *
+ * Nested structs use `{ kind: "struct", slot: N, schema: <result of
+ * defineSchema(...)> }`. The nested schema is materialized eagerly when
+ * the field is read, so it returns a plain object — not a sub-reader —
+ * since the underlying wasm cursor would be invalidated by any sibling
+ * access.
  */
 export function defineSchema(spec) {
   if (!spec || typeof spec !== "object") throw new TypeError("defineSchema: expected an object");
   const fields = Object.create(null);
   for (const [name, raw] of Object.entries(spec)) {
     if (!raw || typeof raw !== "object") throw new TypeError(`field "${name}": expected an object`);
+    if (raw.kind === "struct") {
+      // Nested struct — schema is recursive. Validate the nested schema
+      // shape (must look like the result of defineSchema).
+      if (typeof raw.slot !== "number" || raw.slot < 0 || !Number.isInteger(raw.slot)) {
+        throw new TypeError(`field "${name}": nested struct missing or invalid "slot"`);
+      }
+      if (!raw.schema || !raw.schema.fields) {
+        throw new TypeError(`field "${name}": nested struct missing "schema" (use defineSchema(...))`);
+      }
+      fields[name] = Object.freeze({ kind: -2, off: raw.slot, type: "struct", schema: raw.schema });
+      continue;
+    }
     const meta = KIND_TABLE[raw.kind];
     if (!meta) throw new TypeError(`field "${name}": unknown kind "${raw.kind}"`);
     const off = raw[meta.offKey];
@@ -224,7 +242,32 @@ function _readSingle(cpp, desc) {
     }
     case "bool":   return exp.cpp_any_bool_at(desc.off, 0) === 1;
     case "list":   return _readList(cpp, desc);
+    case "struct": return _readNestedStruct(cpp, desc);
     default:       return undefined;
+  }
+}
+
+// Push the nested struct on the wasm-side stack, eagerly read every field
+// of its schema, then pop. Eager materialization keeps the API safe — a
+// returned sub-reader would silently break the moment the caller touches
+// a sibling field at the parent level (which would re-position the
+// cursor). Nested-of-nested works because each recursion saves and
+// restores the cursor via enter/leave.
+function _readNestedStruct(cpp, desc) {
+  const exp = cpp._exports;
+  if (exp.cpp_any_enter_struct(desc.off) !== 1) {
+    // Pointer slot is null or out-of-range — return null, the
+    // wire-format-correct interpretation of "field not present".
+    return null;
+  }
+  try {
+    const out = {};
+    for (const [name, sub] of Object.entries(desc.schema.fields)) {
+      out[name] = _readSingle(cpp, sub);
+    }
+    return out;
+  } finally {
+    exp.cpp_any_leave_struct();
   }
 }
 
@@ -330,6 +373,8 @@ function _batchPick(cpp, fields, names) {
     const d = fields[names[i]];
     if (!d) throw new Error(`unknown field: ${names[i]}`);
     descs[i] = d;
+    // Sentinel kinds (lists = -1, struct = -2) aren't supported by
+    // cpp_any_batch_read. Fall back to per-field reads in that case.
     if (d.kind < 0) needsFallback = true;
     u8[aux + 4 + i * 5] = d.kind & 0xff;
     dv.setUint32(aux + 4 + i * 5 + 1, d.off, true);

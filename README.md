@@ -191,7 +191,7 @@ reader.pick(["name", "age"]);   // one wasm round trip, only the fields you ask 
 reader.fields.email;            // Proxy access for ergonomic single-field reads
 ```
 
-The descriptor is wire-compatible with what `npx capnwasm gen` emits (`SomeReader._FIELDS`). A build step that strips a generated reader to its `_FIELDS` object can feed it directly to `openDynamic`. Supported field kinds: `text`, `data`, `uint8/16/32`, `int8/16/32`, `int64`, `uint64`, `float32/64`, `bool`, plus `listUint8/16/32/64`, `listInt8/16/32/64`, `listFloat32/64`, `listBool`, `listText`, `listData`. Nested structs and lists-of-structs aren't in this pass — use codegen for those.
+The descriptor is wire-compatible with what `npx capnwasm gen` emits (`SomeReader._FIELDS`). A build step that strips a generated reader to its `_FIELDS` object can feed it directly to `openDynamic`. Supported field kinds: `text`, `data`, `uint8/16/32`, `int8/16/32`, `int64`, `uint64`, `float32/64`, `bool`, plus `listUint8/16/32/64`, `listInt8/16/32/64`, `listFloat32/64`, `listBool`, `listText`, `listData`, plus nested structs via `{ kind: "struct", slot: N, schema: defineSchema(...) }`. Lists-of-structs aren't in this pass — use codegen for those.
 
 When to choose dynamic:
 
