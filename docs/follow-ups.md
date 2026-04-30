@@ -118,16 +118,17 @@ What's still on the list:
   reading our sends but isn't yet closed. A heartbeat / write-stalled
   watchdog would catch that case.
 
-## 7. Documentation gaps
+## 7. Documentation gaps — done
 
-- No "from zero to working RPC" tutorial that walks schema → codegen →
-  server → client end-to-end.
-- No production-deployment guide (auth integration, backpressure patterns,
-  error handling).
-- No comparison page to gRPC-Web. People will ask "why not gRPC-Web?" — fair
-  question we don't answer.
+**Update (2026-04-30):** all three landed.
 
-Cost: each one is half a day. Discoverability + credibility, not technical.
+- `docs/zero-to-rpc.md` — schema → codegen → server → client walkthrough.
+- `docs/deployment.md` — auth, backpressure, error handling, reverse proxy,
+  cold start, observability, schema versioning.
+- `docs/grpc-web-comparison.md` — wire format, stack diagram, capabilities,
+  schema interop, when to choose each.
+
+Linked from the README's documentation index.
 
 ## 8. Bundle-size headline
 

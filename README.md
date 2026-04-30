@@ -17,6 +17,13 @@ import { load } from "capnwasm";       // runtime (capnp wire + RPC)
 import { auth } from "capnwasm/rest";  // REST client runtime
 ```
 
+**Documentation paths:**
+- [Zero to working RPC in 5 minutes](docs/zero-to-rpc.md) — schema → codegen → server → client
+- [Production deployment](docs/deployment.md) — auth, backpressure, error handling, reverse proxy
+- [capnwasm vs gRPC-Web](docs/grpc-web-comparison.md) — when to choose each
+- [Cloudflare Workers](docs/workers.md) — Workers-specific entrypoint
+- [Honest comparison](docs/honest-comparison.md) — wins, losses, ties vs capnweb and REST/JSON
+
 ---
 
 ## Three quickstarts
