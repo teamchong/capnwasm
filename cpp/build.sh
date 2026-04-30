@@ -21,25 +21,27 @@ KJ_SOURCES=(
   "$CAPNP_SRC/kj/memory.c++"
   "$CAPNP_SRC/kj/units.c++"
   "$CAPNP_SRC/kj/encoding.c++"
-  "$CAPNP_SRC/kj/io.c++"
+  # io.c++ removed — only referenced from POSIX paths in exception.c++ we no-op.
   "$CAPNP_SRC/kj/mutex.c++"
-  "$CAPNP_SRC/kj/time.c++"
+  # time.c++ skipped: no time syscalls needed for serialize/deserialize.
   "$CAPNP_SRC/kj/arena.c++"
   "$CAPNP_SRC/kj/table.c++"
   "$CAPNP_SRC/kj/list.c++"
   "$CAPNP_SRC/kj/refcount.c++"
 )
+# Sources we're investigating for removal — flip to comment-out and rebuild
+# to measure impact. Keep the canonical list above stable.
 
 CAPNP_SOURCES=(
   "$CAPNP_SRC/capnp/c++.capnp.c++"
   "$CAPNP_SRC/capnp/blob.c++"
   "$CAPNP_SRC/capnp/arena.c++"
   "$CAPNP_SRC/capnp/layout.c++"
-  "$CAPNP_SRC/capnp/list.c++"
   "$CAPNP_SRC/capnp/any.c++"
   "$CAPNP_SRC/capnp/message.c++"
   "$CAPNP_SRC/capnp/serialize.c++"
-  "$CAPNP_SRC/capnp/stream.capnp.c++"
+  # list.c++/stream.capnp.c++ removed — list is template-only at our usage
+  # level; stream.capnp pulls in code we never call.
 )
 
 WRAPPER=(
@@ -58,9 +60,19 @@ LIBCXXABI=()
 
 # Compile flags. -fno-exceptions because wasm32-freestanding doesn't have
 # C++ EH, and KJ has its own assert-style fallback when KJ_NO_EXCEPTIONS=1.
+# bench mode includes 256-element function-pointer tables for BigUser
+# helpers (cpp_make_big_user_bytes, cpp_big_user_emit_json, etc). Off by
+# default — production users don't need them.
+BENCH_MODE=0
+if [ "${1:-}" = "bench" ]; then
+  BENCH_MODE=1
+  echo "[build.sh] CW_BENCH=1 — including bench helpers"
+fi
+
 FLAGS=(
   -target wasm32-wasi-musl
   -Oz
+  -DCW_BENCH=$BENCH_MODE
   -std=c++23
   -fexceptions
   -fno-rtti
@@ -108,14 +120,19 @@ FLAGS=(
   -Wl,--export=cpp_any_uint16_at
   -Wl,--export=cpp_any_uint8_at
   -Wl,--export=cpp_any_bool_at
-  -Wl,--export=cpp_make_big_user_bytes
-  -Wl,--export=cpp_big_user_all_packed
-  -Wl,--export=cpp_big_user_emit_json
   -lwasi-emulated-signal
   -lwasi-emulated-mman
   -Wl,--gc-sections
   -Wl,--strip-all
 )
+
+if [ "$BENCH_MODE" = "1" ]; then
+  FLAGS+=(
+    -Wl,--export=cpp_make_big_user_bytes
+    -Wl,--export=cpp_big_user_all_packed
+    -Wl,--export=cpp_big_user_emit_json
+  )
+fi
 
 zig c++ "${FLAGS[@]}" \
   -I"$ZIG_LIBCXXABI/../include" \

@@ -482,23 +482,36 @@ async function cmdGen(argv) {
   }
 }
 
-function cmdBuild() {
+function cmdBuild(extra = []) {
   const buildScript = join(PKG_ROOT, "cpp", "build.sh");
   if (!existsSync(buildScript)) {
     console.error(`cpp/build.sh missing at ${buildScript}`);
     process.exit(1);
   }
-  const r = spawnSync("bash", [buildScript], { stdio: "inherit", cwd: PKG_ROOT });
+  const r = spawnSync("bash", [buildScript, ...extra], { stdio: "inherit", cwd: PKG_ROOT });
   process.exit(r.status ?? 1);
 }
 
 function cmdBench() {
-  const runner = join(PKG_ROOT, "bench", "runner.mjs");
-  if (!existsSync(runner)) {
-    console.error(`bench/runner.mjs missing at ${runner}`);
-    process.exit(1);
+  // Bench needs the bench-only wasm helpers (cpp_make_big_user_bytes etc.)
+  // so trigger a bench-mode rebuild before running.
+  const buildScript = join(PKG_ROOT, "cpp", "build.sh");
+  const big = join(PKG_ROOT, "bench", "big_runner.mjs");
+  const small = join(PKG_ROOT, "bench", "runner.mjs");
+
+  console.log("[capnwasm] rebuilding wasm in bench mode (CW_BENCH=1) ...");
+  let r = spawnSync("bash", [buildScript, "bench"], { stdio: "inherit", cwd: PKG_ROOT });
+  if (r.status !== 0) process.exit(r.status ?? 1);
+
+  if (existsSync(big)) {
+    console.log("[capnwasm] running big bench ...");
+    r = spawnSync("node", [big], { stdio: "inherit", cwd: PKG_ROOT });
+    if (r.status !== 0) process.exit(r.status ?? 1);
   }
-  const r = spawnSync("node", [runner], { stdio: "inherit", cwd: PKG_ROOT });
+  if (existsSync(small)) {
+    console.log("[capnwasm] running small bench ...");
+    r = spawnSync("node", [small], { stdio: "inherit", cwd: PKG_ROOT });
+  }
   process.exit(r.status ?? 1);
 }
 

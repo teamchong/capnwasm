@@ -94,9 +94,13 @@ Honest size comparison (gzip):
 
 | Path | JS | wasm | total |
 |---|---|---|---|
-| `capnwasm` (split) | **6 KB** | 39 KB (separate, cacheable, parallel) | 45 KB |
-| `capnwasm/inlined` | 54 KB (single file) | — | 54 KB |
+| `capnwasm` (split, production) | **6 KB** | 34.6 KB (cacheable, parallel) | 41 KB |
+| `capnwasm/inlined` | 49 KB (single file) | — | 49 KB |
 | capnweb | 21 KB | — | 21 KB |
+
+The production wasm strips out the BigUser bench-only helpers (256-element
+function-pointer tables) via `CW_BENCH` macro gating, which is what got
+the wasm down from 39 → 34.6 KB gzip.
 
 The JS-glue alone (6 KB gzip) is smaller than capnweb. The wasm is the
 ~33 KB bulk because it bundles the full Cap'n Proto + KJ runtime.

@@ -505,6 +505,13 @@ uint32_t cpp_typed_field_at(uint32_t field_idx) {
 // Forward decl — the AnyStruct section below owns the storage.
 extern capnp::FlatArrayMessageReader* any_reader;
 
+// ---------------------------------------------------------------------------
+// Bench-only helpers. Each one references a 256-element function-pointer
+// table for BigUser, costing ~10 KB. Off by default; bench builds add
+// -DCW_BENCH=1 to include them.
+// ---------------------------------------------------------------------------
+#if CW_BENCH
+
 // Walk every Text field and emit JSON: {"field0":"v0","field1":"v1",...}
 // One wasm call -> one bulk JSON.parse on the JS side. V8 builds the entire
 // 256-field object in its tightest hot path, beating per-field
@@ -647,6 +654,8 @@ uint32_t cpp_make_big_user_bytes() {
   std::memcpy(cpp_out, bytes.begin(), bytes.size());
   return static_cast<uint32_t>(bytes.size());
 }
+
+#endif  // CW_BENCH
 
 // ---------------------------------------------------------------------------
 // Generic AnyStruct navigation. One wasm binary serves every user schema:
