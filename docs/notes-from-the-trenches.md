@@ -179,6 +179,8 @@ The honest result: codegen wins per-field reads (offset literals beat Map lookup
 
 **Lesson 3**: when you publish a perf claim that surprises you, make it cheap to retract. The original bench script was committed under `bench/dynamic_bench.mjs`. The retraction needed a new isolated bench (`dynamic_bench_isolated.mjs`), an updated README, and a doc note. Cheaper than letting the wrong number propagate into a blog post.
 
+**Coda**: the same "per-instance lazy alloc" pattern was hiding in the codegen *builders* too. Every i64/f32/f64 setter did `const dv = new DataView(this._u8.buffer);` per call. Cached in the constructor; codegen build paths got 11% faster across every generated `.gen.mjs`, not just the bench schema. Both fixes (read-side ArrayBuffer hoist, write-side DataView cache) are wins independent of the bogus dynamic-vs-codegen claim that surfaced them. Sometimes the wrong question still extracts the right answer — but only if you ask it carefully and notice when the answer surprises you.
+
 ## The SIMD experiment, with a negative result
 
 The natural next thing to try after all of the above: enable wasm SIMD and let the compiler auto-vectorize what it can.

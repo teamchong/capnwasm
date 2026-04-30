@@ -265,12 +265,12 @@ Builders cover primitives + text + data. Lists and nested-struct builders aren't
 **How fast?** Bench on Node 22, conformance schema's 13-field Primitives struct, isolated subprocesses (`npm run bench:dynamic`):
 
 ```
-read all 13 fields           codegen ~456 ns,  dynamic ~534 ns/call    (codegen 1.17× faster)
-batched pick(3 fields)       codegen ~494 ns,  dynamic ~429 ns/call    (dynamic 1.15× faster)
-build with 13 fields         codegen ~835 ns,  dynamic ~1343 ns/call   (codegen 1.61× faster)
+read all 13 fields           codegen ~476 ns,  dynamic ~531 ns/call    (codegen 1.12× faster)
+batched pick(3 fields)       codegen ~489 ns,  dynamic ~443 ns/call    (dynamic 1.10× faster)
+build with 13 fields         codegen ~744 ns,  dynamic ~1299 ns/call   (codegen 1.75× faster)
 ```
 
-Per-field reads: codegen wins because field offsets are baked as integer literals at the call site. Batched `pick(...)` is a wash — both paths do the same single wasm boundary call. Writes: codegen wins by a wider margin because the dynamic builder dispatches by field type for every `set()`. For tenant-uploaded schemas and admin tools, the dynamic path is fast enough — sub-microsecond per field-read, and writes still under 1.4 µs for a 13-field struct.
+Per-field reads: codegen wins because field offsets are baked as integer literals at the call site. Batched `pick(...)` slightly favors dynamic — both paths do the same single wasm boundary call, dynamic's `DynamicReader` constructor allocates one fewer hidden class. Writes: codegen wins by a wider margin because the dynamic builder dispatches by field type for every `set()`. For tenant-uploaded schemas and admin tools, the dynamic path is fast enough — sub-microsecond per field read, ~1.3 µs to build a 13-field struct.
 
 When to choose dynamic:
 
