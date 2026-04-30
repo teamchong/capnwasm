@@ -70,3 +70,17 @@ test("browser loader: still accepts a Uint8Array for legacy callers", async () =
   const cpp = await load(bytes);
   assert.equal(cpp.exports.cpp_abi_version(), 1);
 });
+
+test("loader: accepts a pre-compiled WebAssembly.Module (Cloudflare Workers shape)", async () => {
+  // Cloudflare Workers' canonical pattern — `import wasm from "./x.wasm"`
+  // gives you a WebAssembly.Module object directly. Workers reject sync
+  // compile (`new Module(bytes)`) for security, so this code path is the
+  // only way capnwasm can load wasm in a Worker. We simulate it here with
+  // an explicit WebAssembly.compile().
+  const bytes = await readFile(WASM_PATH);
+  const mod = await WebAssembly.compile(bytes);
+  assert.ok(mod instanceof WebAssembly.Module);
+  const cpp = await CapnCpp.load(mod);
+  assert.equal(cpp.exports.cpp_abi_version(), 1);
+  assert.ok(cpp.exports.cpp_in_ptr() > 0);
+});

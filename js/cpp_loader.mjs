@@ -22,15 +22,25 @@ export class CapnCpp {
     const wasi = buildRuntimeWasiImports();
     const importObj = { wasi_snapshot_preview1: wasi.imports };
 
-    // Streaming compile when the source is a URL/Request/Response — the
-    // browser parses bytes as they arrive instead of waiting for the full
-    // buffer. Falls through to in-memory instantiate for Uint8Array sources.
+    // Source dispatch:
+    //   WebAssembly.Module — Cloudflare Workers' canonical pattern is
+    //     `import wasm from "./capnp.slim.wasm"` which gives a pre-compiled
+    //     Module. Workers reject sync compile (new Module(bytes)) for
+    //     security, so the import is the only way in.
+    //   URL / string / Request / Response — browsers + Node 18+. Streaming
+    //     compile when supported; falls through to bytes otherwise.
+    //   Uint8Array / ArrayBuffer — Node, tests, anyone with raw bytes.
+    const isModule = typeof WebAssembly.Module !== "undefined" && wasmSource instanceof WebAssembly.Module;
     const isResp = typeof Response !== "undefined" && wasmSource instanceof Response;
     const isReq  = typeof Request  !== "undefined" && wasmSource instanceof Request;
     const isUrl  = typeof wasmSource === "string" || wasmSource instanceof URL;
 
     let instance;
-    if (isResp || isReq || isUrl) {
+    if (isModule) {
+      // Sync instantiate — we already have the compiled module, so this
+      // is just the linking step. No fetch, no compile, no async wait.
+      instance = await WebAssembly.instantiate(wasmSource, importObj);
+    } else if (isResp || isReq || isUrl) {
       const resp = isResp ? wasmSource : fetch(wasmSource);
       if (typeof WebAssembly.instantiateStreaming === "function") {
         ({ instance } = await WebAssembly.instantiateStreaming(resp, importObj));

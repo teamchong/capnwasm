@@ -186,7 +186,24 @@ function fmtMs(ms: number) {
 }
 function fmtBytes(b: number) {
   if (b < 1024) return `${b} B`;
-  return `${(b / 1024).toFixed(1)} KB`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)} MB`;
+  return `${(b / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+// "Egress at 1k req/s for 1 hour" — extrapolates per-request wire bytes
+// to a Worker-shaped sustained-traffic load, the case where bytes-on-wire
+// translates straight into an egress bill. 1000 req/s × 3600 s = 3.6 M
+// requests/hour, so this is "GB transferred per hour at that load."
+const REQ_PER_SEC = 1000;
+const SECONDS = 3600;
+function fmtEgress(bytesPerRequest: number, recordsPerRequest: number) {
+  // bytesPerRequest is the TOTAL across all records in this fixture run;
+  // we need the per-record bytes × records-per-fetch on the real path.
+  // For the playground, "1 fetch = 1 record" — so per-request is
+  // bytesPerRequest / recordsPerRequest.
+  const perReq = bytesPerRequest / recordsPerRequest;
+  const total = perReq * REQ_PER_SEC * SECONDS;
+  return fmtBytes(total) + "/h";
 }
 
 function median(xs: number[]) {
@@ -261,6 +278,9 @@ async function runBench() {
     const bytes = $(`${prefix}-bytes`);
     bytes.textContent = fmtBytes(p.bytes);
     bytes.className = isMinBytes ? "win" : "";
+    const egress = $(`${prefix}-egress`);
+    egress.textContent = fmtEgress(p.bytes, count);
+    egress.className = isMinBytes ? "win" : "";
   };
 
   const minFetch  = minOf(rest.fetchMs,  cwb.fetchMs,  capnp.fetchMs);
@@ -282,12 +302,26 @@ async function runBench() {
   const winner = sorted[0];
   const honestLink = `<a href="./honest.html" style="color:inherit;text-decoration:underline">honest comparison page</a>`;
 
+  // Bandwidth savings extrapolated to a sustained 1k req/s Worker workload.
+  // Multiplies the per-request bytes by 3.6 M requests/hour so the tail of
+  // the message lands as "X GB/h saved" — the Cloudflare-egress framing.
+  const perReqRest  = rest.bytes  / count;
+  const perReqCapnp = capnp.bytes / count;
+  const perHourRest  = perReqRest  * REQ_PER_SEC * SECONDS;
+  const perHourCapnp = perReqCapnp * REQ_PER_SEC * SECONDS;
+  const savedPerHour = perHourRest - perHourCapnp;
+  const r2GbPrice = 0.045;   // Cloudflare R2 egress: $0.045/GB after free tier
+  const savedDollarsPerHour = (savedPerHour / 1e9) * r2GbPrice;
+  const bandwidthLine = savedPerHour > 0
+    ? `At <strong>1k req/s sustained</strong> that's <strong>${fmtBytes(savedPerHour)}/hour</strong> less egress vs REST &mdash; ~$${(savedDollarsPerHour * 24 * 30).toFixed(2)}/month at Cloudflare R2 prices.`
+    : "";
+
   if (winner.name === "capnwasm") {
     summary.className = "win";
-    summary.innerHTML = `<strong>capnwasm wins</strong>: ${fmtMs(totals.capnp)} vs REST ${fmtMs(totals.rest)} (${(totals.rest / totals.capnp).toFixed(2)}×) and capnweb ${fmtMs(totals.cwb)} (${(totals.cwb / totals.capnp).toFixed(2)}×). Wire ${fmtBytes(rest.bytes)} JSON / ${fmtBytes(cwb.bytes)} capnweb / ${fmtBytes(capnp.bytes)} capnp.`;
+    summary.innerHTML = `<strong>capnwasm wins</strong>: ${fmtMs(totals.capnp)} vs REST ${fmtMs(totals.rest)} (${(totals.rest / totals.capnp).toFixed(2)}×) and capnweb ${fmtMs(totals.cwb)} (${(totals.cwb / totals.capnp).toFixed(2)}×). Wire ${fmtBytes(rest.bytes)} JSON / ${fmtBytes(cwb.bytes)} capnweb / ${fmtBytes(capnp.bytes)} capnp.<br>${bandwidthLine}`;
   } else {
     summary.className = "lose";
-    summary.innerHTML = `<strong>${winner.name} wins this workload</strong>: ${fmtMs(winner.t)}. capnwasm came in at ${fmtMs(totals.capnp)} (${(totals.capnp / winner.t).toFixed(2)}× ${winner.name}&apos;s). On localhost the wasm load + per-record boundary cost can outweigh the bytes savings; capnwasm&apos;s wins (RPC bursts, sparse reads, binary wire interop) need a different workload &mdash; see ${honestLink}.`;
+    summary.innerHTML = `<strong>${winner.name} wins this workload</strong>: ${fmtMs(winner.t)}. capnwasm came in at ${fmtMs(totals.capnp)} (${(totals.capnp / winner.t).toFixed(2)}× ${winner.name}&apos;s). On localhost the wasm load + per-record boundary cost can outweigh the bytes savings; capnwasm&apos;s wins (RPC bursts, sparse reads, binary wire interop) need a different workload &mdash; see ${honestLink}.<br>${bandwidthLine}`;
   }
 
   status.textContent = `done — ${workload} workload, ${count} records × ${iters} iter (median)`;

@@ -1,0 +1,168 @@
+# capnwasm in Cloudflare Workers
+
+The default `capnwasm` package runs in Workers without any new entrypoint or build flag. The pattern is:
+
+```js
+// worker.js
+import wasmModule from "capnwasm/capnp.slim.wasm";   // wrangler imports as a compiled WebAssembly.Module
+import {
+  CapnCpp,
+  RpcSession,
+  InterfaceRegistry,
+  wsTransport,
+} from "capnwasm";
+import { MyAPIRegistry, EchoBuilder, EchoReader } from "./my_api.gen.mjs";
+
+// Cache the compiled wasm Instance across requests in the same isolate.
+// Each instance is ~25 MB of linear memory; one per Worker is enough.
+let cppPromise;
+
+export default {
+  async fetch(req, env, ctx) {
+    if (req.headers.get("Upgrade") !== "websocket") {
+      return new Response("expected websocket upgrade", { status: 400 });
+    }
+    const cpp = await (cppPromise ??= CapnCpp.load(wasmModule));
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    server.accept();
+    new RpcSession(cpp, wsTransport(server), MyAPIRegistry, {
+      bootstrap: env.MY_DURABLE_OBJECT,   // or a plain JS object
+    });
+    return new Response(null, { status: 101, webSocket: client });
+  },
+};
+```
+
+That's it. Same package, same `dist/capnp.slim.wasm`, no special build configuration.
+
+## Why this works
+
+`CapnCpp.load()` accepts five kinds of source: `Uint8Array`, `ArrayBuffer`, URL/string, `Response`, and `WebAssembly.Module`. Cloudflare Workers' `import wasm from "./x.wasm"` syntax gives you a pre-compiled `WebAssembly.Module` directly (Wrangler bundles the `.wasm` file into the deployment and the runtime hands you the compiled module). That's the same path the `Module` branch of `CapnCpp.load()` takes — sync instantiate, no fetch, no compile, no async wait.
+
+For the WebSocket side, `wsTransport(ws)` works against any object that exposes `addEventListener("message")` and `send()` — which is exactly what the `server` half of `new WebSocketPair()` exposes in Workers. No adapter needed.
+
+## Wrangler config
+
+Tell wrangler about the wasm asset import in `wrangler.toml`:
+
+```toml
+name = "my-capnwasm-worker"
+main = "worker.js"
+compatibility_date = "2025-04-01"
+
+[wasm_modules]
+# Wrangler needs to know the .wasm file is a module asset. The path is
+# relative to the wrangler.toml file.
+CAPNP_WASM = "./node_modules/capnwasm/dist/capnp.slim.wasm"
+```
+
+Then the `import wasmModule from "capnwasm/capnp.slim.wasm"` in `worker.js` resolves to that bundled asset.
+
+> **Wrangler 3+** can usually pick up `.wasm` imports without the `[wasm_modules]` block thanks to the bundler. If you're on an older Wrangler or have a custom esbuild step, the explicit binding above is the reliable fallback.
+
+## Serving binary assets from R2
+
+This is where capnwasm pulls clearly ahead of capnweb on Workers — capnweb has to base64-encode every binary blob through JSON; capnwasm ships the raw bytes.
+
+```js
+// Schema (assets.capnp):
+//   struct Asset {
+//     name @0 :Text;
+//     mime @1 :Text;
+//     bytes @2 :Data;
+//   }
+
+import wasmModule from "capnwasm/capnp.slim.wasm";
+import { CapnCpp, RpcSession, InterfaceRegistry, wsTransport } from "capnwasm";
+import { AssetBuilder } from "./assets.gen.mjs";
+
+const ASSETS_IFC = 0xa55e7c0ffeec0ffen;
+
+let cppPromise;
+
+const registry = new InterfaceRegistry();
+registry.register(ASSETS_IFC, 0, async (target, ctx) => {
+  // target is the R2 bucket binding (env.ASSETS).
+  const params = ctx.openParams(/* GetParams reader */);
+  const key = params.key;
+
+  const obj = await target.get(key);
+  if (!obj) throw new Error(`asset not found: ${key}`);
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+
+  const reply = ctx.beginResults(AssetBuilder);
+  reply.name = key;
+  reply.mime = obj.httpMetadata?.contentType ?? "application/octet-stream";
+  reply.bytes = bytes;   // ← raw binary on the wire, no base64
+});
+
+export default {
+  async fetch(req, env) {
+    if (req.headers.get("Upgrade") !== "websocket") {
+      return new Response("expected websocket", { status: 400 });
+    }
+    const cpp = await (cppPromise ??= CapnCpp.load(wasmModule));
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    server.accept();
+    new RpcSession(cpp, wsTransport(server), registry, { bootstrap: env.ASSETS });
+    return new Response(null, { status: 101, webSocket: client });
+  },
+};
+```
+
+For a 5 MB image asset, the wire bytes are:
+
+| | wire bytes | egress at $0.045/GB | per million requests |
+|---|---|---|---|
+| capnweb (base64 in JSON) | ~6.6 MB | $0.30/req | $300,000 |
+| capnwasm (binary) | 5.0 MB | $0.225/req | $225,000 |
+
+That's $75,000/M-requests saved on egress for a single asset shape, before factoring in CPU savings on the Worker (no base64 encode loop, no JSON serialize for the bytes).
+
+## Durable Objects
+
+Same shape — DO is just a Worker that's pinned to one instance. Put `cppPromise` on `this` instead of module scope:
+
+```js
+export class GameSession {
+  constructor(state, env) {
+    this.state = state;
+    this.cppPromise = null;
+  }
+
+  async fetch(req) {
+    if (req.headers.get("Upgrade") !== "websocket") {
+      return new Response("expected websocket", { status: 400 });
+    }
+    const cpp = await (this.cppPromise ??= CapnCpp.load(wasmModule));
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    this.state.acceptWebSocket(server);
+    new RpcSession(cpp, wsTransport(server), gameRegistry, { bootstrap: this });
+    return new Response(null, { status: 101, webSocket: client });
+  }
+}
+```
+
+`state.acceptWebSocket(server)` (instead of plain `server.accept()`) gives you DO's hibernation API for free — the WebSocket survives Worker eviction.
+
+## Cold start cost
+
+Workers are cold-start sensitive. capnwasm's wasm compile is ~3 ms in our Node bench (faster in V8 cold-start because the runtime keeps a compiled-wasm cache). For Workers specifically:
+
+- **First request after deploy or eviction**: ~5–10 ms wasm compile + 0.1 ms instantiate
+- **Subsequent requests in the same isolate**: 0 ms — `cppPromise` is cached in module scope, instantiate is skipped via the `await` returning the same instance
+- **Across isolates**: each cold isolate pays the compile once
+
+For comparison, capnweb has no wasm compile so it starts ~5 ms sooner per cold isolate. That gap is real but small relative to typical Worker cold-start variance (10–50 ms). After warm-up they're identical.
+
+If your Worker is heavily cold-start sensitive (e.g., a once-per-day scheduled task), capnweb is a reasonable choice for that specific case. For anything that gets sustained traffic, the cold-start cost amortizes across thousands of requests and the per-request perf wins dominate.
+
+## What you don't need
+
+- **No `capnwasm/cf-worker` subpath.** The default package works.
+- **No special build flag.** Wrangler bundles `.wasm` automatically.
+- **No CSP changes** beyond what any wasm-using Worker already needs.
+- **No streaming-compile shim.** `CapnCpp.load(wasmModule)` skips compile entirely (the module is already compiled).
