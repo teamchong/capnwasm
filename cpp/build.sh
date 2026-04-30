@@ -44,6 +44,7 @@ CAPNP_SOURCES=(
 
 WRAPPER=(
   cpp/schema.capnp.c++
+  cpp/typed_schema.capnp.c++
   cpp/wrapper.cpp
   cpp/eh_runtime.cpp
 )
@@ -87,6 +88,9 @@ FLAGS=(
   -Wl,--export=cpp_lazy_obj_fields_text
   -Wl,--export=cpp_lazy_aux_ptr
   -Wl,--export=cpp_lazy_aux_capacity
+  -Wl,--export=cpp_typed_open
+  -Wl,--export=cpp_typed_serialize_wide
+  -Wl,--export=cpp_typed_field_at
   -lwasi-emulated-signal
   -lwasi-emulated-mman
 )

@@ -5,6 +5,7 @@
 import { CapnCpp } from "/js/cpp_loader.mjs";
 import { fixtures } from "./fixtures.mjs";
 import * as capnweb from "/capnweb-vendor/index.js";
+import { openWideUserData, serializeWideUserData, WideUserDataReader } from "/js/typed_wide_user_data.mjs";
 
 const status = document.getElementById("status");
 const results = document.getElementById("results");
@@ -29,6 +30,10 @@ async function run() {
     out.perf[fx.name] = perfFor(cpp, fx);
     out.correctness[fx.name] = correctnessFor(cpp, fx);
   }
+
+  // Typed-schema bench: what users actually get when they define a
+  // Cap'n Proto schema and use codegen-emitted typed accessors.
+  out.typed = typedSchemaBench(cpp);
 
   results.textContent = JSON.stringify(out, null, 2);
   window.__benchResults = out;
@@ -105,6 +110,63 @@ function lazyAccessBench(cpp, fx, cppBytes, cwbBytes, iters) {
     return obj[fieldNames[0]].length + obj[fieldNames[1]].length + obj[fieldNames[2]].length;
   });
   return { supported: true, cppUs: tCpp.usPerOp, cwbUs: tCwb.usPerOp };
+}
+
+/**
+ * Realistic Cap'n Proto deployment: typed schema with named fields and
+ * codegen-emitted accessors. `reader.field0` is a normal JS property call
+ * backed by an integer-indexed wasm call — no string lookup, no Proxy.
+ *
+ * Compared against capnweb deserializing the same data shape from JSON.
+ */
+function typedSchemaBench(cpp) {
+  const iters = 2000;
+  // Build the input object — 32 fields with realistic string values.
+  const obj = {};
+  for (let i = 0; i < 32; i++) obj[`field${i}`] = `value-${i}-${"x".repeat(32)}`;
+
+  const cppBytes = serializeWideUserData(cpp, obj);
+  const cwbStr = capnweb.serialize(obj);
+
+  // ENCODE
+  const tCppEnc = bench(iters, () => serializeWideUserData(cpp, obj));
+  const tCwbEnc = bench(iters, () => capnweb.serialize(obj));
+
+  // DECODE + ACCESS 3 FIELDS — the workload Cap'n Proto wins on.
+  const tCpp3 = bench(iters, () => {
+    const r = openWideUserData(cpp, cppBytes);
+    return r.field0.length + r.field5.length + r.field31.length;
+  });
+  const tCwb3 = bench(iters, () => {
+    const v = capnweb.deserialize(cwbStr);
+    return v.field0.length + v.field5.length + v.field31.length;
+  });
+
+  // DECODE + ACCESS ALL 32 FIELDS — capnweb wins this one because JSON.parse
+  // amortizes builds across all fields.
+  const tCppAll = bench(iters, () => {
+    const r = openWideUserData(cpp, cppBytes);
+    let total = 0;
+    for (let i = 0; i < 32; i++) total += r[`field${i}`].length;
+    return total;
+  });
+  const tCwbAll = bench(iters, () => {
+    const v = capnweb.deserialize(cwbStr);
+    let total = 0;
+    for (let i = 0; i < 32; i++) total += v[`field${i}`].length;
+    return total;
+  });
+
+  return {
+    cpp_bytes: cppBytes.length,
+    cwb_bytes: typeof cwbStr === "string" ? new TextEncoder().encode(cwbStr).length : cwbStr.length,
+    cpp_encode_us: tCppEnc.usPerOp,
+    cwb_encode_us: tCwbEnc.usPerOp,
+    cpp_decode3_us: tCpp3.usPerOp,
+    cwb_decode3_us: tCwb3.usPerOp,
+    cpp_decode_all_us: tCppAll.usPerOp,
+    cwb_decode_all_us: tCwbAll.usPerOp,
+  };
 }
 
 function correctnessFor(cpp, fx) {

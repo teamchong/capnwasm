@@ -121,6 +121,23 @@ async function main() {
     console.log(row.map((c) => String(c).padStart(10)).join(""));
   }
 
+  // Typed-schema bench — the realistic Cap'n Proto deployment shape.
+  if (browserResults.typed) {
+    const t = browserResults.typed;
+    console.log("\n" + sep);
+    console.log("TYPED SCHEMA  (cpp/typed_schema.capnp WideUserData, 32 named string fields)");
+    console.log("This is what users actually deploy: a typed schema + codegen accessors.");
+    console.log("`reader.field0` -> integer-indexed wasm call. No string lookup, no Proxy.");
+    console.log(sep);
+    const fmt = (x) => x.toFixed(2).padStart(10);
+    const ratio = (a, b) => (b / a).toFixed(2).padStart(7) + "x";
+    console.log("                                  cpp wasm     capnweb       ratio");
+    console.log(`  encode:                       ${fmt(t.cpp_encode_us)}  ${fmt(t.cwb_encode_us)}  ${ratio(t.cpp_encode_us, t.cwb_encode_us)}`);
+    console.log(`  decode + read 3 fields:       ${fmt(t.cpp_decode3_us)}  ${fmt(t.cwb_decode3_us)}  ${ratio(t.cpp_decode3_us, t.cwb_decode3_us)}`);
+    console.log(`  decode + read ALL 32 fields:  ${fmt(t.cpp_decode_all_us)}  ${fmt(t.cwb_decode_all_us)}  ${ratio(t.cpp_decode_all_us, t.cwb_decode_all_us)}`);
+    console.log(`  wire bytes:                   ${String(t.cpp_bytes).padStart(10)}  ${String(t.cwb_bytes).padStart(10)}`);
+  }
+
   // Lazy access table — only fixtures where it makes sense.
   const lazyRows = Object.entries(browserResults.perf ?? {})
     .filter(([, p]) => p.lazy_supported);

@@ -2,6 +2,7 @@
 // Linked statically with capnp + kj source via `zig cc`, no emscripten.
 
 #include "schema.capnp.h"
+#include "typed_schema.capnp.h"
 #include <capnp/serialize.h>
 #include <capnp/message.h>
 #include <kj/array.h>
@@ -388,6 +389,114 @@ uint32_t cpp_lazy_obj_fields_text(const uint8_t* input_ptr, uint32_t input_len) 
   }
 
   return static_cast<uint32_t>(write_pos);
+}
+
+// ---------------------------------------------------------------------------
+// Typed schema (cpp/typed_schema.capnp): WideUserData with 32 named Text
+// fields. Demonstrates the access pattern Cap'n Proto users would actually
+// deploy — fields by integer offset, not string lookup.
+// ---------------------------------------------------------------------------
+
+alignas(8) static char typed_reader_storage[1024];
+static capnp::FlatArrayMessageReader* typed_reader = nullptr;
+
+uint32_t cpp_typed_open(uint32_t bytes_len) {
+  if (typed_reader) {
+    typed_reader->~FlatArrayMessageReader();
+    typed_reader = nullptr;
+  }
+  static_assert(sizeof(capnp::FlatArrayMessageReader) <= sizeof(typed_reader_storage),
+                "typed_reader_storage too small");
+  auto words = kj::ArrayPtr<const capnp::word>(
+      reinterpret_cast<const capnp::word*>(cpp_in),
+      bytes_len / sizeof(capnp::word));
+  typed_reader = new (typed_reader_storage) capnp::FlatArrayMessageReader(words);
+  return 1;
+}
+
+// Build a WideUserData message from a flat string array.
+// JS lays out: u32 count (must be 32), [u32 len + bytes]*32 in cpp_in.
+// Output: framed Cap'n Proto bytes in cpp_out.
+uint32_t cpp_typed_serialize_wide(uint32_t input_len) {
+  if (input_len < 4) return 0;
+  uint32_t count;
+  std::memcpy(&count, cpp_in, 4);
+  if (count != 32) return 0;
+
+  capnp::MallocMessageBuilder builder;
+  auto root = builder.initRoot<WideUserData>();
+
+  // Setter pointers: indexed array of member function pointers, one per field.
+  using Setter = void (WideUserData::Builder::*)(capnp::Text::Reader);
+  static constexpr Setter setters[32] = {
+    &WideUserData::Builder::setField0,  &WideUserData::Builder::setField1,
+    &WideUserData::Builder::setField2,  &WideUserData::Builder::setField3,
+    &WideUserData::Builder::setField4,  &WideUserData::Builder::setField5,
+    &WideUserData::Builder::setField6,  &WideUserData::Builder::setField7,
+    &WideUserData::Builder::setField8,  &WideUserData::Builder::setField9,
+    &WideUserData::Builder::setField10, &WideUserData::Builder::setField11,
+    &WideUserData::Builder::setField12, &WideUserData::Builder::setField13,
+    &WideUserData::Builder::setField14, &WideUserData::Builder::setField15,
+    &WideUserData::Builder::setField16, &WideUserData::Builder::setField17,
+    &WideUserData::Builder::setField18, &WideUserData::Builder::setField19,
+    &WideUserData::Builder::setField20, &WideUserData::Builder::setField21,
+    &WideUserData::Builder::setField22, &WideUserData::Builder::setField23,
+    &WideUserData::Builder::setField24, &WideUserData::Builder::setField25,
+    &WideUserData::Builder::setField26, &WideUserData::Builder::setField27,
+    &WideUserData::Builder::setField28, &WideUserData::Builder::setField29,
+    &WideUserData::Builder::setField30, &WideUserData::Builder::setField31,
+  };
+
+  size_t pos = 4;
+  for (uint32_t i = 0; i < 32; i++) {
+    if (pos + 4 > input_len) return 0;
+    uint32_t flen;
+    std::memcpy(&flen, cpp_in + pos, 4);
+    pos += 4;
+    if (pos + flen > input_len) return 0;
+    auto sp = capnp::Text::Reader(reinterpret_cast<const char*>(cpp_in + pos), flen);
+    (root.*setters[i])(sp);
+    pos += flen;
+  }
+
+  auto words = capnp::messageToFlatArray(builder);
+  auto bytes = words.asBytes();
+  if (bytes.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, bytes.begin(), bytes.size());
+  return static_cast<uint32_t>(bytes.size());
+}
+
+// Read field N (0..31) of the currently-open WideUserData. Copies text to
+// cpp_out, returns byte count. This is what real Cap'n Proto consumers do:
+// integer-offset access to a typed struct, no string scanning.
+uint32_t cpp_typed_field_at(uint32_t field_idx) {
+  if (!typed_reader || field_idx >= 32) return 0;
+  auto root = typed_reader->getRoot<WideUserData>();
+
+  using Getter = capnp::Text::Reader (WideUserData::Reader::*)() const;
+  static constexpr Getter getters[32] = {
+    &WideUserData::Reader::getField0,  &WideUserData::Reader::getField1,
+    &WideUserData::Reader::getField2,  &WideUserData::Reader::getField3,
+    &WideUserData::Reader::getField4,  &WideUserData::Reader::getField5,
+    &WideUserData::Reader::getField6,  &WideUserData::Reader::getField7,
+    &WideUserData::Reader::getField8,  &WideUserData::Reader::getField9,
+    &WideUserData::Reader::getField10, &WideUserData::Reader::getField11,
+    &WideUserData::Reader::getField12, &WideUserData::Reader::getField13,
+    &WideUserData::Reader::getField14, &WideUserData::Reader::getField15,
+    &WideUserData::Reader::getField16, &WideUserData::Reader::getField17,
+    &WideUserData::Reader::getField18, &WideUserData::Reader::getField19,
+    &WideUserData::Reader::getField20, &WideUserData::Reader::getField21,
+    &WideUserData::Reader::getField22, &WideUserData::Reader::getField23,
+    &WideUserData::Reader::getField24, &WideUserData::Reader::getField25,
+    &WideUserData::Reader::getField26, &WideUserData::Reader::getField27,
+    &WideUserData::Reader::getField28, &WideUserData::Reader::getField29,
+    &WideUserData::Reader::getField30, &WideUserData::Reader::getField31,
+  };
+
+  auto text = (root.*getters[field_idx])();
+  if (text.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, text.cStr(), text.size());
+  return static_cast<uint32_t>(text.size());
 }
 
 uint32_t cpp_deserialize_to_tape(uint32_t bytes_len) {
