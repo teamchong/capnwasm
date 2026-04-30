@@ -90,6 +90,7 @@ for await (const event of stripe.listEvents()) console.log(event.id);
 | `import "capnwasm/browser"` | **browser-optimized: tiny JS shim + wasm fetched as a separate asset (streaming compile)** | **44 KB** | **41 KB** |
 | `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | small | small |
 | `import "capnwasm/rpc"` | full RPC layer (sessions, caps, streaming) | small | small |
+| `import "capnwasm/dynamic"` | runtime-schema reader — schema is data, no codegen step ([docs](#runtime-schema-reader)) | small | small |
 | `import "capnwasm/tape"` | optional capnweb-shape `serialize`/`deserialize` helpers | small | small |
 | `import "capnwasm/codegen"` | wasm-built capnp schema compiler — runs in browser | 356 KB | — |
 | `import "capnwasm/stream"` | helper to stream `fetch` bytes straight into wasm | small | small |
@@ -157,6 +158,41 @@ What's there:
 - **Streaming** — `cap.callStream(...)` returns `AsyncIterable<Uint8Array>`; server registers an async generator handler. Custom STREAM_CHUNK frame extension — server-push, no per-chunk round-trip.
 - **Microtask batching** — multiple calls fired in the same tick coalesce into one `transport.send` at the next microtask boundary. Always on; the latency cost (≤ one microtask, ~1 µs) is invisible behind any network. Call `session.flush()` to force a send before the boundary if you need it.
 - **Nested groups, unions, lists of structs** — codegen emits typed accessors for all of them.
+
+---
+
+## Runtime-schema reader
+
+When the schema is *only* known at runtime — multi-tenant SaaS where each tenant uploads their own schema, admin tools that pretty-print arbitrary Cap'n Proto messages, GraphQL-fragment-shaped data — the codegen path doesn't fit. `capnwasm/dynamic` accepts a schema descriptor as plain data and reads messages without a build step.
+
+```js
+import { load } from "capnwasm";
+import { defineSchema, openDynamic } from "capnwasm/dynamic";
+
+const cpp = await load();
+
+const User = defineSchema({
+  name:   { kind: "text",   slot: 0 },
+  email:  { kind: "text",   slot: 1 },
+  age:    { kind: "uint32", offset: 0 },
+  active: { kind: "bool",   bitOffset: 32 },
+});
+
+const reader = openDynamic(cpp, User, bytes);
+reader.toObject();              // { name, email, age, active }
+reader.pick(["name", "age"]);   // one wasm round trip, only the fields you ask for
+reader.fields.email;            // Proxy access for ergonomic single-field reads
+```
+
+The descriptor is wire-compatible with what `npx capnwasm gen` emits (`SomeReader._FIELDS`). A build step that strips a generated reader to its `_FIELDS` object can feed it directly to `openDynamic`. Supported field kinds: `text`, `data`, `uint8/16/32`, `int8/16/32`, `int64`, `uint64`, `float32/64`, `bool`. Lists and nested structs aren't in this first pass — use codegen for those.
+
+When to choose dynamic:
+
+- **You don't control the schemas at build time** (tenant-supplied schemas, admin tooling)
+- **You want to avoid the `npx capnwasm gen` step** in early prototyping
+- **You only need a subset of fields** that varies per request — `pick(names)` is one wasm call regardless of which fields you ask for
+
+When to choose codegen instead: stable schemas, hot loops, ergonomic builder API, list/struct/union support.
 
 ---
 

@@ -11,6 +11,7 @@
     "./rest":        "./js/rest_runtime.mjs",
     "./stream":      "./js/stream.mjs",
     "./rpc":         "./js/rpc.mjs",
+    "./dynamic":     "./js/dynamic.mjs",
     "./codegen":     "./dist/codegen.mjs",
     "./vite-plugin": {
       "types":   "./js/vite-plugin.d.ts",

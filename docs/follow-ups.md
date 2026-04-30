@@ -34,16 +34,21 @@ What's still worth trying if cold start matters more:
 - **Pre-warm with `WebAssembly.compile(source)`**. Some apps could
   `await import("./capnp.slim.wasm?compile")` ahead of first use. User-side.
 
-## 2. Dynamic-schema reader (`capnwasm/dynamic`)
+## 2. Dynamic-schema reader (`capnwasm/dynamic`) — done
 
-Cap'n Proto's wire format supports schemaless reading; we only expose codegen.
-Today the answer to "my schema is defined at runtime" is "use capnweb." For
-multi-tenant SaaS, admin tools, GraphQL-fragment-shaped data, this is a real
-loss.
+**Update (2026-04-30):** landed as `js/dynamic.mjs`. Schema is plain data —
+the same `_FIELDS` shape codegen emits. `defineSchema()` validates it,
+`openDynamic(cpp, schema, bytes)` returns a reader with three access modes:
+`pick(names)` (batched, one wasm call), `get(name)` (single field), and a
+Proxy-style `reader.fields.name`.
 
-Cost: ~2 days. The wasm-side `cpp_any_*` API already does the work; the gap
-is a JS wrapper that takes a schema loaded as data instead of a codegen-
-generated reader class.
+Supported kinds: text, data, uint8/16/32, int8/16/32, int64, uint64,
+float32/64, bool. Tests round-trip against the codegen reader for the
+conformance schema's Primitives type.
+
+Still a follow-up if anyone needs it: lists and nested structs. The wasm
+exposes `cpp_any_enter_struct` and `cpp_any_enter_list_at` already; the JS
+wrapper would build on the same descriptor format. ~half a day.
 
 ## 3. RPC pipelining is implemented but not pipelined under `await`
 
