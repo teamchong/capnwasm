@@ -338,9 +338,18 @@ export class RpcSession {
   /** Send Finish to release the peer's hold on a question's resources. */
   finish(questionId) {
     if (this.#closed) return;
-    const len = this.#exp.cpp_rpc_build_finish(questionId);
-    if (!len) throw new Error("cpp_rpc_build_finish failed");
-    this.#sendFromOut(len);
+    // Skip the wasm boundary call — Finish frames are fixed-shape (44 B,
+    // questionId at byte 36 LE u32). buildFinishFrame patches a JS-side
+    // template. Saves a wasm crossing + a MallocMessageBuilder cycle on
+    // every successful RPC reply.
+    if (!this.#sendQueue) this.#sendQueue = [];
+    const bytes = buildFinishFrame(questionId);
+    this.#sendQueue.push(bytes);
+    this.#sendQueueBytes += bytes.length;
+    if (!this.#flushScheduled) {
+      this.#flushScheduled = true;
+      queueMicrotask(this.#flushBound);
+    }
   }
 
   // Send Release(importId, refcount) so the peer can drop its export entry
@@ -1159,3 +1168,33 @@ const EMPTY_ANY_POINTER = (() => {
   return out;
 })();
 function emptyAnyPointerMessage() { return EMPTY_ANY_POINTER.slice(); }
+
+// Pre-built Finish frame template. The Finish message is fixed-shape:
+// every Finish for any question is the same 44 bytes except for the
+// questionId at offset 36 (little-endian u32). Skip the wasm boundary
+// call and the wasm-side MessageBuilder placement-new — patch the
+// template in JS and queue the bytes directly. Saves a wasm crossing
+// per Finish on the hot RPC path.
+// 44 bytes: 4 length prefix + 8 segment table + 32 segment data
+// (1 segment of 4 words = 32 bytes). The questionId lives at byte 36
+// inside this frame as a little-endian u32 — that's the only byte
+// span that varies between Finish messages.
+const FINISH_TEMPLATE = new Uint8Array([
+  0x28, 0x00, 0x00, 0x00,                         // length prefix: 40 (LE u32)
+  0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, // segment table: 1 segment, 4 words
+  0x00, 0x00, 0x00, 0x00,                         // (padding)
+  0x01, 0x00, 0x01, 0x00, 0x04, 0x00, 0x00, 0x00, // root struct pointer
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // rpc.Message which=4 (finish)
+  0x01, 0x00, 0x00, 0x00,                         // ...
+  0x00, 0x00, 0x00, 0x00,                         // questionId @ byte 36 (LE u32)
+  0x00, 0x00, 0x00, 0x00,                         // releaseResultCaps
+]);
+function buildFinishFrame(questionId) {
+  const out = new Uint8Array(FINISH_TEMPLATE);
+  // questionId is at byte 36, little-endian u32.
+  out[36] = questionId & 0xff;
+  out[37] = (questionId >>> 8) & 0xff;
+  out[38] = (questionId >>> 16) & 0xff;
+  out[39] = (questionId >>> 24) & 0xff;
+  return out;
+}
