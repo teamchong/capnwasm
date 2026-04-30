@@ -78,22 +78,27 @@ the wasm instance; the JS host catches `proc_exit` from the WASI shim.
 Bundle size: capnp_cpp.opt.wasm is **35 KB gzip** vs capnweb's 21 KB —
 **1.68x larger** on the wire.
 
-## CLI: `npx capnwasm-gen schema.capnp`
+## CLI: `npx capnwasm`
 
-The deployment story for users with existing `.capnp` schemas:
+One package, one CLI, library import all share the name:
 
 ```bash
-# Server already uses Cap'n Proto and has user.capnp.
-# Browser just runs the codegen:
-
-npx capnwasm-gen user.capnp -o user.gen.mjs
+npx capnwasm gen user.capnp -o user.gen.mjs   # codegen
+npx capnwasm user.capnp                        # shorthand for gen
+npx capnwasm build                             # rebuild the wasm
+npx capnwasm bench                             # run the Playwright bench
 ```
 
-This emits a typed reader class per struct. Field access is a normal JS
+Library import from the same package:
+```js
+import { CapnCpp } from "capnwasm";
+```
+
+`gen` emits a typed reader class per struct. Field access is a normal JS
 property — V8-inlinable, no Proxy traps, no string lookup:
 
 ```js
-import { CapnCpp } from "capnwasm/cpp_loader";
+import { CapnCpp } from "capnwasm";
 import { UserReader, openUser } from "./user.gen.mjs";
 
 const cpp = await CapnCpp.load("/capnp_cpp.opt.wasm");

@@ -10,7 +10,7 @@
     "./tape_codec": "./js/tape_codec.mjs"
   },
   "bin": {
-    "capnwasm-gen": "./bin/capnwasm-gen.mjs"
+    "capnwasm": "./bin/capnwasm.mjs"
   },
   "files": [
     "js",

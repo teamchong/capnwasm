@@ -1,24 +1,37 @@
 #!/usr/bin/env node
-// capnwasm-gen — generate typed JS reader bindings from a .capnp schema.
+// capnwasm — single CLI for codegen, build, and bench. Same package also
+// exposes the runtime as a browser/node import via `import { CapnCpp } from
+// "capnwasm"`.
 //
-// Usage:  npx capnwasm-gen <schema.capnp> [-o output.gen.mjs]
-//
-// The generated file exports one Reader class per top-level struct in the
-// schema. Each reader is backed by the capnwasm wasm runtime, with field
-// access by precomputed integer offset — same wire format as any other
-// Cap'n Proto language binding.
+// Usage:
+//   npx capnwasm gen <schema.capnp> [-o output.gen.mjs]
+//   npx capnwasm build                # rebuild zig-out/capnp_cpp.opt.wasm
+//   npx capnwasm bench                # run the Playwright bench
+//   npx capnwasm <schema.capnp>       # shorthand for gen
 
 import { spawnSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, basename, resolve, extname } from "node:path";
+import { dirname, basename, resolve, extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-function usage() {
-  console.error("Usage: capnwasm-gen <schema.capnp> [-o <output.gen.mjs>]");
+const PKG_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
+
+function topUsage() {
+  console.error(`capnwasm — typed Cap'n Proto bindings for the browser
+
+Usage:
+  npx capnwasm gen <schema.capnp> [-o output.gen.mjs]
+  npx capnwasm build                # rebuild zig-out/capnp_cpp.opt.wasm
+  npx capnwasm bench                # run the Playwright bench
+  npx capnwasm <schema.capnp>       # shorthand for gen
+
+Library: import { CapnCpp } from "capnwasm";
+`);
   process.exit(1);
 }
 
-function parseArgs(argv) {
+function parseGenArgs(argv) {
   const args = { schema: null, output: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "-o" || argv[i] === "--output") {
@@ -27,7 +40,7 @@ function parseArgs(argv) {
       args.schema = argv[i];
     }
   }
-  if (!args.schema) usage();
+  if (!args.schema) topUsage();
   if (!existsSync(args.schema)) {
     console.error(`schema file not found: ${args.schema}`);
     process.exit(1);
@@ -271,8 +284,8 @@ function generateGetter(field) {
   }
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+async function cmdGen(argv) {
+  const args = parseGenArgs(argv);
   const structs = await parseSchema(args.schema);
   if (structs.length === 0) {
     console.error("No struct definitions found in schema.");
@@ -285,6 +298,46 @@ async function main() {
   for (const s of structs) {
     console.log(`    ${s.name}  (${s.fields.length} fields)`);
   }
+}
+
+function cmdBuild() {
+  const buildScript = join(PKG_ROOT, "cpp", "build.sh");
+  if (!existsSync(buildScript)) {
+    console.error(`cpp/build.sh missing at ${buildScript}`);
+    process.exit(1);
+  }
+  const r = spawnSync("bash", [buildScript], { stdio: "inherit", cwd: PKG_ROOT });
+  process.exit(r.status ?? 1);
+}
+
+function cmdBench() {
+  const runner = join(PKG_ROOT, "bench", "runner.mjs");
+  if (!existsSync(runner)) {
+    console.error(`bench/runner.mjs missing at ${runner}`);
+    process.exit(1);
+  }
+  const r = spawnSync("node", [runner], { stdio: "inherit", cwd: PKG_ROOT });
+  process.exit(r.status ?? 1);
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  if (argv.length === 0) topUsage();
+
+  const cmd = argv[0];
+  switch (cmd) {
+    case "gen":     await cmdGen(argv.slice(1)); return;
+    case "build":   cmdBuild(); return;
+    case "bench":   cmdBench(); return;
+    case "-h": case "--help": case "help": topUsage(); return;
+  }
+  // Shorthand: `npx capnwasm path/to/schema.capnp` runs the generator.
+  if (cmd.endsWith(".capnp") && existsSync(cmd)) {
+    await cmdGen(argv);
+    return;
+  }
+  console.error(`unknown command: ${cmd}`);
+  topUsage();
 }
 
 main().catch((err) => {
