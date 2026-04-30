@@ -102,15 +102,17 @@
       <p>40 of those 44 KB is the wasm runtime &mdash; a real Cap&apos;n Proto C++ implementation. Hard to shrink further without dropping wire compatibility with non-JS peers.</p>
       <p>If your bundle budget is tight and you don&apos;t need binary wire interop, <strong>capnweb is the smaller choice</strong>. There is no way for capnwasm to reach 21 KB without giving up the wasm runtime, which is what makes the rest of the wins possible.</p>
 
-      <h3>2. Cold start: ~15&times; slower in Node</h3>
+      <h3>2. Cold start: now essentially tied in Node, still slower in the browser</h3>
       <table class="cmp small">
-        <thead><tr><th></th><th>init</th><th>first call</th><th>total</th></tr></thead>
+        <thead><tr><th></th><th>import</th><th>load (compile + link)</th><th>total</th></tr></thead>
         <tbody>
-          <tr><td>capnweb</td><td class="win">0.03 ms</td><td class="win">0.16 ms</td><td class="win">0.18 ms</td></tr>
-          <tr><td>capnwasm</td><td>2.37 ms</td><td>0.35 ms</td><td>2.72 ms</td></tr>
+          <tr><td>capnweb</td><td>1.5 ms</td><td class="win">0.4 ms</td><td>1.9 ms</td></tr>
+          <tr><td>capnwasm (inlined)</td><td>1.0 ms</td><td>0.8 ms</td><td class="win">1.8 ms</td></tr>
+          <tr><td>capnwasm (slim, separate wasm)</td><td>0.4 ms</td><td class="win">0.6 ms</td><td class="win">1.0 ms</td></tr>
         </tbody>
       </table>
-      <p>In a browser the wasm compile is faster (streaming compile parses bytes during fetch) but it&apos;s still measurable on first page load &mdash; somewhere in the 5&ndash;50 ms range depending on CPU and whether the wasm is already cached.</p>
+      <p>Numbers are fresh-process Node 22, average of 8 runs. In an earlier release capnwasm&apos;s init was ~11&nbsp;ms because the loader did <code>instanceof Response</code>, which lazy-initializes Node&apos;s undici fetch implementation. The fix is duck-typing: never reach for <code>Response</code> unless the source is clearly a URL.</p>
+      <p>In a browser the picture is different. With an empty HTTP cache the first visit pays network + streaming compile, around <strong>20&ndash;25 ms</strong> on a desktop with a localhost-served wasm; warm reloads (V8 code-cache hit) drop to <strong>2&ndash;4 ms</strong>. capnweb&apos;s 21 KB JS parses in ~1&ndash;3 ms either way. So on a fresh tab capnwasm is still measurably slower because the wasm bytes are larger; once the bundle is cached the gap is small.</p>
 
       <h3>3. Schema friction</h3>
       <p>capnwasm requires a Cap&apos;n Proto schema &mdash; even when generating a TypeScript-only client you go through <code>npx capnwasm gen</code>. capnweb works on arbitrary JS values: you call methods, JSON-shaped data goes over the wire, no schema step.</p>

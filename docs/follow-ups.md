@@ -5,29 +5,34 @@ it survives session-context compaction. **Order is the working priority** —
 the user picked cold-start first, then the eight gaps below it in the order
 they ranked them.
 
-## 1. Cold-start work
+## 1. Cold-start work — mostly done
 
-The biggest remaining honest-loss in the perf table. Wasm compile + first-call
-init is ~3 ms in Node and ~5–50 ms in the browser. capnweb is ~0.2 ms total.
+**Update (2026-04-30):** big surprise, the dominant cost was the JS loader,
+not the wasm. Profiling showed `WebAssembly.compile` + `instantiate` of the
+109 KB slim wasm takes only ~0.5 ms in Node. The loader's dispatch was
+sitting at ~11 ms because `instanceof Response` triggered Node's lazy undici
+init. Switched to duck-typing (`source.arrayBuffer && source.headers`) and
+the cold path dropped from ~11 ms to ~0.6 ms. See `js/cpp_loader.mjs`.
 
-What's worth trying:
+Where we are now:
+- **Node fresh process**: 0.4 ms import + 0.6 ms load = ~1.0 ms total.
+- **Browser empty cache, fresh tab**: 20–25 ms (network + streaming compile).
+- **Browser warm code cache**: 2–4 ms.
+- **capnweb (Node)**: 1.5 ms import + 0.4 ms first call = ~1.9 ms total.
 
-- **Streaming compile + bytes optimization**. We already use
-  `WebAssembly.instantiateStreaming` when given a URL/Response. Worth measuring
-  whether brotli on the wire (in addition to gzip) shortens the parse window
-  on slow connections.
-- **Smaller wasm**. Stripping more KJ debug strings, splitting the WASI shim
-  further, replacing some C++ hot inner loops with hand-tuned WAT. See
-  follow-up #8 below — diminishing returns past ~35 KB without a rewrite.
-- **Compile-time vs first-use tradeoff**. We currently compile + link + run
-  `_start` synchronously inside `load()`. If the caller doesn't make a wasm
-  call right away, we can defer some of this. Probably small gain.
+Node is essentially tied with capnweb. Browser warm reload is close. Browser
+empty-cache visit still loses because 109 KB wasm > 21 KB JS over the wire.
+That last gap is now a function of bundle size — see follow-up #8.
+
+What's still worth trying if cold start matters more:
+
+- **Smaller wasm**. The leftover 5–10 ms of browser cold start is
+  proportional to wasm bytes. See #8.
+- **Brotli on the wire** (in addition to gzip). Reduces both transfer time
+  and the parse window on slow connections. User-side pattern (HTTP server),
+  not a library change, but worth documenting.
 - **Pre-warm with `WebAssembly.compile(source)`**. Some apps could
-  `await import("./capnp.slim.wasm?compile")` ahead of first use. That's a
-  user-side pattern, not a library change — but worth documenting.
-
-Cost: 1–2 days of profiling + targeted shrinkage. Don't expect to beat 21 KB.
-Aim for ~35 KB gz wasm and ~1 ms node init.
+  `await import("./capnp.slim.wasm?compile")` ahead of first use. User-side.
 
 ## 2. Dynamic-schema reader (`capnwasm/dynamic`)
 

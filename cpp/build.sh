@@ -99,11 +99,11 @@ FLAGS=(
   -DKJ_NO_STACK_TRACES_IN_RELEASE=1
   -I"$CAPNP_SRC"
   -Icpp
+  -include cpp/kj_strip_strings.h
   -Wno-deprecated
   -Wno-unused-parameter
   -Wno-unknown-pragmas
   -Wl,--no-entry
-  -Wl,--export-dynamic
   -Wl,--export=cpp_in_ptr
   -Wl,--export=cpp_out_ptr
   -Wl,--export=cpp_in_capacity

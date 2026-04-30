@@ -6,8 +6,6 @@
 // as free functions; bundles that don't use it (e.g. RPC-only browser clients)
 // drop tape_codec entirely.
 
-import { buildRuntimeWasiImports } from "./cpp_wasi_runtime.mjs";
-
 export class CapnCpp {
   /** @type {WebAssembly.Instance} */
   #instance;
@@ -19,46 +17,64 @@ export class CapnCpp {
   #cap = 0;
 
   static async load(wasmSource) {
-    const wasi = buildRuntimeWasiImports();
-    const importObj = { wasi_snapshot_preview1: wasi.imports };
+    // Inline WASI imports — avoids a cross-module factory call on the cold
+    // path. The closures share `mem` via lexical scope, set after instantiate.
+    let mem;
+    const wasi = {
+      args_get: zero,
+      args_sizes_get(argc_ptr, argv_buf_size_ptr) {
+        const dv = new DataView(mem.buffer);
+        dv.setUint32(argc_ptr, 0, true);
+        dv.setUint32(argv_buf_size_ptr, 0, true);
+        return 0;
+      },
+      fd_write(fd, iovs_ptr, iovs_len, nwritten_ptr) {
+        let total = 0;
+        const dv = new DataView(mem.buffer);
+        for (let i = 0; i < iovs_len; i++) {
+          const ptr = dv.getUint32(iovs_ptr + i * 8, true);
+          const len = dv.getUint32(iovs_ptr + i * 8 + 4, true);
+          if (fd === 1 || fd === 2) {
+            const text = new TextDecoder().decode(new Uint8Array(mem.buffer, ptr, len));
+            (fd === 2 ? console.error : console.log)(text.replace(/\n$/, ""));
+          }
+          total += len;
+        }
+        dv.setUint32(nwritten_ptr, total, true);
+        return 0;
+      },
+      proc_exit(code) { throw new Error(`capnp_cpp: proc_exit(${code})`); },
+      fd_close: zero,
+    };
+    const importObj = { wasi_snapshot_preview1: wasi };
 
-    // Source dispatch:
-    //   WebAssembly.Module — Cloudflare Workers' canonical pattern is
-    //     `import wasm from "./capnp.slim.wasm"` which gives a pre-compiled
-    //     Module. Workers reject sync compile (new Module(bytes)) for
-    //     security, so the import is the only way in.
-    //   URL / string / Request / Response — browsers + Node 18+. Streaming
-    //     compile when supported; falls through to bytes otherwise.
-    //   Uint8Array / ArrayBuffer — Node, tests, anyone with raw bytes.
-    const isModule = typeof WebAssembly.Module !== "undefined" && wasmSource instanceof WebAssembly.Module;
-    const isResp = typeof Response !== "undefined" && wasmSource instanceof Response;
-    const isReq  = typeof Request  !== "undefined" && wasmSource instanceof Request;
-    const isUrl  = typeof wasmSource === "string" || wasmSource instanceof URL;
-
+    // Dispatch carefully: do NOT touch `Response`, `Request`, or `URL` on the
+    // bytes/Module fast paths. In Node, those globals come from undici and
+    // lazy-init at first reference (~10 ms). Duck-type instead — Response and
+    // Request both expose .arrayBuffer + .headers; URL has .href.
     let instance;
-    if (isModule) {
-      // Sync instantiate — we already have the compiled module, so this
-      // is just the linking step. No fetch, no compile, no async wait.
+    if (typeof wasmSource === "string") {
+      instance = (await WebAssembly.instantiateStreaming(fetch(wasmSource), importObj)).instance;
+    } else if (wasmSource instanceof WebAssembly.Module) {
+      // Cloudflare Workers' canonical pattern. Sync instantiate (link only).
       instance = await WebAssembly.instantiate(wasmSource, importObj);
-    } else if (isResp || isReq || isUrl) {
-      const resp = isResp ? wasmSource : fetch(wasmSource);
-      if (typeof WebAssembly.instantiateStreaming === "function") {
-        ({ instance } = await WebAssembly.instantiateStreaming(resp, importObj));
-      } else {
-        const bytes = new Uint8Array(await (await resp).arrayBuffer());
-        ({ instance } = await WebAssembly.instantiate(bytes, importObj));
-      }
+    } else if (wasmSource && typeof wasmSource === "object"
+               && typeof wasmSource.arrayBuffer === "function" && wasmSource.headers) {
+      // Response / Request — duck-typed, no `instanceof Response`.
+      instance = (await WebAssembly.instantiateStreaming(wasmSource, importObj)).instance;
+    } else if (wasmSource && typeof wasmSource === "object"
+               && typeof wasmSource.href === "string") {
+      // URL — duck-typed.
+      instance = (await WebAssembly.instantiateStreaming(fetch(wasmSource), importObj)).instance;
     } else {
-      const bytes = wasmSource instanceof Uint8Array
-        ? wasmSource
-        : new Uint8Array(wasmSource);
-      ({ instance } = await WebAssembly.instantiate(bytes, importObj));
+      // Uint8Array / ArrayBuffer / typed array.
+      instance = (await WebAssembly.instantiate(wasmSource, importObj)).instance;
     }
-    wasi.setMemory(instance.exports.memory);
+    mem = instance.exports.memory;
 
     const cpp = new CapnCpp();
     cpp.#instance = instance;
-    cpp.#memory = instance.exports.memory;
+    cpp.#memory = mem;
     cpp.#exports = instance.exports;
     if (cpp.#exports.cpp_abi_version() !== 1) {
       throw new Error("Unsupported capnp_cpp ABI version");
@@ -94,6 +110,8 @@ export class CapnCpp {
   get _cap()     { return this.#cap; }
   get _u8()      { return this.#u8(); }
 }
+
+function zero() { return 0; }
 
 // Module-scoped cache so repeated lookups of the same field name don't burn
 // allocations in TextEncoder.encode.

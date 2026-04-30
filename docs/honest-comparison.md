@@ -36,16 +36,21 @@ These are real, not handwave-able-away.
 
 If your bundle budget is tight and you don't need binary wire interop, **capnweb is the smaller choice**. There is no way for capnwasm to reach 21 KB without giving up the wasm runtime, which is what makes the rest of the wins possible.
 
-### 2. Cold start: ~15x slower in Node
+### 2. Cold start: now essentially tied in Node, still slower in the browser
 
-| | init | first call | total time-to-first-result |
+Time-to-first-result, fresh Node 22 process, mean of 8 runs.
+
+| | import | load (compile + link) | total |
 |---|---|---|---|
-| capnweb | 0.03 ms | 0.16 ms | **0.18 ms** |
-| capnwasm | 2.37 ms | 0.35 ms | **2.72 ms** |
+| capnweb | 1.5 ms | 0.4 ms | **1.9 ms** |
+| capnwasm (inlined bundle) | 1.0 ms | 0.8 ms | **1.8 ms** |
+| capnwasm (slim, separate wasm) | 0.4 ms | 0.6 ms | **1.0 ms** |
 
-In a browser the wasm compile is faster (streaming compile parses bytes during fetch) but it's still measurable on first page load — somewhere in the 5–50 ms range depending on CPU and whether the wasm is already cached.
+Earlier releases pegged capnwasm's init at ~11 ms because the loader did `instanceof Response`, which lazy-initializes Node's built-in undici fetch (~10 ms). The fix is duck-typing: never reach for `Response` unless the source is clearly a URL/string.
 
-If you're optimizing for a single first request and nothing else, **capnweb starts replying sooner**. If you make any meaningful number of requests after that, capnwasm catches up and overtakes within milliseconds.
+Browser is a different story. With an empty HTTP cache the first visit pays network + streaming compile — about **20–25 ms** on a desktop with localhost-served wasm; warm reloads (V8 code-cache hit) drop to **2–4 ms**. capnweb's 21 KB JS parses in ~1–3 ms either way. So on a fresh tab capnwasm is still measurably slower because the wasm bytes are larger; once the bundle is cached, the gap is small.
+
+If you're optimizing for a single first request from an empty browser cache, **capnweb starts replying sooner**. In Node, in long-running processes, or after the first cache hit in the browser, the cold-start gap is gone.
 
 ### 3. Schema friction
 

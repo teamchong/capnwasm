@@ -49,8 +49,12 @@
         <span class="value lose">44 KB &mdash; 2.1&times; larger than capnweb</span>
       </div>
       <div class="headline-row">
-        <span class="label">Cold start (init + first call)</span>
-        <span class="value lose">~3 ms &mdash; 15&times; slower than capnweb</span>
+        <span class="label">Cold start (Node, fresh process, total)</span>
+        <span class="value">~1 ms &mdash; tied with capnweb</span>
+      </div>
+      <div class="headline-row">
+        <span class="label">Cold start (browser, fresh tab w/ empty cache)</span>
+        <span class="value lose">~20 ms &mdash; wasm fetch + compile, vs capnweb&apos;s 1&ndash;3 ms JS parse</span>
       </div>
     </div>
 
