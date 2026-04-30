@@ -30,9 +30,9 @@ These are real, not handwave-able-away.
 | | gzip | brotli |
 |---|---|---|
 | capnweb | **21 KB** | ~19 KB |
-| capnwasm/browser | 44 KB | 41 KB |
+| capnwasm/browser | 42 KB | 40 KB |
 
-40 of those 44 KB is the wasm runtime — a real Cap'n Proto C++ implementation. Hard to shrink further without dropping wire compatibility with non-JS peers.
+39 of those 42 KB is the wasm runtime — a real Cap'n Proto C++ implementation. Hard to shrink further without dropping wire compatibility with non-JS peers.
 
 If your bundle budget is tight and you don't need binary wire interop, **capnweb is the smaller choice**. There is no way for capnwasm to reach 21 KB without giving up the wasm runtime, which is what makes the rest of the wins possible.
 

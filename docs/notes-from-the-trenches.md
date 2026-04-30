@@ -10,7 +10,7 @@ A field report on what happens when you take Cap'n Proto's actual C++ runtime, s
 - Pre-allocated arenas instead of malloc/free per RPC frame.
 - JS-side codegen with V8-friendly hidden-class shapes, ES2024 `Promise.withResolvers`, etc.
 
-Result: 44 KB gz total bundle (JS shim + separately-fetched wasm) for the browser path.
+Result: 42 KB gz total bundle (JS shim + separately-fetched wasm) for the browser path.
 
 ## Trap 1: a "fast-path" that was 30× slower than the safe path
 
@@ -181,7 +181,7 @@ In-process bench, both peers in the same Node process via a memory transport pai
 
 | | capnwasm | capnweb |
 |---|---|---|
-| Bundle (gz) | 44 KB | 21 KB |
+| Bundle (gz) | 42 KB | 21 KB |
 | Cold start | ~3 ms | ~0.2 ms |
 | Multi-language wire interop | yes | no |
 | OpenAPI client codegen | yes | structurally no |

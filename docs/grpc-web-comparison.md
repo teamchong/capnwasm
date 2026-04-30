@@ -6,7 +6,7 @@ A fair question that comes up: gRPC-Web exists, has Google's name on it, and is 
 
 **Choose gRPC-Web when**: your backend already speaks gRPC; you want to reuse existing `.proto` files and Envoy/grpcwebproxy infrastructure; your team is already trained on protobuf semantics and tooling.
 
-**Choose capnwasm when**: you don't have a gRPC backend already; you want zero-copy reads (read 5 fields out of 100 without decoding the rest); you want first-class capability passing (return an interface from a method, the client calls back into it); you want one toolchain that targets browsers, Node, Workers, and any other runtime with a 44 KB bundle budget.
+**Choose capnwasm when**: you don't have a gRPC backend already; you want zero-copy reads (read 5 fields out of 100 without decoding the rest); you want first-class capability passing (return an interface from a method, the client calls back into it); you want one toolchain that targets browsers, Node, Workers, and any other runtime with a 42 KB bundle budget.
 
 The detail is below.
 
@@ -30,7 +30,7 @@ The zero-copy bit is the structural difference. Cap'n Proto's wire format is a f
 gRPC-Web                              capnwasm
 ─────────                             ────────
 browser:                              browser:
-  grpc-web JS client (~50 KB)          capnwasm/browser (44 KB JS+wasm)
+  grpc-web JS client (~50 KB)          capnwasm/browser (42 KB JS+wasm)
        │                                    │
        │ HTTP/1.1 framed                    │ WebSocket binary frames
        ▼                                    ▼
@@ -48,11 +48,11 @@ gRPC-Web requires a **proxy** because browsers can't speak HTTP/2 trailers. That
 
 | | gzip |
 |---|---|
-| capnwasm/browser (44 KB) | 44 KB |
+| capnwasm/browser (3 KB JS shim + 39 KB wasm) | 42 KB |
 | gRPC-Web (`@grpc/grpc-js` + generated code, typical) | 80–120 KB |
 | capnweb (the lighter capnwasm cousin) | 21 KB |
 
-`grpc-web` numbers vary heavily with what you import — strip down to one service and a runtime and it can be smaller, but realistic deployments end up in the 80+ KB range once retry/auth/streaming code lands. capnwasm is fixed at 44 KB regardless of how many services you generate against it (the runtime is shared; codegen output is per-service typed accessors only).
+`grpc-web` numbers vary heavily with what you import — strip down to one service and a runtime and it can be smaller, but realistic deployments end up in the 80+ KB range once retry/auth/streaming code lands. capnwasm is fixed at 42 KB regardless of how many services you generate against it (the runtime is shared; codegen output is per-service typed accessors only).
 
 ## Capabilities
 
@@ -110,4 +110,4 @@ Codegen ergonomics matter when you're iterating. The Vite plugin difference isn'
 - **You need cross-vendor interop with services that only speak protobuf**, like a third-party ML inference API. Run gRPC-Web; the proxy is fine.
 - **You want the official-Google-blessing reassurance** for an enterprise procurement process. Cap'n Proto is open-source but not Google-backed.
 
-For new builds, the schema interop and bundle-size argument has held up — a 44 KB type-safe binary RPC client that talks to anything (Node, Workers, browsers, C++ peers) without a proxy in the path is a real deployment win.
+For new builds, the schema interop and bundle-size argument has held up — a 42 KB type-safe binary RPC client that talks to anything (Node, Workers, browsers, C++ peers) without a proxy in the path is a real deployment win.

@@ -1,29 +1,49 @@
 # capnwasm
 
-**One typed-client toolchain for any backend** — write or import a schema, get a fast typed client back.
+Typed RPC for the browser, with a real Cap'n Proto C++ runtime in 42 KB gz (40 KB brotli). Talks to non-JS services. Beats capnweb 1.7-3.8× on real workloads.
 
-- Cap'n Proto schemas → zero-copy typed reader/builder + RPC client/server
-- TypeScript interfaces with `@rest` directives → typed REST client
-- OpenAPI 3.x specs → typed REST client (works against Stripe, GitHub, anything that publishes a spec)
+```js
+// 1. Write a schema:           user.capnp
+//      struct User { id @0 :UInt64; name @1 :Text; email @2 :Text; }
 
-Real upstream Cap'n Proto C++ is statically compiled to WebAssembly via `zig cc`. The schema *compiler* is also wasm — no `capnp` binary, no version skew, no `emscripten`.
+// 2. One CLI command, or a Vite plugin in vite.config.ts:
+//      npx capnwasm gen user.capnp
+
+// 3. Use it:
+import { load } from "capnwasm";
+import { openUser, buildUser } from "./user.capnp.gen.mjs";
+
+const cpp = await load();
+
+const b = buildUser(cpp);
+b.id = 42n; b.name = "Alice"; b.email = "alice@example.com";
+const bytes = b.toBytes();      // binary wire — schema-versioned, no JSON tax
+
+const r = openUser(cpp, bytes);
+console.log(r.name);            // "Alice" — read by walking 8 bytes; rest of the message untouched
+```
+
+That's the whole core API. Same shape for RPC (`session.callBuilder(IFC, METHOD, BuilderClass)`), REST clients (auto-generated from `@rest` TypeScript interfaces or OpenAPI specs), runtime-schema reads (no codegen needed at all). Three audiences, one toolchain:
+
+- **Cap'n Proto schemas** → typed reader/builder + RPC client/server, wire-compatible with C++/Rust/Go peers
+- **TypeScript interfaces with `@rest` directives** → typed `fetch`-based REST client
+- **OpenAPI 3.x specs** → typed REST client (works against Stripe, GitHub, anything that publishes a spec)
+
+Real upstream Cap'n Proto C++ is statically compiled to WebAssembly via `zig cc` — no `capnp` binary, no version skew, no `emscripten`. The schema compiler itself runs in wasm, including in the browser.
 
 ```bash
 npm install capnwasm
 ```
 
-```js
-import { load } from "capnwasm";       // runtime (capnp wire + RPC)
-import { auth } from "capnwasm/rest";  // REST client runtime
-```
-
-**Documentation paths:**
-- [Zero to working RPC in 5 minutes](docs/zero-to-rpc.md) — schema → codegen → server → client
-- [Runtime-schema reader / builder](docs/dynamic.md) — `capnwasm/dynamic`, when schema arrives at runtime
-- [Production deployment](docs/deployment.md) — auth, backpressure, error handling, reverse proxy
-- [capnwasm vs gRPC-Web](docs/grpc-web-comparison.md) — when to choose each
-- [Cloudflare Workers](docs/workers.md) — Workers-specific entrypoint
-- [Honest comparison](docs/honest-comparison.md) — wins, losses, ties vs capnweb and REST/JSON
+**Docs:**
+[Zero to RPC](docs/zero-to-rpc.md) ·
+[Dynamic (no codegen)](docs/dynamic.md) ·
+[Cloudflare Workers](docs/workers.md) ·
+[Vite plugin](docs/vite-plugin.md) ·
+[DevTools inspector](docs/inspect.md) ·
+[Production deployment](docs/deployment.md) ·
+[vs gRPC-Web](docs/grpc-web-comparison.md) ·
+[Honest comparison](docs/honest-comparison.md)
 
 ---
 
@@ -95,7 +115,7 @@ for await (const event of stripe.listEvents()) console.log(event.id);
 | | what | gzip | brotli |
 |---|---|---|---|
 | `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, base64-inlined wasm) | 68 KB | 63 KB |
-| `import "capnwasm/browser"` | **browser-optimized: tiny JS shim + wasm fetched as a separate asset (streaming compile)** | **39 KB** | **36 KB** |
+| `import "capnwasm/browser"` | **browser-optimized: 3 KB JS shim + 39 KB wasm fetched as a separate asset (streaming compile)** | **42 KB** | **40 KB** |
 | `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | small | small |
 | `import "capnwasm/rpc"` | full RPC layer (sessions, caps, streaming) | small | small |
 | `import "capnwasm/dynamic"` | runtime-schema reader — schema is data, no codegen step ([docs](#runtime-schema-reader)) | small | small |
@@ -113,9 +133,9 @@ cw.inspect(fetch("/api/user.capnp"));   // expandable tree in the console
 
 **Live three-way playground** at [teamchong.github.io/capnwasm](https://teamchong.github.io/capnwasm/) — REST/JSON vs capnweb vs capnwasm side-by-side, fetching the same fixtures and rendering to DOM in your browser. Plus a [WebSocket RPC bench](https://teamchong.github.io/capnwasm/rpc.html) that runs burst, pipelining, and 64 KB binary-echo workloads against a real RPC server (capnwasm wins ~5× on burst). Source in [`web/`](web/) — `cd web && npm run dev` to run it locally.
 
-For browsers, prefer `capnwasm/browser`: 39 KB gzip / 36 KB brotli (counting both the JS shim and the separately-fetched `dist/capnp.slim.wasm`, which excludes the bench/test helpers baked into the default wasm). Without the 33% base64 inflation, and with `WebAssembly.instantiateStreaming` so the wasm starts compiling while it's still being downloaded.
+For browsers, prefer `capnwasm/browser`: a 3 KB JS shim + a separately-fetched 39 KB `dist/capnp.slim.wasm`, totalling 42 KB gz / 40 KB brotli. No base64 inflation, and `WebAssembly.instantiateStreaming` compiles the wasm while it's still being downloaded.
 
-For comparison: capnweb is ~21 KB gzip. We're roughly 2x larger because we ship a real Cap'n Proto wasm runtime; that buys us things capnweb structurally can't have (binary wire, zero-copy field access, true sparse-read perf).
+For comparison: capnweb is ~21 KB gzip. We're roughly 2× larger because we ship a real Cap'n Proto wasm runtime; that buys us things capnweb structurally can't have (binary wire, zero-copy field access, true sparse-read perf, multi-language interop).
 
 ---
 
