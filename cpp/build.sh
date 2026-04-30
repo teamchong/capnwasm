@@ -82,6 +82,11 @@ FLAGS=(
   -Wl,--export=cpp_abi_version
   -Wl,--export=cpp_serialize_tape
   -Wl,--export=cpp_deserialize_to_tape
+  -Wl,--export=cpp_lazy_open
+  -Wl,--export=cpp_lazy_msg_obj_field_text
+  -Wl,--export=cpp_lazy_obj_fields_text
+  -Wl,--export=cpp_lazy_aux_ptr
+  -Wl,--export=cpp_lazy_aux_capacity
   -lwasi-emulated-signal
   -lwasi-emulated-mman
 )

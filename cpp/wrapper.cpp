@@ -8,6 +8,7 @@
 #include <kj/io.h>
 #include <cstring>
 #include <cstdint>
+#include <new>
 
 // Note: __cxa_allocate_exception and __cxa_throw are provided by linking
 // zig's libcxxabi cxa_exception.cpp directly into the build (see build.sh).
@@ -19,10 +20,18 @@ constexpr size_t SCRATCH_CAP = 256 * 1024;
 alignas(8) static uint8_t cpp_in[SCRATCH_CAP];
 alignas(8) static uint8_t cpp_out[SCRATCH_CAP];
 
+// Separate input region for lazy-mode side-channel calls (e.g. fieldsText
+// name list). Decoupled so lazy mode's input doesn't clobber cpp_in, which
+// the lazy reader points at after cpp_lazy_open.
+constexpr size_t LAZY_AUX_CAP = 8 * 1024;
+alignas(8) static uint8_t cpp_lazy_aux[LAZY_AUX_CAP];
+
 uint8_t* cpp_in_ptr() { return cpp_in; }
 uint8_t* cpp_out_ptr() { return cpp_out; }
 uint32_t cpp_in_capacity() { return SCRATCH_CAP; }
 uint32_t cpp_out_capacity() { return SCRATCH_CAP; }
+uint8_t* cpp_lazy_aux_ptr() { return cpp_lazy_aux; }
+uint32_t cpp_lazy_aux_capacity() { return LAZY_AUX_CAP; }
 
 uint32_t cpp_abi_version() { return 1; }
 
@@ -240,6 +249,145 @@ static void decodeExpression(Expression::Reader r, TapeWriter& w) {
       break;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Lazy reader: parse the message once, then JS pulls individual fields on
+// demand. This is the access pattern Cap'n Proto's wire format is designed
+// for — skip materializing the whole tree, fetch only what's read.
+// ---------------------------------------------------------------------------
+
+// Heap-allocated reader so its lifetime spans many cpp_lazy_* calls.
+// Cleared on each cpp_lazy_open. Uses MallocMessageBuilder's allocator
+// indirectly via FlatArrayMessageReader (which is a value-type).
+alignas(8) static char lazy_reader_storage[1024];
+static capnp::FlatArrayMessageReader* lazy_reader = nullptr;
+
+uint32_t cpp_lazy_open(uint32_t bytes_len) {
+  if (lazy_reader) {
+    lazy_reader->~FlatArrayMessageReader();
+    lazy_reader = nullptr;
+  }
+  static_assert(sizeof(capnp::FlatArrayMessageReader) <= sizeof(lazy_reader_storage),
+                "lazy_reader_storage too small");
+  auto words = kj::ArrayPtr<const capnp::word>(
+      reinterpret_cast<const capnp::word*>(cpp_in),
+      bytes_len / sizeof(capnp::word));
+  lazy_reader = new (lazy_reader_storage) capnp::FlatArrayMessageReader(words);
+  return 1;
+}
+
+// Helper: extract the inner Expression payload from a Message reader.
+static bool extractExpr(Expression::Reader& out, Message::Reader msg) {
+  switch (msg.which()) {
+    case Message::PUSH:    out = msg.getPush(); return true;
+    case Message::RESOLVE: out = msg.getResolve().getExpr(); return true;
+    case Message::REJECT:  out = msg.getReject().getExpr(); return true;
+    case Message::STREAM:  out = msg.getStream(); return true;
+    case Message::ABORT:   out = msg.getAbort(); return true;
+    default: return false;
+  }
+}
+
+// For a push/resolve/reject/stream/abort message whose payload is an Object,
+// look up the named field's text value. Copies it to cpp_out. Returns the
+// number of bytes written, 0 if not found / not text.
+uint32_t cpp_lazy_msg_obj_field_text(const uint8_t* name_ptr, uint32_t name_len) {
+  if (!lazy_reader) return 0;
+  auto msg = lazy_reader->getRoot<Message>();
+  Expression::Reader expr;
+  if (!extractExpr(expr, msg)) return 0;
+  if (!expr.isObject()) return 0;
+
+  auto target = kj::StringPtr(reinterpret_cast<const char*>(name_ptr), name_len);
+  for (auto kv : expr.getObject()) {
+    if (kv.getKey() == target) {
+      auto val = kv.getValue();
+      if (!val.isText()) return 0;
+      auto text = val.getText();
+      if (text.size() > SCRATCH_CAP) return 0;
+      std::memcpy(cpp_out, text.cStr(), text.size());
+      return static_cast<uint32_t>(text.size());
+    }
+  }
+  return 0;
+}
+
+// Batched: fetch text values for multiple fields in one boundary crossing.
+// Input layout in cpp_in (after lazy_open already consumed it — the JS side
+// stages the name list into the lazy_aux scratch instead). Format:
+//   u32 count
+//   u32 name_len[count]
+//   bytes...           the name strings packed back-to-back
+//
+// Output layout in cpp_out:
+//   u32 result_len[count]   (0xFFFFFFFF if missing/non-text)
+//   bytes...                results packed back-to-back
+uint32_t cpp_lazy_obj_fields_text(const uint8_t* input_ptr, uint32_t input_len) {
+  if (!lazy_reader) return 0;
+  auto msg = lazy_reader->getRoot<Message>();
+  Expression::Reader expr;
+  if (!extractExpr(expr, msg)) return 0;
+  if (!expr.isObject()) return 0;
+
+  if (input_len < 4) return 0;
+  uint32_t count;
+  std::memcpy(&count, input_ptr, 4);
+  if (count == 0 || count > 256) return 0;
+
+  const size_t lens_off = 4;
+  const size_t names_off = lens_off + count * 4;
+  if (input_len < names_off) return 0;
+
+  // Parse name list into spans.
+  struct NameSpan { const uint8_t* ptr; uint32_t len; bool found; };
+  NameSpan names[256];
+  size_t cursor = names_off;
+  for (uint32_t i = 0; i < count; i++) {
+    uint32_t nl;
+    std::memcpy(&nl, input_ptr + lens_off + i * 4, 4);
+    if (cursor + nl > input_len) return 0;
+    names[i] = { input_ptr + cursor, nl, false };
+    cursor += nl;
+  }
+
+  // Reserve the result-length header.
+  const size_t header_bytes = count * 4;
+  size_t write_pos = header_bytes;
+  uint32_t found_count = 0;
+
+  // Mark all as missing first.
+  for (uint32_t i = 0; i < count; i++) {
+    uint32_t missing = 0xFFFFFFFFu;
+    std::memcpy(cpp_out + i * 4, &missing, 4);
+  }
+
+  // One pass over the entries.
+  for (auto kv : expr.getObject()) {
+    if (found_count == count) break;
+    auto key = kv.getKey();
+    for (uint32_t ni = 0; ni < count; ni++) {
+      if (names[ni].found) continue;
+      if (key.size() != names[ni].len) continue;
+      if (std::memcmp(key.cStr(), names[ni].ptr, names[ni].len) != 0) continue;
+
+      auto val = kv.getValue();
+      if (val.isText()) {
+        auto text = val.getText();
+        if (write_pos + text.size() > SCRATCH_CAP) return 0;
+        uint32_t tl = static_cast<uint32_t>(text.size());
+        std::memcpy(cpp_out + ni * 4, &tl, 4);
+        std::memcpy(cpp_out + write_pos, text.cStr(), text.size());
+        write_pos += text.size();
+      }
+      // Else: leave header as 0xFFFFFFFF (missing).
+      names[ni].found = true;
+      found_count++;
+      break;
+    }
+  }
+
+  return static_cast<uint32_t>(write_pos);
 }
 
 uint32_t cpp_deserialize_to_tape(uint32_t bytes_len) {

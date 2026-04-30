@@ -121,6 +121,29 @@ async function main() {
     console.log(row.map((c) => String(c).padStart(10)).join(""));
   }
 
+  // Lazy access table — only fixtures where it makes sense.
+  const lazyRows = Object.entries(browserResults.perf ?? {})
+    .filter(([, p]) => p.lazy_supported);
+  if (lazyRows.length > 0) {
+    console.log("\n" + sep);
+    console.log("LAZY ACCESS  (decode + read 3 named fields)");
+    console.log("This is the access pattern Cap'n Proto's wire format is designed for —");
+    console.log("read what you need, skip what you don't. capnweb still pays full JSON.parse.");
+    console.log(sep);
+    const head2 = ["fixture", "cpp lazy3", "cwb (decode+3)", "speedup"];
+    console.log(head2.map((c) => c.padStart(18)).join(""));
+    for (const [name, p] of lazyRows) {
+      const spd = (p.capnweb_lazy3_us / p.capnp_cpp_lazy3_us).toFixed(2);
+      const row = [
+        name,
+        p.capnp_cpp_lazy3_us.toFixed(2),
+        p.capnweb_lazy3_us.toFixed(2),
+        spd + "x",
+      ];
+      console.log(row.map((c) => String(c).padStart(18)).join(""));
+    }
+  }
+
   console.log("\n" + sep);
   console.log("CORRECTNESS");
   console.log(sep);

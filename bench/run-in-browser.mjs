@@ -65,6 +65,9 @@ function perfFor(cpp, fx) {
     ? new TextEncoder().encode(cwbBytes).length
     : (cwbBytes?.length ?? 0);
 
+  // Lazy access bench — Cap'n Proto's actual claim to fame.
+  const lazy = lazyAccessBench(cpp, fx, cppBytes, cwbBytes, iters);
+
   return {
     iters,
     capnp_cpp_encode_us: tCppEnc.usPerOp,
@@ -75,7 +78,33 @@ function perfFor(cpp, fx) {
     decode_speedup: tCwbDec.usPerOp / tCppDec.usPerOp,
     capnp_cpp_bytes: cppBytes.length,
     capnweb_bytes: cwbWireSize,
+    lazy_supported: lazy.supported,
+    capnp_cpp_lazy3_us: lazy.cppUs,
+    capnweb_lazy3_us: lazy.cwbUs,
   };
+}
+
+/**
+ * Decode + access K=3 named fields. The pattern Cap'n Proto's wire format
+ * is actually designed for: skip materializing what you don't need.
+ */
+function lazyAccessBench(cpp, fx, cppBytes, cwbBytes, iters) {
+  let fieldNames;
+  if (fx.name === "medium-payload") fieldNames = ["field0", "field5", "field31"];
+  else if (fx.name === "wide-payload") fieldNames = ["field0", "field256", "field511"];
+  else return { supported: false, cppUs: NaN, cwbUs: NaN };
+
+  const tCpp = bench(iters, () => {
+    const r = cpp.openLazy(cppBytes);
+    const vs = r.fieldsText(fieldNames);
+    return vs[0].length + vs[1].length + vs[2].length;
+  });
+  const tCwb = bench(iters, () => {
+    const v = capnweb.deserialize(cwbBytes);
+    const obj = v[1];
+    return obj[fieldNames[0]].length + obj[fieldNames[1]].length + obj[fieldNames[2]].length;
+  });
+  return { supported: true, cppUs: tCpp.usPerOp, cwbUs: tCwb.usPerOp };
 }
 
 function correctnessFor(cpp, fx) {
