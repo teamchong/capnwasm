@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "codegen": "node ../bin/capnwasm.mjs gen users.capnp -o src/playground/users.gen.mjs",
+    "codegen": "node ../bin/capnwasm.mjs gen users.capnp -o src/playground/users.capnp.gen.mjs",
     "prepare": "cp ../dist/capnp.slim.wasm public/ && npm run codegen && node scripts/generate-fixtures.mjs",
     "dev": "npm run prepare && vite",
     "build": "npm run prepare && vite build",

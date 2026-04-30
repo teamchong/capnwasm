@@ -17,7 +17,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { load } from "../../dist/inlined.mjs";
-import { buildUser } from "../src/playground/users.gen.mjs";
+import { buildUser } from "../src/playground/users.capnp.gen.mjs";
 import { serialize as cwbSerialize } from "capnweb";
 
 const HERE = dirname(fileURLToPath(import.meta.url));

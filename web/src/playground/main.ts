@@ -8,7 +8,7 @@
 // @ts-ignore — generated module, no .d.ts wired into tsconfig yet.
 import { load } from "../../../js/browser.mjs";
 // @ts-ignore — generated reader/builder for the demo schema.
-import { openUser } from "./users.gen.mjs";
+import { openUser } from "./users.capnp.gen.mjs";
 import { deserialize as cwbDeserialize } from "capnweb";
 
 const $ = (id: string) => document.getElementById(id)!;
