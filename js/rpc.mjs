@@ -108,6 +108,16 @@ const deferred = typeof Promise.withResolvers === "function"
       return { promise, resolve, reject };
     };
 
+// Factory that always creates the question record with the same field
+// shape (deferred + kind + bootstrapCap + resultsReader + extract), so
+// V8 sees a single hidden class for every q across the bootstrap and
+// call paths. Without this, #handleReturn's `q.extract` access site
+// goes polymorphic between the two creation shapes and falls out of
+// inline-cache fast-path.
+function makeQ(deferred, kind, bootstrapCap, resultsReader, extract) {
+  return { deferred, kind, bootstrapCap, resultsReader, extract };
+}
+
 /**
  * RpcSession drives one peer of an RPC connection. Both sides instantiate one,
  * connected through a Transport (an in-memory pair for tests, a WebSocket in
@@ -233,9 +243,7 @@ export class RpcSession {
     // stash a reference on the question so #handleReturn can register it
     // with the FinalizationRegistry for auto-release.
     const bootstrapCap = new RpcCap(this, { kind: "import", id: 0 }, this.#registry);
-    this.#questions.set(questionId, {
-      deferred: deferred(), kind: "bootstrap", bootstrapCap,
-    });
+    this.#questions.set(questionId, makeQ(deferred(), "bootstrap", bootstrapCap, undefined, undefined));
     this.#sendFromOut(len);
     return bootstrapCap;
   }
@@ -263,7 +271,7 @@ export class RpcSession {
     );
     if (!len) throw new Error("cpp_rpc_build_call failed");
     const d = deferred();
-    this.#questions.set(questionId, { deferred: d, kind: "call" });
+    this.#questions.set(questionId, makeQ(d, "call", undefined, undefined, undefined));
     this.#sendFromOut(len);
     // The pipeline cap lets the caller chain follow-up calls onto this
     // answer before it returns — those Calls go on the wire immediately,
@@ -307,11 +315,12 @@ export class RpcSession {
       const framedLen = this.#exp.cpp_rpc_finalize();
       if (!framedLen) throw new Error("cpp_rpc_finalize failed");
       const d = deferred();
-      const q = { deferred: d, kind: "call" };
-      if (opts && opts.extract) {
-        q.resultsReader = opts.resultsReader;
-        q.extract = opts.extract;
-      }
+      const hasExtract = !!(opts && opts.extract);
+      const q = makeQ(
+        d, "call", undefined,
+        hasExtract ? opts.resultsReader : undefined,
+        hasExtract ? opts.extract : undefined,
+      );
       this.#questions.set(questionId, q);
       this.#sendFromOut(framedLen);
       // Pipeline cap is lazy: most callers never .cap.call(...). Allocate
