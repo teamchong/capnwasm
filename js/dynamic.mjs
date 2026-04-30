@@ -95,8 +95,12 @@ const KIND_TABLE = {
  * the field is read, so it returns a plain object — not a sub-reader —
  * since the underlying wasm cursor would be invalidated by any sibling
  * access.
+ *
+ * For the `buildDynamic` write side, pass `{ dataWords, ptrWords }` as the
+ * second argument — the struct's wire-format dimensions. Without these
+ * the schema is read-only.
  */
-export function defineSchema(spec) {
+export function defineSchema(spec, opts) {
   if (!spec || typeof spec !== "object") throw new TypeError("defineSchema: expected an object");
   const fields = Object.create(null);
   for (const [name, raw] of Object.entries(spec)) {
@@ -138,7 +142,172 @@ export function defineSchema(spec) {
     fields[name] = Object.freeze(desc);
   }
   Object.freeze(fields);
-  return { fields };
+  const out = { fields };
+  if (opts) {
+    if (opts.dataWords !== undefined) {
+      if (!Number.isInteger(opts.dataWords) || opts.dataWords < 0) {
+        throw new TypeError("defineSchema: opts.dataWords must be a non-negative integer");
+      }
+      out.dataWords = opts.dataWords;
+    }
+    if (opts.ptrWords !== undefined) {
+      if (!Number.isInteger(opts.ptrWords) || opts.ptrWords < 0) {
+        throw new TypeError("defineSchema: opts.ptrWords must be a non-negative integer");
+      }
+      out.ptrWords = opts.ptrWords;
+    }
+  }
+  return out;
+}
+
+/**
+ * Begin building a Cap'n Proto message at runtime. The schema must have
+ * been defined with `dataWords` and `ptrWords` (the struct's wire-format
+ * dimensions); without them the builder doesn't know how big the data and
+ * pointer sections should be.
+ *
+ *   const Schema = defineSchema({
+ *     name: { kind: "text", slot: 0 },
+ *     age:  { kind: "uint32", offset: 0 },
+ *   }, { dataWords: 1, ptrWords: 1 });
+ *
+ *   const b = buildDynamic(cpp, Schema);
+ *   b.set("name", "Alice");
+ *   b.set("age", 36);
+ *   const bytes = b.finalize();
+ *
+ * Supports primitive setters (text/data via wasm boundary, fixed-width
+ * integers + floats + bool via direct memory writes). Nested structs and
+ * lists aren't in this pass — codegen still wins for those write paths.
+ */
+export function buildDynamic(cpp, schema) {
+  if (typeof schema?.dataWords !== "number" || typeof schema?.ptrWords !== "number") {
+    throw new Error(
+      "buildDynamic: schema needs dataWords + ptrWords " +
+      "(pass them as the second arg to defineSchema)",
+    );
+  }
+  if (cpp._exports.cpp_any_builder_init(schema.dataWords, schema.ptrWords) !== 1) {
+    throw new Error("cpp_any_builder_init failed");
+  }
+  return new DynamicBuilder(cpp, schema);
+}
+
+/**
+ * Builder bound to one in-progress message. Call .set(name, value) to
+ * write each field, then .finalize() to produce framed bytes. The builder
+ * is single-shot — finalize() invalidates it.
+ */
+export class DynamicBuilder {
+  constructor(cpp, schema) {
+    this._cpp = cpp;
+    this._schema = schema;
+    this._dataPtr = cpp._exports.cpp_any_builder_data_ptr();
+    this._finalized = false;
+  }
+
+  /** Write `value` into the field named `name`. Throws on unknown field. */
+  set(name, value) {
+    if (this._finalized) throw new Error("builder is finalized");
+    const desc = this._schema.fields[name];
+    if (!desc) throw new Error(`unknown field: ${name}`);
+    const cpp = this._cpp;
+    const exp = cpp._exports;
+    const u8 = cpp._u8;
+    const dp = this._dataPtr;
+    switch (desc.type) {
+      case "uint8":
+      case "int8":
+        u8[dp + desc.off] = value & 0xff;
+        return;
+      case "uint16":
+      case "int16": {
+        const o = dp + desc.off;
+        u8[o] = value & 0xff;
+        u8[o + 1] = (value >>> 8) & 0xff;
+        return;
+      }
+      case "uint32":
+      case "int32": {
+        const o = dp + desc.off;
+        u8[o] = value & 0xff;
+        u8[o + 1] = (value >>> 8) & 0xff;
+        u8[o + 2] = (value >>> 16) & 0xff;
+        u8[o + 3] = (value >>> 24) & 0xff;
+        return;
+      }
+      case "uint64":
+      case "int64": {
+        const dv = new DataView(u8.buffer);
+        if (typeof value === "bigint") {
+          dv.setBigInt64(dp + desc.off, value, true);
+        } else {
+          let lo, hi;
+          if (value >= 0) { lo = value >>> 0; hi = ((value / 4294967296) >>> 0); }
+          else { const a = -value; const aLo = a >>> 0; const aHi = ((a / 4294967296) >>> 0);
+                 lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0; }
+          dv.setUint32(dp + desc.off, lo, true);
+          dv.setUint32(dp + desc.off + 4, hi, true);
+        }
+        return;
+      }
+      case "float32": {
+        const dv = new DataView(u8.buffer);
+        dv.setFloat32(dp + desc.off, value, true);
+        return;
+      }
+      case "float64": {
+        const dv = new DataView(u8.buffer);
+        dv.setFloat64(dp + desc.off, value, true);
+        return;
+      }
+      case "bool": {
+        // bitOffset is in bits within the data section. Value is truthy/falsy.
+        const byte = dp + (desc.off >>> 3);
+        const bit = 1 << (desc.off & 7);
+        if (value) u8[byte] |= bit;
+        else u8[byte] &= ~bit & 0xff;
+        return;
+      }
+      case "text": {
+        // Stage UTF-8 bytes in the wasm scratch buffer, then have the builder
+        // copy them into the right pointer slot's tail region.
+        const enc = new TextEncoder();
+        const bytes = typeof value === "string" ? enc.encode(value) : value;
+        const inPtr = exp.cpp_in_ptr();
+        if (bytes.length > exp.cpp_in_capacity()) {
+          throw new Error("text value larger than scratch buffer");
+        }
+        cpp._u8.set(bytes, inPtr);
+        exp.cpp_any_builder_set_text(desc.off, bytes.length);
+        // The wasm side may have grown memory; refresh the cached u8 view.
+        this._cpp = cpp;
+        return;
+      }
+      case "data": {
+        if (!(value instanceof Uint8Array)) throw new TypeError("data field expects Uint8Array");
+        const inPtr = exp.cpp_in_ptr();
+        if (value.length > exp.cpp_in_capacity()) {
+          throw new Error("data value larger than scratch buffer");
+        }
+        cpp._u8.set(value, inPtr);
+        exp.cpp_any_builder_set_data(desc.off, value.length);
+        return;
+      }
+      default:
+        throw new Error(`buildDynamic: kind "${desc.type}" not supported on the write side`);
+    }
+  }
+
+  /** Finalize the builder and return the framed Cap'n Proto bytes. */
+  finalize() {
+    if (this._finalized) throw new Error("builder already finalized");
+    this._finalized = true;
+    const exp = this._cpp._exports;
+    const len = exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    return this._cpp._u8.slice(this._cpp._outPtr, this._cpp._outPtr + len);
+  }
 }
 
 /**
@@ -240,10 +409,11 @@ function _readSingle(cpp, desc) {
     }
     case "int64":
     case "uint64": {
-      // cpp_any_int64_at returns the low 64 bits as a BigInt over the wasm
-      // boundary in node; we coerce to plain Number when it fits in safe
-      // integer range, otherwise return BigInt.
-      const v = exp.cpp_any_int64_at(BigInt(desc.off), 0n);
+      // cpp_any_int64_at(uint32_t byte_offset, int64_t default_val): the
+      // first arg is i32, the second is i64 (so it must be a BigInt). The
+      // return value comes back as a BigInt; we coerce to a plain Number
+      // when it fits in safe-integer range, otherwise hand back the BigInt.
+      const v = exp.cpp_any_int64_at(desc.off, 0n);
       if (typeof v === "bigint") {
         if (v >= -9007199254740992n && v <= 9007199254740992n) return Number(v);
         return v;

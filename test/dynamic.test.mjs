@@ -10,7 +10,7 @@ import { test, before } from "node:test";
 import { strict as assert } from "node:assert";
 import { load as loadWasm } from "../dist/inlined.mjs";
 import { openPrimitives, PrimitivesReader } from "../js/conformance_schema.gen.mjs";
-import { defineSchema, openDynamic, DynamicReader } from "../js/dynamic.mjs";
+import { defineSchema, openDynamic, DynamicReader, buildDynamic } from "../js/dynamic.mjs";
 
 let cpp, bytes;
 
@@ -336,4 +336,79 @@ test("defineSchema: listStruct requires slot", () => {
     () => defineSchema({ x: { kind: "listStruct", element: ItemSchema } }),
     /missing or invalid "slot"/,
   );
+});
+
+// Schema with dimensions for the builder. Match the shape of the codegen
+// User struct: id (UInt64) + active (Bool) in 2 data words; name (Text)
+// in 1 ptr word.
+const UserSchemaWithDims = defineSchema({
+  id:     { kind: "uint64", offset: 0 },
+  active: { kind: "bool",   bitOffset: 64 },
+  name:   { kind: "text",   slot: 0 },
+}, { dataWords: 2, ptrWords: 1 });
+
+test("buildDynamic: round-trips through openDynamic with the same schema", () => {
+  const b = buildDynamic(cpp, UserSchemaWithDims);
+  b.set("id", 42);
+  b.set("active", true);
+  b.set("name", "Alice");
+  const bytes = b.finalize();
+
+  const r = openDynamic(cpp, UserSchemaWithDims, bytes);
+  assert.equal(r.get("id"), 42);
+  assert.equal(r.get("active"), true);
+  assert.equal(r.get("name"), "Alice");
+});
+
+test("buildDynamic: bool false zeroes the bit", () => {
+  const b = buildDynamic(cpp, UserSchemaWithDims);
+  b.set("active", true);
+  b.set("active", false);
+  b.set("name", "");
+  const bytes = b.finalize();
+  const r = openDynamic(cpp, UserSchemaWithDims, bytes);
+  assert.equal(r.get("active"), false);
+});
+
+test("buildDynamic: BigInt id round-trips through int64", () => {
+  const b = buildDynamic(cpp, UserSchemaWithDims);
+  b.set("id", 9007199254740993n);   // outside safe-integer range → needs BigInt
+  b.set("active", false);
+  b.set("name", "");
+  const bytes = b.finalize();
+  const r = openDynamic(cpp, UserSchemaWithDims, bytes);
+  assert.equal(r.get("id"), 9007199254740993n);
+});
+
+test("buildDynamic: rejects schemas without dataWords/ptrWords", () => {
+  const readOnly = defineSchema({ x: { kind: "uint8", offset: 0 } });
+  assert.throws(() => buildDynamic(cpp, readOnly), /needs dataWords/);
+});
+
+test("buildDynamic: rejects unknown field", () => {
+  const b = buildDynamic(cpp, UserSchemaWithDims);
+  assert.throws(() => b.set("nonexistent", 1), /unknown field/);
+});
+
+test("buildDynamic: data fields take Uint8Array, reject other types", () => {
+  const ImageSchema = defineSchema({
+    body: { kind: "data", slot: 0 },
+  }, { dataWords: 0, ptrWords: 1 });
+  const b = buildDynamic(cpp, ImageSchema);
+  assert.throws(() => b.set("body", "not bytes"), /Uint8Array/);
+  // Round-trip a small Uint8Array.
+  const b2 = buildDynamic(cpp, ImageSchema);
+  b2.set("body", new Uint8Array([1, 2, 3, 4]));
+  const bytes = b2.finalize();
+  const r = openDynamic(cpp, ImageSchema, bytes);
+  assert.deepEqual(Array.from(r.get("body")), [1, 2, 3, 4]);
+});
+
+test("buildDynamic: finalize is one-shot — second call throws", () => {
+  const b = buildDynamic(cpp, UserSchemaWithDims);
+  b.set("active", false);
+  b.set("name", "");
+  b.finalize();
+  assert.throws(() => b.finalize(), /already finalized/);
+  assert.throws(() => b.set("name", "x"), /finalized/);
 });

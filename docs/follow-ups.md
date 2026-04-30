@@ -71,6 +71,19 @@ The dynamic reader now covers everything the codegen path does on the
 read side: primitives, lists of primitives, nested structs, lists of
 structs. No remaining capability gaps for reads.
 
+**Update (2026-04-30, fifth pass):** dynamic builder landed. Pass
+`{ dataWords, ptrWords }` as a second argument to `defineSchema`, then
+use `buildDynamic(cpp, schema)` to build messages at runtime:
+
+    const b = buildDynamic(cpp, schema);
+    b.set("name", "Alice"); b.set("age", 36);
+    const bytes = b.finalize();
+
+Covers primitives + text + data. Lists and nested-struct write paths
+aren't in this pass — the wasm side doesn't expose a builder for those
+yet (codegen handles them via direct memory writes off `data_ptr` plus
+hand-rolled list/struct pointer encoding).
+
 ## 3. RPC pipelining is implemented but not pipelined under `await`
 
 The implementation handles `r.cap.call(...)` chained on an unresolved question

@@ -191,7 +191,27 @@ reader.pick(["name", "age"]);   // one wasm round trip, only the fields you ask 
 reader.fields.email;            // Proxy access for ergonomic single-field reads
 ```
 
-The descriptor is wire-compatible with what `npx capnwasm gen` emits (`SomeReader._FIELDS`). A build step that strips a generated reader to its `_FIELDS` object can feed it directly to `openDynamic`. Supported field kinds: `text`, `data`, `uint8/16/32`, `int8/16/32`, `int64`, `uint64`, `float32/64`, `bool`, plus `listUint8/16/32/64`, `listInt8/16/32/64`, `listFloat32/64`, `listBool`, `listText`, `listData`, plus `{ kind: "struct", slot, schema }` for nested structs and `{ kind: "listStruct", slot, element }` for lists of structs. Reads cover everything the codegen path does; the dynamic reader is read-only — `buildSomething` builders are still codegen.
+The descriptor is wire-compatible with what `npx capnwasm gen` emits (`SomeReader._FIELDS`). A build step that strips a generated reader to its `_FIELDS` object can feed it directly to `openDynamic`. Supported field kinds: `text`, `data`, `uint8/16/32`, `int8/16/32`, `int64`, `uint64`, `float32/64`, `bool`, plus `listUint8/16/32/64`, `listInt8/16/32/64`, `listFloat32/64`, `listBool`, `listText`, `listData`, plus `{ kind: "struct", slot, schema }` for nested structs and `{ kind: "listStruct", slot, element }` for lists of structs.
+
+For the write side, pass the struct's wire-format dimensions and use `buildDynamic`:
+
+```js
+import { defineSchema, buildDynamic } from "capnwasm/dynamic";
+
+const User = defineSchema({
+  id:     { kind: "uint64", offset: 0 },
+  active: { kind: "bool",   bitOffset: 64 },
+  name:   { kind: "text",   slot: 0 },
+}, { dataWords: 2, ptrWords: 1 });
+
+const b = buildDynamic(cpp, User);
+b.set("id", 42);
+b.set("active", true);
+b.set("name", "Alice");
+const bytes = b.finalize();   // framed Cap'n Proto bytes, wire-compatible with codegen
+```
+
+Builders cover primitives + text + data. Lists and nested-struct builders aren't in this pass — codegen still wins for those write paths.
 
 When to choose dynamic:
 
