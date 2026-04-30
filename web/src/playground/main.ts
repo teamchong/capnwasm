@@ -31,8 +31,37 @@ function clampCount() {
     countSel.value = String(max);
   }
 }
-workloadSel.addEventListener("change", clampCount);
-clampCount();
+
+// Apply ?workload=&count=&iters= from the URL so visitors can deep-link
+// a specific bench config. Writes are also reflected in the URL via
+// replaceState — sharing the page after tweaking the selectors gives
+// the recipient your exact configuration.
+function setSelectIfValid(sel: HTMLSelectElement, value: string | null) {
+  if (!value) return;
+  const ok = Array.from(sel.options).some((opt) => opt.value === value);
+  if (ok) sel.value = value;
+}
+function applyUrlParams() {
+  const p = new URLSearchParams(location.search);
+  setSelectIfValid(workloadSel, p.get("workload"));
+  // workload changes constrain the count options — clamp before the
+  // count read so a stale "?count=200" from a small-workload share
+  // doesn't get rejected when arriving on a blob-default page load.
+  clampCount();
+  setSelectIfValid(countSel, p.get("count"));
+  setSelectIfValid(itersSel, p.get("iters"));
+}
+function syncUrlParams() {
+  const p = new URLSearchParams();
+  p.set("workload", workloadSel.value);
+  p.set("count",    countSel.value);
+  p.set("iters",    itersSel.value);
+  history.replaceState(null, "", `${location.pathname}?${p.toString()}`);
+}
+workloadSel.addEventListener("change", () => { clampCount(); syncUrlParams(); });
+countSel.addEventListener("change",   syncUrlParams);
+itersSel.addEventListener("change",   syncUrlParams);
+applyUrlParams();
 
 type Phase = { fetchMs: number; decodeMs: number; renderMs: number; bytes: number };
 

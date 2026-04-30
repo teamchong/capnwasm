@@ -38,6 +38,20 @@ const itersSel = $("iters-selector") as HTMLSelectElement;
 const serverDot = $("server-dot");
 const serverMsg = $("server-msg");
 
+// Deep-link the iters selector via ?iters=N. Lets people share a URL
+// to "show me the 10-iter median" without explaining how to set it.
+{
+  const want = new URLSearchParams(location.search).get("iters");
+  if (want && Array.from(itersSel.options).some((o) => o.value === want)) {
+    itersSel.value = want;
+  }
+  itersSel.addEventListener("change", () => {
+    const p = new URLSearchParams();
+    p.set("iters", itersSel.value);
+    history.replaceState(null, "", `${location.pathname}?${p.toString()}`);
+  });
+}
+
 function fmtMs(ms: number) {
   if (ms < 1) return `${(ms * 1000).toFixed(0)} µs`;
   return `${ms.toFixed(2)} ms`;
