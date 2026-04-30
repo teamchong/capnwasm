@@ -110,7 +110,7 @@ Microsecond per-call differences vanish behind any real network. The cases where
 | **Decode 1000 records, read 5 fields each** (sparse access) | 20.4 ms | 1.7 ms | **12x faster** |
 | **5 MB binary asset** over 10 Mbps link | 5.33 s | 4.00 s | **1.33 s saved per asset** (no base64 bloat) |
 | **10K-msg/s telemetry stream decode** | 1.0 M msgs/sec | 3.3 M msgs/sec | **3.2x throughput** |
-| Single tiny RPC call (latency) | 9 µs | 17 µs | (8 µs slower — invisible behind any network) |
+| Single tiny RPC call (latency) | 9 µs | 15 µs | (6 µs slower — invisible behind any network) |
 
 Choose capnwasm when:
 - You're moving binary data (images, audio, models, embeddings) and want raw bytes on the wire
