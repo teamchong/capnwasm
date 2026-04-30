@@ -102,6 +102,8 @@ const cw = await import("https://teamchong.github.io/capnwasm/inspect.js");
 cw.inspect(fetch("/api/user.capnp"));   // expandable tree in the console
 ```
 
+**Live three-way playground** at [teamchong.github.io/capnwasm](https://teamchong.github.io/capnwasm/) — REST/JSON vs capnweb vs capnwasm side-by-side, fetching the same fixtures and rendering to DOM in your browser. Plus a [WebSocket RPC bench](https://teamchong.github.io/capnwasm/rpc.html) that runs burst, pipelining, and 64 KB binary-echo workloads against a real RPC server (capnwasm wins ~5× on burst). Source in [`web/`](web/) — `cd web && npm run dev` to run it locally.
+
 For browsers, prefer `capnwasm/browser`: 44 KB gzip / 41 KB brotli (counting both the JS shim and the separately-fetched `dist/capnp.slim.wasm`, which excludes the bench/test helpers baked into the default wasm). Without the 33% base64 inflation, and with `WebAssembly.instantiateStreaming` so the wasm starts compiling while it's still being downloaded.
 
 For comparison: capnweb is ~21 KB gzip. We're roughly 2x larger because we ship a real Cap'n Proto wasm runtime; that buys us things capnweb structurally can't have (binary wire, zero-copy field access, true sparse-read perf).
