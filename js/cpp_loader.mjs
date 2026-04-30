@@ -1,12 +1,11 @@
 // Loads the C++ capnproto wasm module (built via cpp/build.sh from upstream
-// capnproto sources statically linked through zig cc) and exposes the same
-// serialize/deserialize tape interface as our hand-written version.
+// capnproto sources statically linked through zig cc).
 //
-// The tape byte format is shared with src/tape.zig and js/tape.mjs; the C++
-// wrapper at cpp/wrapper.cpp implements the same encoding rules using the
-// real capnproto MessageBuilder / MessageReader.
+// CapnCpp itself only depends on the wasi shim — it doesn't pull in
+// tape_codec.mjs. The capnweb-shape tape codec lives in js/tape_serializer.mjs
+// as free functions; bundles that don't use it (e.g. RPC-only browser clients)
+// drop tape_codec entirely.
 
-import { TapeWriter, TapeReader } from "./tape_codec.mjs";
 import { buildWasiImports } from "./cpp_wasi_shim.mjs";
 
 export class CapnCpp {
@@ -65,27 +64,6 @@ export class CapnCpp {
 
   #u8() { return new Uint8Array(this.#memory.buffer); }
 
-  /** Encode a capnweb-shape message via the real C++ capnproto runtime. */
-  serialize(value) {
-    const u8 = this.#u8();
-    const tapeArea = u8.subarray(this.#inPtr, this.#inPtr + this.#cap);
-    const tw = new TapeWriter(tapeArea);
-    tw.writeMessage(value);
-    const len = this.#exports.cpp_serialize_tape(tw.pos);
-    if (!len) throw new Error("cpp_serialize_tape failed");
-    return this.#u8().slice(this.#outPtr, this.#outPtr + len);
-  }
-
-  /** Decode Cap'n Proto framed bytes via the C++ runtime. */
-  deserialize(bytes) {
-    if (bytes.length > this.#cap) throw new Error("input larger than scratch buffer");
-    this.#u8().set(bytes, this.#inPtr);
-    const tapeLen = this.#exports.cpp_deserialize_to_tape(bytes.length);
-    if (!tapeLen) throw new Error("cpp_deserialize_to_tape failed");
-    const tape = this.#u8().subarray(this.#outPtr, this.#outPtr + tapeLen);
-    return new TapeReader(tape).readMessage();
-  }
-
   /**
    * Open `bytes` for lazy field access. Returns a LazyReader; calls on it
    * pull individual fields from the wasm-side parsed message (real capnproto
@@ -101,8 +79,10 @@ export class CapnCpp {
   }
 
   get _exports() { return this.#exports; }
-  get _outPtr() { return this.#outPtr; }
-  get _u8() { return this.#u8(); }
+  get _inPtr()   { return this.#inPtr; }
+  get _outPtr()  { return this.#outPtr; }
+  get _cap()     { return this.#cap; }
+  get _u8()      { return this.#u8(); }
 }
 
 // Module-scoped cache so repeated lookups of the same field name don't burn

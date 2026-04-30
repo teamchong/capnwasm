@@ -8,6 +8,7 @@
     ".":          "./dist/inlined.mjs",
     "./slim":     "./dist/inlined.slim.mjs",
     "./browser":  "./js/browser.mjs",
+    "./tape":     "./js/tape_serializer.mjs",
     "./rest":     "./js/rest_runtime.mjs",
     "./stream":   "./js/stream.mjs",
     "./rpc":      "./js/rpc.mjs",
