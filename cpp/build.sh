@@ -60,12 +60,18 @@ LIBCXXABI=()
 # C++ EH, and KJ has its own assert-style fallback when KJ_NO_EXCEPTIONS=1.
 FLAGS=(
   -target wasm32-wasi-musl
-  -O3
+  -Oz
   -std=c++23
   -fexceptions
   -fno-rtti
   -fno-threadsafe-statics
   -fno-stack-protector
+  -fno-unwind-tables
+  -fno-asynchronous-unwind-tables
+  -fdata-sections
+  -ffunction-sections
+  -flto
+  -fmerge-all-constants
   -D_WASI_EMULATED_SIGNAL
   -D_WASI_EMULATED_MMAN
   -DKJ_USE_MAIN=0
@@ -107,6 +113,8 @@ FLAGS=(
   -Wl,--export=cpp_big_user_emit_json
   -lwasi-emulated-signal
   -lwasi-emulated-mman
+  -Wl,--gc-sections
+  -Wl,--strip-all
 )
 
 zig c++ "${FLAGS[@]}" \
