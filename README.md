@@ -118,7 +118,8 @@ for await (const event of stripe.listEvents()) console.log(event.id);
 | `import "capnwasm/browser"` | **browser-optimized: 3 KB JS shim + 39 KB wasm fetched as a separate asset (streaming compile)** | **42 KB** | **40 KB** |
 | `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | small | small |
 | `import "capnwasm/rpc"` | full RPC layer (sessions, caps, streaming) | small | small |
-| `import "capnwasm/dynamic"` | runtime-schema reader — schema is data, no codegen step ([docs](#runtime-schema-reader)) | small | small |
+| `import "capnwasm/client"` | three small helpers: `createClient`, `subscribeQuery`, `optimistic` | small | small |
+| `import "capnwasm/dynamic"` | runtime-schema reader — schema is data, no codegen step ([docs](docs/dynamic.md)) | small | small |
 | `import "capnwasm/tape"` | optional capnweb-shape `serialize`/`deserialize` helpers | small | small |
 | `import "capnwasm/codegen"` | wasm-built capnp schema compiler — runs in browser | 356 KB | — |
 | `import "capnwasm/stream"` | helper to stream `fetch` bytes straight into wasm | small | small |
@@ -162,6 +163,33 @@ Choose capnwasm when:
 Choose capnweb when:
 - Pure JS-to-JS, all-text payloads, and you want the smallest bundle possible
 - You don't need wire interop with non-JS peers
+
+---
+
+## Three small helpers for the common app shape
+
+The lower-level RPC API is everything you need; these three wrap the most common patterns. [Live chat demo](https://teamchong.github.io/capnwasm/chat.html) uses all three.
+
+```js
+import { createClient, subscribeQuery, optimistic } from "capnwasm/client";
+
+// 1. One-line connect — load wasm + open WebSocket + bootstrap.
+const { cap } = await createClient("wss://api.example.com/rpc");
+
+// 2. Subscribe to a server-driven stream with an unsubscribe handle.
+const sub = subscribeQuery(cap, IFC, METHOD_WATCH, EMPTY_PARAMS);
+for await (const chunk of sub.updates) render(decode(chunk));
+sub.unsubscribe();   // sends Finish + tears down the iterator
+
+// 3. Apply locally, send to server, revert on failure.
+await optimistic({
+  apply:  () => state.messages.push(msg),
+  send:   () => cap.call(IFC, METHOD_POST, encode(msg)).promise,
+  revert: () => state.messages.pop(),
+});
+```
+
+`subscribeQuery` composes with `AbortSignal` (pass `{ signal }` and either side firing tears the stream down) and `maxQueueSize` (memory cap for slow consumers). `optimistic` swallows `revert()` errors so the original `send()` rejection is what surfaces.
 
 ---
 
