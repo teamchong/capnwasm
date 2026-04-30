@@ -45,6 +45,7 @@ CAPNP_SOURCES=(
 WRAPPER=(
   cpp/schema.capnp.c++
   cpp/typed_schema.capnp.c++
+  cpp/big_schema.capnp.c++
   cpp/wrapper.cpp
   cpp/eh_runtime.cpp
 )
@@ -101,6 +102,7 @@ FLAGS=(
   -Wl,--export=cpp_any_uint16_at
   -Wl,--export=cpp_any_uint8_at
   -Wl,--export=cpp_any_bool_at
+  -Wl,--export=cpp_make_big_user_bytes
   -lwasi-emulated-signal
   -lwasi-emulated-mman
 )

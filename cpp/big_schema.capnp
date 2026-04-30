@@ -1,0 +1,72 @@
+@0xb1f7c5e9c4e02134;
+
+# Bigger fixture for statistically meaningful benchmarks. 256 named text
+# fields means full materialization is ~tens of microseconds — well above
+# timer noise — and lazy access skips most of that work.
+
+struct BigUser {
+  field0   @0   :Text;  field1   @1   :Text;  field2   @2   :Text;  field3   @3   :Text;
+  field4   @4   :Text;  field5   @5   :Text;  field6   @6   :Text;  field7   @7   :Text;
+  field8   @8   :Text;  field9   @9   :Text;  field10  @10  :Text;  field11  @11  :Text;
+  field12  @12  :Text;  field13  @13  :Text;  field14  @14  :Text;  field15  @15  :Text;
+  field16  @16  :Text;  field17  @17  :Text;  field18  @18  :Text;  field19  @19  :Text;
+  field20  @20  :Text;  field21  @21  :Text;  field22  @22  :Text;  field23  @23  :Text;
+  field24  @24  :Text;  field25  @25  :Text;  field26  @26  :Text;  field27  @27  :Text;
+  field28  @28  :Text;  field29  @29  :Text;  field30  @30  :Text;  field31  @31  :Text;
+  field32  @32  :Text;  field33  @33  :Text;  field34  @34  :Text;  field35  @35  :Text;
+  field36  @36  :Text;  field37  @37  :Text;  field38  @38  :Text;  field39  @39  :Text;
+  field40  @40  :Text;  field41  @41  :Text;  field42  @42  :Text;  field43  @43  :Text;
+  field44  @44  :Text;  field45  @45  :Text;  field46  @46  :Text;  field47  @47  :Text;
+  field48  @48  :Text;  field49  @49  :Text;  field50  @50  :Text;  field51  @51  :Text;
+  field52  @52  :Text;  field53  @53  :Text;  field54  @54  :Text;  field55  @55  :Text;
+  field56  @56  :Text;  field57  @57  :Text;  field58  @58  :Text;  field59  @59  :Text;
+  field60  @60  :Text;  field61  @61  :Text;  field62  @62  :Text;  field63  @63  :Text;
+  field64  @64  :Text;  field65  @65  :Text;  field66  @66  :Text;  field67  @67  :Text;
+  field68  @68  :Text;  field69  @69  :Text;  field70  @70  :Text;  field71  @71  :Text;
+  field72  @72  :Text;  field73  @73  :Text;  field74  @74  :Text;  field75  @75  :Text;
+  field76  @76  :Text;  field77  @77  :Text;  field78  @78  :Text;  field79  @79  :Text;
+  field80  @80  :Text;  field81  @81  :Text;  field82  @82  :Text;  field83  @83  :Text;
+  field84  @84  :Text;  field85  @85  :Text;  field86  @86  :Text;  field87  @87  :Text;
+  field88  @88  :Text;  field89  @89  :Text;  field90  @90  :Text;  field91  @91  :Text;
+  field92  @92  :Text;  field93  @93  :Text;  field94  @94  :Text;  field95  @95  :Text;
+  field96  @96  :Text;  field97  @97  :Text;  field98  @98  :Text;  field99  @99  :Text;
+  field100 @100 :Text;  field101 @101 :Text;  field102 @102 :Text;  field103 @103 :Text;
+  field104 @104 :Text;  field105 @105 :Text;  field106 @106 :Text;  field107 @107 :Text;
+  field108 @108 :Text;  field109 @109 :Text;  field110 @110 :Text;  field111 @111 :Text;
+  field112 @112 :Text;  field113 @113 :Text;  field114 @114 :Text;  field115 @115 :Text;
+  field116 @116 :Text;  field117 @117 :Text;  field118 @118 :Text;  field119 @119 :Text;
+  field120 @120 :Text;  field121 @121 :Text;  field122 @122 :Text;  field123 @123 :Text;
+  field124 @124 :Text;  field125 @125 :Text;  field126 @126 :Text;  field127 @127 :Text;
+  field128 @128 :Text;  field129 @129 :Text;  field130 @130 :Text;  field131 @131 :Text;
+  field132 @132 :Text;  field133 @133 :Text;  field134 @134 :Text;  field135 @135 :Text;
+  field136 @136 :Text;  field137 @137 :Text;  field138 @138 :Text;  field139 @139 :Text;
+  field140 @140 :Text;  field141 @141 :Text;  field142 @142 :Text;  field143 @143 :Text;
+  field144 @144 :Text;  field145 @145 :Text;  field146 @146 :Text;  field147 @147 :Text;
+  field148 @148 :Text;  field149 @149 :Text;  field150 @150 :Text;  field151 @151 :Text;
+  field152 @152 :Text;  field153 @153 :Text;  field154 @154 :Text;  field155 @155 :Text;
+  field156 @156 :Text;  field157 @157 :Text;  field158 @158 :Text;  field159 @159 :Text;
+  field160 @160 :Text;  field161 @161 :Text;  field162 @162 :Text;  field163 @163 :Text;
+  field164 @164 :Text;  field165 @165 :Text;  field166 @166 :Text;  field167 @167 :Text;
+  field168 @168 :Text;  field169 @169 :Text;  field170 @170 :Text;  field171 @171 :Text;
+  field172 @172 :Text;  field173 @173 :Text;  field174 @174 :Text;  field175 @175 :Text;
+  field176 @176 :Text;  field177 @177 :Text;  field178 @178 :Text;  field179 @179 :Text;
+  field180 @180 :Text;  field181 @181 :Text;  field182 @182 :Text;  field183 @183 :Text;
+  field184 @184 :Text;  field185 @185 :Text;  field186 @186 :Text;  field187 @187 :Text;
+  field188 @188 :Text;  field189 @189 :Text;  field190 @190 :Text;  field191 @191 :Text;
+  field192 @192 :Text;  field193 @193 :Text;  field194 @194 :Text;  field195 @195 :Text;
+  field196 @196 :Text;  field197 @197 :Text;  field198 @198 :Text;  field199 @199 :Text;
+  field200 @200 :Text;  field201 @201 :Text;  field202 @202 :Text;  field203 @203 :Text;
+  field204 @204 :Text;  field205 @205 :Text;  field206 @206 :Text;  field207 @207 :Text;
+  field208 @208 :Text;  field209 @209 :Text;  field210 @210 :Text;  field211 @211 :Text;
+  field212 @212 :Text;  field213 @213 :Text;  field214 @214 :Text;  field215 @215 :Text;
+  field216 @216 :Text;  field217 @217 :Text;  field218 @218 :Text;  field219 @219 :Text;
+  field220 @220 :Text;  field221 @221 :Text;  field222 @222 :Text;  field223 @223 :Text;
+  field224 @224 :Text;  field225 @225 :Text;  field226 @226 :Text;  field227 @227 :Text;
+  field228 @228 :Text;  field229 @229 :Text;  field230 @230 :Text;  field231 @231 :Text;
+  field232 @232 :Text;  field233 @233 :Text;  field234 @234 :Text;  field235 @235 :Text;
+  field236 @236 :Text;  field237 @237 :Text;  field238 @238 :Text;  field239 @239 :Text;
+  field240 @240 :Text;  field241 @241 :Text;  field242 @242 :Text;  field243 @243 :Text;
+  field244 @244 :Text;  field245 @245 :Text;  field246 @246 :Text;  field247 @247 :Text;
+  field248 @248 :Text;  field249 @249 :Text;  field250 @250 :Text;  field251 @251 :Text;
+  field252 @252 :Text;  field253 @253 :Text;  field254 @254 :Text;  field255 @255 :Text;
+}
