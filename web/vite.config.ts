@@ -1,5 +1,7 @@
 import { defineConfig } from "vite";
 import { resolve } from "node:path";
+// @ts-ignore — JS module without a .d.ts file.
+import { rpcDevServer } from "./vite-rpc-server.mjs";
 
 // Multi-page Vite site: a landing page and the live perf playground.
 // Pages are wired up in rollupOptions.input so the build emits both.
@@ -7,6 +9,7 @@ export default defineConfig(({ command }) => ({
   // For local dev / playwright tests we serve from "/". For a published
   // GitHub Pages deploy, set base to "/capnwasm/" via env or a CI flag.
   base: "/",
+  plugins: [rpcDevServer()],
   build: {
     outDir: "dist",
     emptyOutDir: true,

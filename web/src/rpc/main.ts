@@ -19,7 +19,12 @@ import { RpcSession, connectWebSocket } from "../../../js/rpc.mjs";
 import { newWebSocketRpcSession } from "capnweb";
 
 const $ = (id: string) => document.getElementById(id)!;
-const SERVER = "ws://" + location.hostname + ":8081";
+// In dev (`npm run dev`) the RPC server runs as a Vite plugin on the same
+// origin, so we connect to ws://HOST:PORT/. In prod (`vite preview` of a
+// static build) you have to start `npm run server` separately on :8081 —
+// override SERVER below if you do that.
+const SERVER =
+  (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
 const IFC = 0xc0ffeec0ffeec0ffn;
 const M_ECHO_U8     = 0;
 const M_ECHO_TEXT   = 1;
@@ -257,7 +262,7 @@ runBtn.addEventListener("click", runSafe);
     setTimeout(runSafe, 100);
   } else {
     serverDot.classList.add("down");
-    serverMsg.innerHTML = `<strong>Server not running.</strong> From the <code>web/</code> directory: <code>node server.mjs</code> &mdash; then reload this page.`;
+    serverMsg.innerHTML = `<strong>RPC server unreachable.</strong> In dev mode, <code>npm run dev</code> embeds the server automatically &mdash; if you&rsquo;re running <code>vite preview</code> of a built site, start it with <code>npm run server</code> in the <code>web/</code> directory.`;
     status.textContent = "RPC server unreachable — see banner above.";
   }
 })();
