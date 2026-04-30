@@ -3,13 +3,6 @@
 const SHARED_TEXT_DECODER = new TextDecoder();
 const SHARED_ENCODER = new TextEncoder();
 function decodeAscii(bytes) {
-  let asciiOk = true;
-  for (let i = 0; i < bytes.length; i++) if (bytes[i] >= 0x80) { asciiOk = false; break; }
-  if (asciiOk) {
-    let s = "";
-    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-    return s;
-  }
   return SHARED_TEXT_DECODER.decode(bytes);
 }
 

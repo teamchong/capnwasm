@@ -89,6 +89,7 @@ export class CapnCpp {
 // allocations in TextEncoder.encode.
 const NAME_ENCODE_CACHE = new Map();
 const SHARED_TEXT_ENCODER = new TextEncoder();
+const SHARED_DECODER = new TextDecoder();
 function encodeName(name) {
   let e = NAME_ENCODE_CACHE.get(name);
   if (!e) {
@@ -111,15 +112,7 @@ export class LazyReader {
     u8.set(enc, namePtr);
     const len = this.#cpp._exports.cpp_lazy_msg_obj_field_text(namePtr, enc.length);
     if (len === 0) return undefined;
-    const bytes = u8.subarray(this.#cpp._outPtr, this.#cpp._outPtr + len);
-    let asciiOk = true;
-    for (let i = 0; i < bytes.length; i++) if (bytes[i] >= 0x80) { asciiOk = false; break; }
-    if (asciiOk) {
-      let s = "";
-      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-      return s;
-    }
-    return new TextDecoder().decode(bytes);
+    return SHARED_DECODER.decode(u8.subarray(this.#cpp._outPtr, this.#cpp._outPtr + len));
   }
 
   /** Batched fetch — N fields in one wasm boundary call. */
@@ -157,17 +150,8 @@ export class LazyReader {
         results[i] = undefined;
         continue;
       }
-      const bytes = u8.subarray(outPtr + readPos, outPtr + readPos + len);
+      results[i] = SHARED_DECODER.decode(u8.subarray(outPtr + readPos, outPtr + readPos + len));
       readPos += len;
-      let asciiOk = true;
-      for (let j = 0; j < bytes.length; j++) if (bytes[j] >= 0x80) { asciiOk = false; break; }
-      if (asciiOk) {
-        let s = "";
-        for (let j = 0; j < bytes.length; j++) s += String.fromCharCode(bytes[j]);
-        results[i] = s;
-      } else {
-        results[i] = new TextDecoder().decode(bytes);
-      }
     }
     return results;
   }

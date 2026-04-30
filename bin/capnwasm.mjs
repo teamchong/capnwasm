@@ -583,14 +583,14 @@ function generateJs(structs, schemaName) {
   lines.push("");
   lines.push(`const SHARED_TEXT_DECODER = new TextDecoder();`);
   lines.push(`const SHARED_ENCODER = new TextEncoder();`);
+  // Decode UTF-8 bytes to a string. The shared TextDecoder is the
+  // fastest path across the size range that matters (~12 B and up):
+  //   4 KB:  TextDecoder 0.4 µs vs hand-rolled loop 13 µs   (30x slower)
+  //   64 KB: TextDecoder 4.1 µs vs hand-rolled loop 305 µs  (75x slower)
+  // The earlier "ASCII fast-path" loop was a premature pessimization —
+  // V8's TextDecoder.decode is V8-internal C++ and dwarfs any JS loop
+  // once strings get above a handful of bytes.
   lines.push(`function decodeAscii(bytes) {`);
-  lines.push(`  let asciiOk = true;`);
-  lines.push(`  for (let i = 0; i < bytes.length; i++) if (bytes[i] >= 0x80) { asciiOk = false; break; }`);
-  lines.push(`  if (asciiOk) {`);
-  lines.push(`    let s = "";`);
-  lines.push(`    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);`);
-  lines.push(`    return s;`);
-  lines.push(`  }`);
   lines.push(`  return SHARED_TEXT_DECODER.decode(bytes);`);
   lines.push(`}`);
   lines.push("");
