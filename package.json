@@ -5,10 +5,7 @@
   "type": "module",
   "main": "js/index.mjs",
   "exports": {
-    ".":            "./js/index.mjs",
-    "./inlined":    "./dist/inlined.mjs",
-    "./cpp_loader": "./js/cpp_loader.mjs",
-    "./tape_codec": "./js/tape_codec.mjs"
+    ".": "./dist/inlined.mjs"
   },
   "bin": {
     "capnwasm": "./bin/capnwasm.mjs"
@@ -16,8 +13,7 @@
   "files": [
     "js",
     "bin",
-    "dist",
-    "zig-out/capnp_cpp.opt.wasm"
+    "dist"
   ],
   "scripts": {
     "build:wasm": "bash cpp/build.sh",

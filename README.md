@@ -78,29 +78,18 @@ the wasm instance; the JS host catches `proc_exit` from the WASI shim.
 Bundle size: capnp_cpp.opt.wasm is **35 KB gzip** vs capnweb's 21 KB —
 **1.68x larger** on the wire.
 
-## Two import paths, your choice
+## Single import, one fetch
 
 ```js
-// Default: small JS bundle (~6 KB gzip), wasm fetched separately and cached.
-import { CapnCpp } from "capnwasm";
-const cpp = await CapnCpp.load("/path/to/capnp_cpp.opt.wasm");
-
-// Single-file: wasm inlined as base64. One fetch, larger bundle.
-import { load } from "capnwasm/inlined";
+import { load } from "capnwasm";
 const cpp = await load();
 ```
 
-Honest size comparison (gzip):
+The wasm is inlined as base64 in the bundle. One network fetch, no
+separate `.wasm` asset to ship.
 
-| Path | JS | wasm | total |
-|---|---|---|---|
-| `capnwasm` (split, production) | **6 KB** | 34.6 KB (cacheable, parallel) | 41 KB |
-| `capnwasm/inlined` | 49 KB (single file) | — | 49 KB |
-| capnweb | 21 KB | — | 21 KB |
-
-The production wasm strips out the BigUser bench-only helpers (256-element
-function-pointer tables) via `CW_BENCH` macro gating, which is what got
-the wasm down from 39 → 34.6 KB gzip.
+Size (gzip): **49 KB single file** vs capnweb's **21 KB**. Most of the
+gap is the actual Cap'n Proto + KJ C++ runtime, statically linked.
 
 The JS-glue alone (6 KB gzip) is smaller than capnweb. The wasm is the
 ~33 KB bulk because it bundles the full Cap'n Proto + KJ runtime.
