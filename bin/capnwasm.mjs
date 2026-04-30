@@ -423,6 +423,103 @@ function generateJs(structs, schemaName) {
   lines.push(`  return SHARED_TEXT_DECODER.decode(bytes);`);
   lines.push(`}`);
   lines.push("");
+  // Pick helper: takes the FIELDS table + caller-requested names, packs a
+  // batch request into cpp_lazy_aux, makes ONE wasm call, materializes the
+  // result. Cost: 1 boundary crossing + 1 packed memcpy regardless of N.
+  lines.push(`const _F32_VIEW_BUF = new ArrayBuffer(4);`);
+  lines.push(`const _F32_VIEW_U32 = new Uint32Array(_F32_VIEW_BUF);`);
+  lines.push(`const _F32_VIEW_F32 = new Float32Array(_F32_VIEW_BUF);`);
+  lines.push(`const _F64_VIEW_BUF = new ArrayBuffer(8);`);
+  lines.push(`const _F64_VIEW_U32 = new Uint32Array(_F64_VIEW_BUF);`);
+  lines.push(`const _F64_VIEW_F64 = new Float64Array(_F64_VIEW_BUF);`);
+  lines.push(``);
+  lines.push(`// Per-(class, field-list) cache of pre-encoded request bytes. Compiling the
+// request is a tight loop but it's still wasted work in a hot pick loop.
+// We key on a frozen Uint8Array of the descriptor bytes so identical field
+// sets (the common case in batch processing) hit the cache.
+const _PICK_REQ_CACHE = new WeakMap();  // fields -> Map<namesKey, Uint8Array>
+
+function _getPickRequest(fields, names) {
+  let perFields = _PICK_REQ_CACHE.get(fields);
+  if (!perFields) { perFields = new Map(); _PICK_REQ_CACHE.set(fields, perFields); }
+  const key = names.join("\\0");
+  let req = perFields.get(key);
+  if (req) return req;
+  const buf = new Uint8Array(4 + names.length * 5);
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(0, names.length, true);
+  let pos = 4;
+  for (let i = 0; i < names.length; i++) {
+    const d = fields[names[i]];
+    if (!d) throw new Error("unknown field: " + names[i]);
+    buf[pos] = d.kind; pos += 1;
+    dv.setUint32(pos, d.off, true); pos += 4;
+  }
+  perFields.set(key, buf);
+  return buf;
+}
+
+function _capnwasmPick(cpp, fields, names) {`);
+  lines.push(`  // Cached request prep — same names hit the WeakMap and skip the encode loop.`);
+  lines.push(`  const req = _getPickRequest(fields, names);`);
+  lines.push(`  const u8 = cpp._u8;`);
+  lines.push(`  const aux = cpp._exports.cpp_lazy_aux_ptr();`);
+  lines.push(`  u8.set(req, aux);`);
+  lines.push(`  const descs = new Array(names.length);`);
+  lines.push(`  for (let i = 0; i < names.length; i++) descs[i] = fields[names[i]];`);
+  lines.push(`  const written = cpp._exports.cpp_any_batch_read(req.length);`);
+  lines.push(`  if (!written) return Object.fromEntries(names.map((n) => [n, undefined]));`);
+  lines.push(`  const out = cpp._outPtr;`);
+  lines.push(`  const u8After = cpp._u8;`);
+  lines.push(`  const dv2 = new DataView(u8After.buffer, out);`);
+  lines.push(`  let readPos = names.length * 4;`);
+  lines.push(`  const result = {};`);
+  lines.push(`  for (let i = 0; i < names.length; i++) {`);
+  lines.push(`    const lenOrVal = dv2.getUint32(i * 4, true);`);
+  lines.push(`    const d = descs[i];`);
+  lines.push(`    switch (d.type) {`);
+  lines.push(`      case "text": {`);
+  lines.push(`        if (lenOrVal === 0xFFFFFFFF) { result[names[i]] = undefined; break; }`);
+  lines.push(`        if (lenOrVal === 0) { result[names[i]] = ""; break; }`);
+  lines.push(`        result[names[i]] = decodeAscii(u8After.subarray(out + readPos, out + readPos + lenOrVal));`);
+  lines.push(`        readPos += lenOrVal;`);
+  lines.push(`        break;`);
+  lines.push(`      }`);
+  lines.push(`      case "data": {`);
+  lines.push(`        if (lenOrVal === 0xFFFFFFFF) { result[names[i]] = undefined; break; }`);
+  lines.push(`        result[names[i]] = u8After.slice(out + readPos, out + readPos + lenOrVal);`);
+  lines.push(`        readPos += lenOrVal;`);
+  lines.push(`        break;`);
+  lines.push(`      }`);
+  lines.push(`      case "bool":   result[names[i]] = lenOrVal === 1; break;`);
+  lines.push(`      case "uint8":  result[names[i]] = lenOrVal; break;`);
+  lines.push(`      case "int8":   result[names[i]] = (lenOrVal << 24) >> 24; break;`);
+  lines.push(`      case "uint16": result[names[i]] = lenOrVal; break;`);
+  lines.push(`      case "int16":  result[names[i]] = (lenOrVal << 16) >> 16; break;`);
+  lines.push(`      case "uint32": result[names[i]] = lenOrVal >>> 0; break;`);
+  lines.push(`      case "int32":  result[names[i]] = lenOrVal | 0; break;`);
+  lines.push(`      case "float32": _F32_VIEW_U32[0] = lenOrVal >>> 0; result[names[i]] = _F32_VIEW_F32[0]; break;`);
+  lines.push(`      case "uint64":`);
+  lines.push(`      case "int64": {`);
+  lines.push(`        const lo = dv2.getUint32(out - dv2.byteOffset + readPos, true);`);
+  lines.push(`        const hi = dv2.getInt32 (out - dv2.byteOffset + readPos + 4, true);`);
+  lines.push(`        result[names[i]] = (hi >= -0x200000 && hi <= 0x1FFFFF) ? hi * 4294967296 + lo : dv2.getBigInt64(out - dv2.byteOffset + readPos, true);`);
+  lines.push(`        readPos += 8;`);
+  lines.push(`        break;`);
+  lines.push(`      }`);
+  lines.push(`      case "float64": {`);
+  lines.push(`        _F64_VIEW_U32[0] = dv2.getUint32(out - dv2.byteOffset + readPos, true);`);
+  lines.push(`        _F64_VIEW_U32[1] = dv2.getUint32(out - dv2.byteOffset + readPos + 4, true);`);
+  lines.push(`        result[names[i]] = _F64_VIEW_F64[0];`);
+  lines.push(`        readPos += 8;`);
+  lines.push(`        break;`);
+  lines.push(`      }`);
+  lines.push(`      default: result[names[i]] = undefined;`);
+  lines.push(`    }`);
+  lines.push(`  }`);
+  lines.push(`  return result;`);
+  lines.push(`}`);
+  lines.push("");
 
   for (const s of structs) {
     lines.push(`export class ${s.name}Reader {`);
@@ -434,16 +531,57 @@ function generateJs(structs, schemaName) {
       for (const line of getter) lines.push(`    ${line}`);
       lines.push(`  }`);
     }
-    // Materializing helper: pulls every field at once. Avoids N wasm
-    // boundary crossings when the caller really wants the whole object.
-    // For sparse access prefer the per-field getters.
+    // Per-class field descriptor table — fed to cpp_any_batch_read so one
+    // wasm boundary crossing fetches all requested fields. Codegen knows
+    // each field's offset and type at build time (the Immer-pattern of
+    // tracking accesses applied at codegen time, no runtime Proxy needed).
     lines.push("");
-    lines.push(`  toObject() {`);
-    lines.push(`    return {`);
+    lines.push(`  static _FIELDS = {`);
     for (const f of s.fields) {
-      lines.push(`      ${f.name}: this.${f.name},`);
+      const desc = fieldDescriptor(f);
+      lines.push(`    ${f.name}: ${JSON.stringify(desc)},`);
     }
-    lines.push(`    };`);
+    lines.push(`  };`);
+    lines.push("");
+    // Pick: one wasm call to fetch N fields packed.
+    lines.push(`  pick(names) {`);
+    lines.push(`    return ${s.name}Reader._pickImpl(this._cpp, names);`);
+    lines.push(`  }`);
+    lines.push("");
+    lines.push(`  static _pickImpl(cpp, names) {`);
+    lines.push(`    return _capnwasmPick(cpp, ${s.name}Reader._FIELDS, names);`);
+    lines.push(`  }`);
+    lines.push("");
+    // Plan/apply: write `r.access.field0; r.access.field5` etc, then `r.apply()`
+    // fetches them all in one wasm call. Proxy traps run only during the plan
+    // phase so their cost is paid once per record, not per hot-loop iteration.
+    // Same shape as Terraform plan -> apply.
+    lines.push(`  get access() {`);
+    lines.push(`    if (!this._plan) {`);
+    lines.push(`      this._plan = [];`);
+    lines.push(`      const recorded = this._plan;`);
+    lines.push(`      const fields = ${s.name}Reader._FIELDS;`);
+    lines.push(`      this._access = new Proxy(Object.create(null), {`);
+    lines.push(`        get(_, name) {`);
+    lines.push(`          if (typeof name === "string" && (name in fields)) recorded.push(name);`);
+    lines.push(`          return undefined;`);
+    lines.push(`        }`);
+    lines.push(`      });`);
+    lines.push(`    }`);
+    lines.push(`    return this._access;`);
+    lines.push(`  }`);
+    lines.push("");
+    lines.push(`  apply() {`);
+    lines.push(`    if (!this._plan || this._plan.length === 0) return {};`);
+    lines.push(`    const result = ${s.name}Reader._pickImpl(this._cpp, this._plan);`);
+    lines.push(`    this._plan = null;`);
+    lines.push(`    this._access = null;`);
+    lines.push(`    return result;`);
+    lines.push(`  }`);
+    lines.push("");
+    // Materializing helper: every field at once via the same batched primitive.
+    lines.push(`  toObject() {`);
+    lines.push(`    return ${s.name}Reader._pickImpl(this._cpp, Object.keys(${s.name}Reader._FIELDS));`);
     lines.push(`  }`);
     lines.push(`}`);
     lines.push("");
@@ -493,6 +631,11 @@ function generateDts(structs, schemaName) {
       lines.push(`    ${f.name}: ${tsType};`);
     }
     lines.push(`  };`);
+    // pick + plan/apply
+    const fieldUnion = s.fields.map((f) => `"${f.name}"`).join(" | ");
+    lines.push(`  pick<K extends ${fieldUnion}>(names: K[]): { [P in K]: this[P] };`);
+    lines.push(`  readonly access: { readonly [P in ${fieldUnion}]: undefined };`);
+    lines.push(`  apply(): Partial<{ [P in ${fieldUnion}]: this[P] }>;`);
     lines.push(`}`);
     lines.push("");
   }
@@ -515,6 +658,34 @@ function capnpToTs(capnpType, declaredStructs) {
     case "Int64": case "UInt64":    return "number | bigint";
     case "Void":   return "void";
     default:       return "unknown";
+  }
+}
+
+/**
+ * Field descriptor written into the generated class's _FIELDS table. The
+ * runtime helper _capnwasmPick uses these to issue ONE batched wasm call
+ * via cpp_any_batch_read. Kind values must agree with wrapper.cpp.
+ */
+function fieldDescriptor(f) {
+  if (f.kind === "pointer") {
+    if (f.type === "Text") return { kind: 0, off: f.ptrIndex, type: "text" };
+    if (f.type === "Data") return { kind: 6, off: f.ptrIndex, type: "data" };
+    return { kind: -1, off: 0, type: f.type };
+  }
+  const off = f.bitOffset >> 3;
+  switch (f.type) {
+    case "Bool":   return { kind: 5, off: f.bitOffset, type: "bool" };
+    case "UInt8":  return { kind: 1, off, type: "uint8" };
+    case "Int8":   return { kind: 1, off, type: "int8" };
+    case "UInt16": return { kind: 2, off, type: "uint16" };
+    case "Int16":  return { kind: 2, off, type: "int16" };
+    case "UInt32": return { kind: 3, off, type: "uint32" };
+    case "Int32":  return { kind: 3, off, type: "int32" };
+    case "UInt64": return { kind: 4, off, type: "uint64" };
+    case "Int64":  return { kind: 4, off, type: "int64" };
+    case "Float32":return { kind: 3, off, type: "float32" };
+    case "Float64":return { kind: 4, off, type: "float64" };
+    default:       return { kind: -1, off: 0, type: f.type };
   }
 }
 

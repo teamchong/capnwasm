@@ -12,6 +12,100 @@ function decodeAscii(bytes) {
   return SHARED_TEXT_DECODER.decode(bytes);
 }
 
+const _F32_VIEW_BUF = new ArrayBuffer(4);
+const _F32_VIEW_U32 = new Uint32Array(_F32_VIEW_BUF);
+const _F32_VIEW_F32 = new Float32Array(_F32_VIEW_BUF);
+const _F64_VIEW_BUF = new ArrayBuffer(8);
+const _F64_VIEW_U32 = new Uint32Array(_F64_VIEW_BUF);
+const _F64_VIEW_F64 = new Float64Array(_F64_VIEW_BUF);
+
+// Per-(class, field-list) cache of pre-encoded request bytes. Compiling the
+// request is a tight loop but it's still wasted work in a hot pick loop.
+// We key on a frozen Uint8Array of the descriptor bytes so identical field
+// sets (the common case in batch processing) hit the cache.
+const _PICK_REQ_CACHE = new WeakMap();  // fields -> Map<namesKey, Uint8Array>
+
+function _getPickRequest(fields, names) {
+  let perFields = _PICK_REQ_CACHE.get(fields);
+  if (!perFields) { perFields = new Map(); _PICK_REQ_CACHE.set(fields, perFields); }
+  const key = names.join("\0");
+  let req = perFields.get(key);
+  if (req) return req;
+  const buf = new Uint8Array(4 + names.length * 5);
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(0, names.length, true);
+  let pos = 4;
+  for (let i = 0; i < names.length; i++) {
+    const d = fields[names[i]];
+    if (!d) throw new Error("unknown field: " + names[i]);
+    buf[pos] = d.kind; pos += 1;
+    dv.setUint32(pos, d.off, true); pos += 4;
+  }
+  perFields.set(key, buf);
+  return buf;
+}
+
+function _capnwasmPick(cpp, fields, names) {
+  // Cached request prep — same names hit the WeakMap and skip the encode loop.
+  const req = _getPickRequest(fields, names);
+  const u8 = cpp._u8;
+  const aux = cpp._exports.cpp_lazy_aux_ptr();
+  u8.set(req, aux);
+  const descs = new Array(names.length);
+  for (let i = 0; i < names.length; i++) descs[i] = fields[names[i]];
+  const written = cpp._exports.cpp_any_batch_read(req.length);
+  if (!written) return Object.fromEntries(names.map((n) => [n, undefined]));
+  const out = cpp._outPtr;
+  const u8After = cpp._u8;
+  const dv2 = new DataView(u8After.buffer, out);
+  let readPos = names.length * 4;
+  const result = {};
+  for (let i = 0; i < names.length; i++) {
+    const lenOrVal = dv2.getUint32(i * 4, true);
+    const d = descs[i];
+    switch (d.type) {
+      case "text": {
+        if (lenOrVal === 0xFFFFFFFF) { result[names[i]] = undefined; break; }
+        if (lenOrVal === 0) { result[names[i]] = ""; break; }
+        result[names[i]] = decodeAscii(u8After.subarray(out + readPos, out + readPos + lenOrVal));
+        readPos += lenOrVal;
+        break;
+      }
+      case "data": {
+        if (lenOrVal === 0xFFFFFFFF) { result[names[i]] = undefined; break; }
+        result[names[i]] = u8After.slice(out + readPos, out + readPos + lenOrVal);
+        readPos += lenOrVal;
+        break;
+      }
+      case "bool":   result[names[i]] = lenOrVal === 1; break;
+      case "uint8":  result[names[i]] = lenOrVal; break;
+      case "int8":   result[names[i]] = (lenOrVal << 24) >> 24; break;
+      case "uint16": result[names[i]] = lenOrVal; break;
+      case "int16":  result[names[i]] = (lenOrVal << 16) >> 16; break;
+      case "uint32": result[names[i]] = lenOrVal >>> 0; break;
+      case "int32":  result[names[i]] = lenOrVal | 0; break;
+      case "float32": _F32_VIEW_U32[0] = lenOrVal >>> 0; result[names[i]] = _F32_VIEW_F32[0]; break;
+      case "uint64":
+      case "int64": {
+        const lo = dv2.getUint32(out - dv2.byteOffset + readPos, true);
+        const hi = dv2.getInt32 (out - dv2.byteOffset + readPos + 4, true);
+        result[names[i]] = (hi >= -0x200000 && hi <= 0x1FFFFF) ? hi * 4294967296 + lo : dv2.getBigInt64(out - dv2.byteOffset + readPos, true);
+        readPos += 8;
+        break;
+      }
+      case "float64": {
+        _F64_VIEW_U32[0] = dv2.getUint32(out - dv2.byteOffset + readPos, true);
+        _F64_VIEW_U32[1] = dv2.getUint32(out - dv2.byteOffset + readPos + 4, true);
+        result[names[i]] = _F64_VIEW_F64[0];
+        readPos += 8;
+        break;
+      }
+      default: result[names[i]] = undefined;
+    }
+  }
+  return result;
+}
+
 export class BigUserReader {
   constructor(cpp) { this._cpp = cpp; }
 
@@ -1806,6 +1900,277 @@ export class BigUserReader {
     const u8 = this._cpp._u8;
     const out = this._cpp._outPtr;
     return decodeAscii(u8.subarray(out, out + len));
+  }
+
+  static _FIELDS = {
+    field0: {"kind":0,"off":0,"type":"text"},
+    field1: {"kind":0,"off":1,"type":"text"},
+    field2: {"kind":0,"off":2,"type":"text"},
+    field3: {"kind":0,"off":3,"type":"text"},
+    field4: {"kind":0,"off":4,"type":"text"},
+    field5: {"kind":0,"off":5,"type":"text"},
+    field6: {"kind":0,"off":6,"type":"text"},
+    field7: {"kind":0,"off":7,"type":"text"},
+    field8: {"kind":0,"off":8,"type":"text"},
+    field9: {"kind":0,"off":9,"type":"text"},
+    field10: {"kind":0,"off":10,"type":"text"},
+    field11: {"kind":0,"off":11,"type":"text"},
+    field12: {"kind":0,"off":12,"type":"text"},
+    field13: {"kind":0,"off":13,"type":"text"},
+    field14: {"kind":0,"off":14,"type":"text"},
+    field15: {"kind":0,"off":15,"type":"text"},
+    field16: {"kind":0,"off":16,"type":"text"},
+    field17: {"kind":0,"off":17,"type":"text"},
+    field18: {"kind":0,"off":18,"type":"text"},
+    field19: {"kind":0,"off":19,"type":"text"},
+    field20: {"kind":0,"off":20,"type":"text"},
+    field21: {"kind":0,"off":21,"type":"text"},
+    field22: {"kind":0,"off":22,"type":"text"},
+    field23: {"kind":0,"off":23,"type":"text"},
+    field24: {"kind":0,"off":24,"type":"text"},
+    field25: {"kind":0,"off":25,"type":"text"},
+    field26: {"kind":0,"off":26,"type":"text"},
+    field27: {"kind":0,"off":27,"type":"text"},
+    field28: {"kind":0,"off":28,"type":"text"},
+    field29: {"kind":0,"off":29,"type":"text"},
+    field30: {"kind":0,"off":30,"type":"text"},
+    field31: {"kind":0,"off":31,"type":"text"},
+    field32: {"kind":0,"off":32,"type":"text"},
+    field33: {"kind":0,"off":33,"type":"text"},
+    field34: {"kind":0,"off":34,"type":"text"},
+    field35: {"kind":0,"off":35,"type":"text"},
+    field36: {"kind":0,"off":36,"type":"text"},
+    field37: {"kind":0,"off":37,"type":"text"},
+    field38: {"kind":0,"off":38,"type":"text"},
+    field39: {"kind":0,"off":39,"type":"text"},
+    field40: {"kind":0,"off":40,"type":"text"},
+    field41: {"kind":0,"off":41,"type":"text"},
+    field42: {"kind":0,"off":42,"type":"text"},
+    field43: {"kind":0,"off":43,"type":"text"},
+    field44: {"kind":0,"off":44,"type":"text"},
+    field45: {"kind":0,"off":45,"type":"text"},
+    field46: {"kind":0,"off":46,"type":"text"},
+    field47: {"kind":0,"off":47,"type":"text"},
+    field48: {"kind":0,"off":48,"type":"text"},
+    field49: {"kind":0,"off":49,"type":"text"},
+    field50: {"kind":0,"off":50,"type":"text"},
+    field51: {"kind":0,"off":51,"type":"text"},
+    field52: {"kind":0,"off":52,"type":"text"},
+    field53: {"kind":0,"off":53,"type":"text"},
+    field54: {"kind":0,"off":54,"type":"text"},
+    field55: {"kind":0,"off":55,"type":"text"},
+    field56: {"kind":0,"off":56,"type":"text"},
+    field57: {"kind":0,"off":57,"type":"text"},
+    field58: {"kind":0,"off":58,"type":"text"},
+    field59: {"kind":0,"off":59,"type":"text"},
+    field60: {"kind":0,"off":60,"type":"text"},
+    field61: {"kind":0,"off":61,"type":"text"},
+    field62: {"kind":0,"off":62,"type":"text"},
+    field63: {"kind":0,"off":63,"type":"text"},
+    field64: {"kind":0,"off":64,"type":"text"},
+    field65: {"kind":0,"off":65,"type":"text"},
+    field66: {"kind":0,"off":66,"type":"text"},
+    field67: {"kind":0,"off":67,"type":"text"},
+    field68: {"kind":0,"off":68,"type":"text"},
+    field69: {"kind":0,"off":69,"type":"text"},
+    field70: {"kind":0,"off":70,"type":"text"},
+    field71: {"kind":0,"off":71,"type":"text"},
+    field72: {"kind":0,"off":72,"type":"text"},
+    field73: {"kind":0,"off":73,"type":"text"},
+    field74: {"kind":0,"off":74,"type":"text"},
+    field75: {"kind":0,"off":75,"type":"text"},
+    field76: {"kind":0,"off":76,"type":"text"},
+    field77: {"kind":0,"off":77,"type":"text"},
+    field78: {"kind":0,"off":78,"type":"text"},
+    field79: {"kind":0,"off":79,"type":"text"},
+    field80: {"kind":0,"off":80,"type":"text"},
+    field81: {"kind":0,"off":81,"type":"text"},
+    field82: {"kind":0,"off":82,"type":"text"},
+    field83: {"kind":0,"off":83,"type":"text"},
+    field84: {"kind":0,"off":84,"type":"text"},
+    field85: {"kind":0,"off":85,"type":"text"},
+    field86: {"kind":0,"off":86,"type":"text"},
+    field87: {"kind":0,"off":87,"type":"text"},
+    field88: {"kind":0,"off":88,"type":"text"},
+    field89: {"kind":0,"off":89,"type":"text"},
+    field90: {"kind":0,"off":90,"type":"text"},
+    field91: {"kind":0,"off":91,"type":"text"},
+    field92: {"kind":0,"off":92,"type":"text"},
+    field93: {"kind":0,"off":93,"type":"text"},
+    field94: {"kind":0,"off":94,"type":"text"},
+    field95: {"kind":0,"off":95,"type":"text"},
+    field96: {"kind":0,"off":96,"type":"text"},
+    field97: {"kind":0,"off":97,"type":"text"},
+    field98: {"kind":0,"off":98,"type":"text"},
+    field99: {"kind":0,"off":99,"type":"text"},
+    field100: {"kind":0,"off":100,"type":"text"},
+    field101: {"kind":0,"off":101,"type":"text"},
+    field102: {"kind":0,"off":102,"type":"text"},
+    field103: {"kind":0,"off":103,"type":"text"},
+    field104: {"kind":0,"off":104,"type":"text"},
+    field105: {"kind":0,"off":105,"type":"text"},
+    field106: {"kind":0,"off":106,"type":"text"},
+    field107: {"kind":0,"off":107,"type":"text"},
+    field108: {"kind":0,"off":108,"type":"text"},
+    field109: {"kind":0,"off":109,"type":"text"},
+    field110: {"kind":0,"off":110,"type":"text"},
+    field111: {"kind":0,"off":111,"type":"text"},
+    field112: {"kind":0,"off":112,"type":"text"},
+    field113: {"kind":0,"off":113,"type":"text"},
+    field114: {"kind":0,"off":114,"type":"text"},
+    field115: {"kind":0,"off":115,"type":"text"},
+    field116: {"kind":0,"off":116,"type":"text"},
+    field117: {"kind":0,"off":117,"type":"text"},
+    field118: {"kind":0,"off":118,"type":"text"},
+    field119: {"kind":0,"off":119,"type":"text"},
+    field120: {"kind":0,"off":120,"type":"text"},
+    field121: {"kind":0,"off":121,"type":"text"},
+    field122: {"kind":0,"off":122,"type":"text"},
+    field123: {"kind":0,"off":123,"type":"text"},
+    field124: {"kind":0,"off":124,"type":"text"},
+    field125: {"kind":0,"off":125,"type":"text"},
+    field126: {"kind":0,"off":126,"type":"text"},
+    field127: {"kind":0,"off":127,"type":"text"},
+    field128: {"kind":0,"off":128,"type":"text"},
+    field129: {"kind":0,"off":129,"type":"text"},
+    field130: {"kind":0,"off":130,"type":"text"},
+    field131: {"kind":0,"off":131,"type":"text"},
+    field132: {"kind":0,"off":132,"type":"text"},
+    field133: {"kind":0,"off":133,"type":"text"},
+    field134: {"kind":0,"off":134,"type":"text"},
+    field135: {"kind":0,"off":135,"type":"text"},
+    field136: {"kind":0,"off":136,"type":"text"},
+    field137: {"kind":0,"off":137,"type":"text"},
+    field138: {"kind":0,"off":138,"type":"text"},
+    field139: {"kind":0,"off":139,"type":"text"},
+    field140: {"kind":0,"off":140,"type":"text"},
+    field141: {"kind":0,"off":141,"type":"text"},
+    field142: {"kind":0,"off":142,"type":"text"},
+    field143: {"kind":0,"off":143,"type":"text"},
+    field144: {"kind":0,"off":144,"type":"text"},
+    field145: {"kind":0,"off":145,"type":"text"},
+    field146: {"kind":0,"off":146,"type":"text"},
+    field147: {"kind":0,"off":147,"type":"text"},
+    field148: {"kind":0,"off":148,"type":"text"},
+    field149: {"kind":0,"off":149,"type":"text"},
+    field150: {"kind":0,"off":150,"type":"text"},
+    field151: {"kind":0,"off":151,"type":"text"},
+    field152: {"kind":0,"off":152,"type":"text"},
+    field153: {"kind":0,"off":153,"type":"text"},
+    field154: {"kind":0,"off":154,"type":"text"},
+    field155: {"kind":0,"off":155,"type":"text"},
+    field156: {"kind":0,"off":156,"type":"text"},
+    field157: {"kind":0,"off":157,"type":"text"},
+    field158: {"kind":0,"off":158,"type":"text"},
+    field159: {"kind":0,"off":159,"type":"text"},
+    field160: {"kind":0,"off":160,"type":"text"},
+    field161: {"kind":0,"off":161,"type":"text"},
+    field162: {"kind":0,"off":162,"type":"text"},
+    field163: {"kind":0,"off":163,"type":"text"},
+    field164: {"kind":0,"off":164,"type":"text"},
+    field165: {"kind":0,"off":165,"type":"text"},
+    field166: {"kind":0,"off":166,"type":"text"},
+    field167: {"kind":0,"off":167,"type":"text"},
+    field168: {"kind":0,"off":168,"type":"text"},
+    field169: {"kind":0,"off":169,"type":"text"},
+    field170: {"kind":0,"off":170,"type":"text"},
+    field171: {"kind":0,"off":171,"type":"text"},
+    field172: {"kind":0,"off":172,"type":"text"},
+    field173: {"kind":0,"off":173,"type":"text"},
+    field174: {"kind":0,"off":174,"type":"text"},
+    field175: {"kind":0,"off":175,"type":"text"},
+    field176: {"kind":0,"off":176,"type":"text"},
+    field177: {"kind":0,"off":177,"type":"text"},
+    field178: {"kind":0,"off":178,"type":"text"},
+    field179: {"kind":0,"off":179,"type":"text"},
+    field180: {"kind":0,"off":180,"type":"text"},
+    field181: {"kind":0,"off":181,"type":"text"},
+    field182: {"kind":0,"off":182,"type":"text"},
+    field183: {"kind":0,"off":183,"type":"text"},
+    field184: {"kind":0,"off":184,"type":"text"},
+    field185: {"kind":0,"off":185,"type":"text"},
+    field186: {"kind":0,"off":186,"type":"text"},
+    field187: {"kind":0,"off":187,"type":"text"},
+    field188: {"kind":0,"off":188,"type":"text"},
+    field189: {"kind":0,"off":189,"type":"text"},
+    field190: {"kind":0,"off":190,"type":"text"},
+    field191: {"kind":0,"off":191,"type":"text"},
+    field192: {"kind":0,"off":192,"type":"text"},
+    field193: {"kind":0,"off":193,"type":"text"},
+    field194: {"kind":0,"off":194,"type":"text"},
+    field195: {"kind":0,"off":195,"type":"text"},
+    field196: {"kind":0,"off":196,"type":"text"},
+    field197: {"kind":0,"off":197,"type":"text"},
+    field198: {"kind":0,"off":198,"type":"text"},
+    field199: {"kind":0,"off":199,"type":"text"},
+    field200: {"kind":0,"off":200,"type":"text"},
+    field201: {"kind":0,"off":201,"type":"text"},
+    field202: {"kind":0,"off":202,"type":"text"},
+    field203: {"kind":0,"off":203,"type":"text"},
+    field204: {"kind":0,"off":204,"type":"text"},
+    field205: {"kind":0,"off":205,"type":"text"},
+    field206: {"kind":0,"off":206,"type":"text"},
+    field207: {"kind":0,"off":207,"type":"text"},
+    field208: {"kind":0,"off":208,"type":"text"},
+    field209: {"kind":0,"off":209,"type":"text"},
+    field210: {"kind":0,"off":210,"type":"text"},
+    field211: {"kind":0,"off":211,"type":"text"},
+    field212: {"kind":0,"off":212,"type":"text"},
+    field213: {"kind":0,"off":213,"type":"text"},
+    field214: {"kind":0,"off":214,"type":"text"},
+    field215: {"kind":0,"off":215,"type":"text"},
+    field216: {"kind":0,"off":216,"type":"text"},
+    field217: {"kind":0,"off":217,"type":"text"},
+    field218: {"kind":0,"off":218,"type":"text"},
+    field219: {"kind":0,"off":219,"type":"text"},
+    field220: {"kind":0,"off":220,"type":"text"},
+    field221: {"kind":0,"off":221,"type":"text"},
+    field222: {"kind":0,"off":222,"type":"text"},
+    field223: {"kind":0,"off":223,"type":"text"},
+    field224: {"kind":0,"off":224,"type":"text"},
+    field225: {"kind":0,"off":225,"type":"text"},
+    field226: {"kind":0,"off":226,"type":"text"},
+    field227: {"kind":0,"off":227,"type":"text"},
+    field228: {"kind":0,"off":228,"type":"text"},
+    field229: {"kind":0,"off":229,"type":"text"},
+    field230: {"kind":0,"off":230,"type":"text"},
+    field231: {"kind":0,"off":231,"type":"text"},
+    field232: {"kind":0,"off":232,"type":"text"},
+    field233: {"kind":0,"off":233,"type":"text"},
+    field234: {"kind":0,"off":234,"type":"text"},
+    field235: {"kind":0,"off":235,"type":"text"},
+    field236: {"kind":0,"off":236,"type":"text"},
+    field237: {"kind":0,"off":237,"type":"text"},
+    field238: {"kind":0,"off":238,"type":"text"},
+    field239: {"kind":0,"off":239,"type":"text"},
+    field240: {"kind":0,"off":240,"type":"text"},
+    field241: {"kind":0,"off":241,"type":"text"},
+    field242: {"kind":0,"off":242,"type":"text"},
+    field243: {"kind":0,"off":243,"type":"text"},
+    field244: {"kind":0,"off":244,"type":"text"},
+    field245: {"kind":0,"off":245,"type":"text"},
+    field246: {"kind":0,"off":246,"type":"text"},
+    field247: {"kind":0,"off":247,"type":"text"},
+    field248: {"kind":0,"off":248,"type":"text"},
+    field249: {"kind":0,"off":249,"type":"text"},
+    field250: {"kind":0,"off":250,"type":"text"},
+    field251: {"kind":0,"off":251,"type":"text"},
+    field252: {"kind":0,"off":252,"type":"text"},
+    field253: {"kind":0,"off":253,"type":"text"},
+    field254: {"kind":0,"off":254,"type":"text"},
+    field255: {"kind":0,"off":255,"type":"text"},
+  };
+
+  pick(names) {
+    return BigUserReader._pickImpl(this._cpp, names);
+  }
+
+  static _pickImpl(cpp, names) {
+    return _capnwasmPick(cpp, BigUserReader._FIELDS, names);
+  }
+
+  toObject() {
+    return BigUserReader._pickImpl(this._cpp, Object.keys(BigUserReader._FIELDS));
   }
 }
 

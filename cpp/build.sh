@@ -125,6 +125,7 @@ FLAGS=(
   -Wl,--export=cpp_any_uint8_at
   -Wl,--export=cpp_any_bool_at
   -Wl,--export=cpp_conformance_serialize
+  -Wl,--export=cpp_any_batch_read
   -lwasi-emulated-signal
   -lwasi-emulated-mman
   -Wl,--gc-sections

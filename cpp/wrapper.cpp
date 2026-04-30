@@ -842,6 +842,102 @@ uint32_t cpp_any_bool_at(uint32_t bit_offset, uint32_t default_val) {
   return v ^ (default_val & 1);
 }
 
+// Batched read: caller supplies a flat list of field requests in cpp_lazy_aux,
+// wasm packs results into cpp_out, ONE boundary crossing for N fields.
+//
+// Input layout (in cpp_lazy_aux):
+//   u32 count
+//   for each:  u8 kind, u32 offset
+//
+// kind values (must agree with the JS-side codegen):
+//   0  text by pointer-slot index
+//   1  uint8  at byte offset
+//   2  uint16 at byte offset
+//   3  uint32 at byte offset
+//   4  int64  at byte offset (low 8 bytes of result)
+//   5  bool   at bit offset
+//   6  data by pointer-slot index
+//
+// Output layout (in cpp_out):
+//   for each request:
+//     u32 result_len      (0xFFFFFFFF if missing/wrong-kind)
+//     bytes...            (text/data) OR
+//     u32 value           (uint8/16/32/bool — value packed into the size field)
+//     i64 value           (int64 — packed into 8 bytes of payload)
+//
+// Returns total bytes written.
+uint32_t cpp_any_batch_read(uint32_t input_len) {
+  if (any_stack_top < 0) return 0;
+  if (input_len < 4) return 0;
+  uint32_t count;
+  std::memcpy(&count, cpp_lazy_aux, 4);
+  if (count == 0 || count > 1024) return 0;
+
+  const size_t request_bytes = 1 + 4;  // u8 kind + u32 offset
+  if (input_len < 4 + count * request_bytes) return 0;
+
+  auto top = any_stack[any_stack_top];
+  auto data = top.getDataSection();
+  auto ptrs = top.getPointerSection();
+
+  size_t out_pos = count * 4;  // reserve len header
+  size_t in_pos = 4;
+  for (uint32_t i = 0; i < count; i++) {
+    uint8_t kind = cpp_lazy_aux[in_pos]; in_pos += 1;
+    uint32_t off; std::memcpy(&off, cpp_lazy_aux + in_pos, 4); in_pos += 4;
+    uint32_t* len_slot = reinterpret_cast<uint32_t*>(cpp_out + i * 4);
+
+    switch (kind) {
+      case 0: {  // text
+        if (off >= ptrs.size()) { *len_slot = 0xFFFFFFFFu; break; }
+        auto t = ptrs[off].getAs<capnp::Text>();
+        if (out_pos + t.size() > SCRATCH_CAP) return 0;
+        *len_slot = static_cast<uint32_t>(t.size());
+        std::memcpy(cpp_out + out_pos, t.cStr(), t.size());
+        out_pos += t.size();
+        break;
+      }
+      case 6: {  // data
+        if (off >= ptrs.size()) { *len_slot = 0xFFFFFFFFu; break; }
+        auto d = ptrs[off].getAs<capnp::Data>();
+        if (out_pos + d.size() > SCRATCH_CAP) return 0;
+        *len_slot = static_cast<uint32_t>(d.size());
+        std::memcpy(cpp_out + out_pos, d.begin(), d.size());
+        out_pos += d.size();
+        break;
+      }
+      case 1:    // uint8
+      case 2:    // uint16
+      case 3: {  // uint32
+        const uint32_t sz = (kind == 1) ? 1 : (kind == 2 ? 2 : 4);
+        if (off + sz > data.size()) { *len_slot = 0; break; }
+        uint32_t v = 0;
+        std::memcpy(&v, data.begin() + off, sz);
+        *len_slot = v;
+        break;
+      }
+      case 4: {  // int64
+        if (off + 8 > data.size()) { *len_slot = 0; if (out_pos + 8 > SCRATCH_CAP) return 0; std::memset(cpp_out + out_pos, 0, 8); out_pos += 8; break; }
+        if (out_pos + 8 > SCRATCH_CAP) return 0;
+        std::memcpy(cpp_out + out_pos, data.begin() + off, 8);
+        *len_slot = 8;
+        out_pos += 8;
+        break;
+      }
+      case 5: {  // bool: off is bit offset
+        const uint32_t byte = off / 8;
+        const uint32_t bit  = off & 7;
+        if (byte >= data.size()) { *len_slot = 0; break; }
+        *len_slot = (data[byte] >> bit) & 1;
+        break;
+      }
+      default:
+        *len_slot = 0xFFFFFFFFu;
+    }
+  }
+  return static_cast<uint32_t>(out_pos);
+}
+
 // ---------------------------------------------------------------------------
 
 uint32_t cpp_deserialize_to_tape(uint32_t bytes_len) {
