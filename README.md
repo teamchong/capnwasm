@@ -84,16 +84,19 @@ for await (const event of stripe.listEvents()) console.log(event.id);
 
 ## What's in the box
 
-| | what | gzip |
-|---|---|---|
-| `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers | 71 KB |
-| `import "capnwasm/slim"` | production-only runtime (no test fixtures) | 64 KB |
-| `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | small |
-| `import "capnwasm/rpc"` | full RPC layer (sessions, caps, streaming) | small |
-| `import "capnwasm/codegen"` | wasm-built capnp schema compiler — runs in browser | 356 KB |
-| `import "capnwasm/stream"` | helper to stream `fetch` bytes straight into wasm | small |
+| | what | gzip | brotli |
+|---|---|---|---|
+| `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, base64-inlined wasm) | 71 KB | 67 KB |
+| `import "capnwasm/slim"` | production-only inlined runtime (no test fixtures) | 64 KB | 61 KB |
+| `import "capnwasm/browser"` | **browser-optimized: tiny JS shim + wasm fetched as a separate asset (streaming compile)** | **48 KB** | **44 KB** |
+| `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | small | small |
+| `import "capnwasm/rpc"` | full RPC layer (sessions, caps, streaming) | small | small |
+| `import "capnwasm/codegen"` | wasm-built capnp schema compiler — runs in browser | 356 KB | — |
+| `import "capnwasm/stream"` | helper to stream `fetch` bytes straight into wasm | small | small |
 
-For comparison: capnweb is ~21 KB gzip. We're 3x larger because we ship a real Cap'n Proto wasm runtime; that buys us things capnweb structurally can't have (binary wire, zero-copy field access, true sparse-read perf).
+For browsers, prefer `capnwasm/browser`: 48 KB gzip / 44 KB brotli (counting both the JS shim and the separately-fetched `dist/capnp.slim.wasm`). The same bytes the inlined bundles ship, but without the 33% base64 inflation, and with `WebAssembly.instantiateStreaming` so the wasm starts compiling while it's still being downloaded.
+
+For comparison: capnweb is ~21 KB gzip. We're roughly 2-3x larger because we ship a real Cap'n Proto wasm runtime; that buys us things capnweb structurally can't have (binary wire, zero-copy field access, true sparse-read perf).
 
 ---
 

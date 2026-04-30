@@ -7,10 +7,13 @@
   "exports": {
     ".":          "./dist/inlined.mjs",
     "./slim":     "./dist/inlined.slim.mjs",
+    "./browser":  "./js/browser.mjs",
     "./rest":     "./js/rest_runtime.mjs",
     "./stream":   "./js/stream.mjs",
     "./rpc":      "./js/rpc.mjs",
-    "./codegen":  "./dist/codegen.mjs"
+    "./codegen":  "./dist/codegen.mjs",
+    "./capnp.slim.wasm": "./dist/capnp.slim.wasm",
+    "./capnp.wasm":      "./dist/capnp.wasm"
   },
   "bin": {
     "capnwasm": "./bin/capnwasm.mjs"

@@ -20,15 +20,31 @@ export class CapnCpp {
   #cap = 0;
 
   static async load(wasmSource) {
-    let bytes;
-    if (wasmSource instanceof Uint8Array) bytes = wasmSource;
-    else if (wasmSource instanceof ArrayBuffer) bytes = new Uint8Array(wasmSource);
-    else bytes = new Uint8Array(await (await fetch(wasmSource)).arrayBuffer());
-
     const wasi = buildWasiImports();
-    const { instance } = await WebAssembly.instantiate(bytes, {
-      wasi_snapshot_preview1: wasi.imports,
-    });
+    const importObj = { wasi_snapshot_preview1: wasi.imports };
+
+    // Streaming compile when the source is a URL/Request/Response — the
+    // browser parses bytes as they arrive instead of waiting for the full
+    // buffer. Falls through to in-memory instantiate for Uint8Array sources.
+    const isResp = typeof Response !== "undefined" && wasmSource instanceof Response;
+    const isReq  = typeof Request  !== "undefined" && wasmSource instanceof Request;
+    const isUrl  = typeof wasmSource === "string" || wasmSource instanceof URL;
+
+    let instance;
+    if (isResp || isReq || isUrl) {
+      const resp = isResp ? wasmSource : fetch(wasmSource);
+      if (typeof WebAssembly.instantiateStreaming === "function") {
+        ({ instance } = await WebAssembly.instantiateStreaming(resp, importObj));
+      } else {
+        const bytes = new Uint8Array(await (await resp).arrayBuffer());
+        ({ instance } = await WebAssembly.instantiate(bytes, importObj));
+      }
+    } else {
+      const bytes = wasmSource instanceof Uint8Array
+        ? wasmSource
+        : new Uint8Array(wasmSource);
+      ({ instance } = await WebAssembly.instantiate(bytes, importObj));
+    }
     wasi.setMemory(instance.exports.memory);
 
     const cpp = new CapnCpp();

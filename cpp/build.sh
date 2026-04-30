@@ -231,8 +231,10 @@ ls -la "$OPT_OUT"
 # users who only need the production runtime + RPC.
 if [ "$BENCH_MODE" = "1" ]; then
   node js/build_inlined.mjs   # writes dist/inlined.mjs (full)
+  cp "$OPT_OUT" dist/capnp.wasm
 else
   node js/build_inlined.mjs --slim   # writes dist/inlined.slim.mjs
+  cp "$OPT_OUT" dist/capnp.slim.wasm
 fi
 
 # When the user runs the slim build, also run the full build so dist/
