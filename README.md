@@ -95,6 +95,13 @@ for await (const event of stripe.listEvents()) console.log(event.id);
 | `import "capnwasm/stream"` | helper to stream `fetch` bytes straight into wasm | small | small |
 | `import "capnwasm/vite-plugin"` | Vite plugin: schemas regenerate on save, no manual `npx capnwasm gen` ([docs](docs/vite-plugin.md)) | dev-only | dev-only |
 
+**Wire inspector** for debugging — not bundled in the package, hosted as a single file. Paste this into DevTools when you want to see decoded capnp bytes ([docs](docs/inspect.md)):
+
+```js
+const cw = await import("https://teamchong.github.io/capnwasm/inspect.js");
+cw.inspect(fetch("/api/user.capnp"));   // expandable tree in the console
+```
+
 For browsers, prefer `capnwasm/browser`: 44 KB gzip / 41 KB brotli (counting both the JS shim and the separately-fetched `dist/capnp.slim.wasm`, which excludes the bench/test helpers baked into the default wasm). Without the 33% base64 inflation, and with `WebAssembly.instantiateStreaming` so the wasm starts compiling while it's still being downloaded.
 
 For comparison: capnweb is ~21 KB gzip. We're roughly 2x larger because we ship a real Cap'n Proto wasm runtime; that buys us things capnweb structurally can't have (binary wire, zero-copy field access, true sparse-read perf).
