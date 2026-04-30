@@ -129,6 +129,19 @@ export class RpcSession {
   // `this.#exp.fn()` is a single hidden-class lookup vs the original
   // `this.#cpp._exports.fn()` which walks two property chains per call.
   #exp;
+  // The wasm scratch buffer offsets are constants (set once at C++ init)
+  // — call them once at construction and cache. Saves a wasm-boundary
+  // call per send (cpp_in_ptr/cpp_in_capacity/cpp_out_ptr were being
+  // looked up on every #stageIn / #sendFromOut / #snapshotOut).
+  #inPtr  = 0;
+  #outPtr = 0;
+  #inCap  = 0;
+  // Memory view (reuses the underlying buffer). Caching avoids the per-
+  // call `new Uint8Array(this.#cpp._u8)` allocation. Invalidated only if
+  // the buffer reference changes (memory.grow), but in practice our
+  // wasm allocates its scratch space at init and never grows.
+  #u8;
+  #buffer;
   // RpcSession always microtask-batches outbound sends. The cost is
   // ≤ one microtask of first-byte latency (~1µs, invisible behind any
   // network); the win is N→1 transport.send calls when the user makes
@@ -157,6 +170,14 @@ export class RpcSession {
   constructor(cpp, transport, registry, options = {}) {
     this.#cpp = cpp;
     this.#exp = cpp._exports;        // shorthand the hot paths use
+    // Cache wasm-side constants once. Each cpp_*_ptr/_capacity export is
+    // a getter for a fixed C++ global; calling them per-message is wasted
+    // boundary crossings.
+    this.#inPtr  = cpp._inPtr;
+    this.#outPtr = cpp._outPtr;
+    this.#inCap  = cpp._cap;
+    this.#buffer = cpp.memory.buffer;
+    this.#u8     = new Uint8Array(this.#buffer);
     this.#transport = transport;
     this.#registry = registry || new InterfaceRegistry();
     if (options.bootstrap) this.#localBootstrap = options.bootstrap;
@@ -168,6 +189,18 @@ export class RpcSession {
     });
     this.#flushBound = () => this.#flush();
     transport.onMessage((bytes) => this.#onBytes(bytes));
+  }
+
+  // Returns a Uint8Array over wasm memory. Re-fetches the view if memory
+  // has grown (rare; only happens if the wasm calls memory.grow). The
+  // buffer-identity check is cheap — it's just a reference compare.
+  #mem() {
+    const buf = this.#cpp.memory.buffer;
+    if (buf !== this.#buffer) {
+      this.#buffer = buf;
+      this.#u8 = new Uint8Array(buf);
+    }
+    return this.#u8;
   }
 
   /** The wasm instance this session uses. Exposed for openPrimitives etc. */
@@ -379,8 +412,8 @@ export class RpcSession {
       // Shouldn't happen — we only land here for KIND_CALL — but be defensive.
       return;
     }
-    const u8  = this.#cpp._u8;
-    const out = this.#exp.cpp_out_ptr();
+    const u8  = this.#mem();
+    const out = this.#outPtr;
     const dv  = new DataView(u8.buffer, out, 28);
     const answerId    = dv.getUint32(0,  true);
     const targetKind  = dv.getUint32(4,  true);
@@ -807,11 +840,8 @@ export class RpcSession {
   // ---- Internal: scratch buffer plumbing ----------------------------------
 
   #stageIn(bytes) {
-    const u8 = this.#cpp._u8;
-    const inPtr = this.#exp.cpp_in_ptr();
-    const cap = this.#exp.cpp_in_capacity();
-    if (bytes.length > cap) throw new Error("payload exceeds scratch buffer");
-    u8.set(bytes, inPtr);
+    if (bytes.length > this.#inCap) throw new Error("payload exceeds scratch buffer");
+    this.#mem().set(bytes, this.#inPtr);
   }
 
   // Auto-batched send: queue the framed bytes from cpp_out and flush at
@@ -832,11 +862,9 @@ export class RpcSession {
   // boundary as one transport.send. We slice (not subarray) into JS-owned
   // bytes because cpp_out gets reused by the next wasm call.
   #sendFromOut(framedLen) {
-    const u8 = this.#cpp._u8;
-    const outPtr = this.#exp.cpp_out_ptr();
     if (!this.#sendQueue) this.#sendQueue = [];
     this.#sendQueueBytes += framedLen;
-    this.#sendQueue.push(u8.slice(outPtr, outPtr + framedLen));
+    this.#sendQueue.push(this.#mem().slice(this.#outPtr, this.#outPtr + framedLen));
     if (!this.#flushScheduled) {
       this.#flushScheduled = true;
       queueMicrotask(this.#flushBound);
@@ -865,9 +893,7 @@ export class RpcSession {
   // ctx.paramsBytes(), exception text decoding). slice produces an
   // independent JS-owned buffer the user can hold across wasm calls.
   #snapshotOut(len) {
-    const u8 = this.#cpp._u8;
-    const outPtr = this.#exp.cpp_out_ptr();
-    return u8.slice(outPtr, outPtr + len);
+    return this.#mem().slice(this.#outPtr, this.#outPtr + len);
   }
 
   #allocQuestionId() {
