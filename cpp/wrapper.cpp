@@ -1481,6 +1481,32 @@ uint32_t cpp_rpc_get_return_kind() {
   return 3;
 }
 
+// Pack the three Return accessors JS reads on every Return into one
+// boundary call. Layout in cpp_out:
+//   [0..4]   answerId
+//   [4..8]   retKind  (0=results, 1=exception, 2=canceled, 3=other)
+//   [8..12]  capCount (0 if retKind != results)
+// Returns 1 on success, 0 if no rpc_reader is live.
+uint32_t cpp_rpc_get_return_summary() {
+  if (!rpc_reader) return 0;
+  auto ret = rpc_reader->getRoot<capnp::rpc::Message>().getReturn();
+  uint32_t answerId = ret.getAnswerId();
+  uint32_t retKind  = 3;
+  uint32_t capCount = 0;
+  if (ret.isResults()) {
+    retKind = 0;
+    capCount = ret.getResults().getCapTable().size();
+  } else if (ret.isException()) {
+    retKind = 1;
+  } else if (ret.isCanceled()) {
+    retKind = 2;
+  }
+  std::memcpy(cpp_out + 0, &answerId, 4);
+  std::memcpy(cpp_out + 4, &retKind,  4);
+  std::memcpy(cpp_out + 8, &capCount, 4);
+  return 1;
+}
+
 uint32_t cpp_rpc_get_return_results() {
   if (!rpc_reader) return 0;
   auto ret = rpc_reader->getRoot<capnp::rpc::Message>().getReturn();

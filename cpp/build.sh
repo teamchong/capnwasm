@@ -166,6 +166,7 @@ FLAGS=(
   -Wl,--export=cpp_rpc_get_call_params
   -Wl,--export=cpp_rpc_get_return_answer_id
   -Wl,--export=cpp_rpc_get_return_kind
+  -Wl,--export=cpp_rpc_get_return_summary
   -Wl,--export=cpp_rpc_get_return_results
   -Wl,--export=cpp_rpc_get_return_exception
   -Wl,--export=cpp_rpc_get_finish_question_id

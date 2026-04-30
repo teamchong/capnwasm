@@ -89,11 +89,16 @@ class FrameReader {
 
 // Deferred is a tiny promise + resolver pair so we can park awaiters on a
 // question id and resolve them when the matching Return arrives.
-function deferred() {
-  let resolve, reject;
-  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
+// Promise.withResolvers (ES2024) skips the executor closure that the
+// classic { let r; new Promise((res) => r = res); } pattern needs. One
+// fewer allocation per Call. Falls back where unavailable.
+const deferred = typeof Promise.withResolvers === "function"
+  ? () => Promise.withResolvers()
+  : () => {
+      let resolve, reject;
+      const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+      return { promise, resolve, reject };
+    };
 
 /**
  * RpcSession drives one peer of an RPC connection. Both sides instantiate one,
@@ -592,16 +597,23 @@ export class RpcSession {
   }
 
   #handleReturn() {
-    const answerId = this.#exp.cpp_rpc_get_return_answer_id();
-    const retKind  = this.#exp.cpp_rpc_get_return_kind();
+    // One wasm call returns answerId + retKind + capCount packed in
+    // cpp_out (saves 2-3 boundary crossings per Return). Layout matches
+    // cpp_rpc_get_return_summary in cpp/wrapper.cpp.
+    if (this.#exp.cpp_rpc_get_return_summary() !== 1) return;
+    const u8  = this.#mem();
+    const out = this.#outPtr;
+    const dv  = new DataView(u8.buffer, out, 12);
+    const answerId = dv.getUint32(0, true);
+    const retKind  = dv.getUint32(4, true);
+    const capCount = dv.getUint32(8, true);
     const q = this.#questions.get(answerId);
     if (!q) return;
     this.#questions.delete(answerId);
     if (retKind === RET_RESULTS) {
-      // Read the capTable first (it lives inside the Payload but doesn't
-      // touch cpp_out), then either run the synchronous extractor against
-      // the live rpc_reader, or copy out the result bytes for the caller.
-      const capCount = this.#exp.cpp_rpc_get_return_cap_count();
+      // capCount already populated by the summary call; per-cap kind/id
+      // still need their own boundary calls (rare path — most Returns
+      // carry zero caps).
       const caps = new Array(capCount);
       for (let i = 0; i < capCount; i++) {
         const kind = this.#exp.cpp_rpc_get_return_cap_kind(i);
