@@ -213,6 +213,7 @@ function median(xs: number[]) {
 
 async function runBench() {
   runBtn.disabled = true;
+  runBtn.textContent = "Running…";
   summary.className = "";
   summary.textContent = "";
   status.textContent = "Warming up…";
@@ -341,6 +342,7 @@ async function runBench() {
 
   status.textContent = `done — ${workload} workload, ${count} records × ${iters} iter (median)`;
   runBtn.disabled = false;
+  runBtn.textContent = "Run benchmark";
 }
 
 // Single-flight: ignore re-entrant clicks while a run is in progress so

@@ -81,8 +81,10 @@ nav a:hover {
 }
 
 #run-btn:disabled {
-  opacity: 0.5;
   cursor: not-allowed;
+  /* Match the cell-pulse rhythm so the page reads as one coherent
+     "I'm busy" state rather than a dead button next to live cells. */
+  animation: cell-pulse 1.2s ease-in-out infinite;
 }
 
 #controls label {

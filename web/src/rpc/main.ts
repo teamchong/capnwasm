@@ -152,6 +152,7 @@ async function blobCapnweb(bytes: Uint8Array): Promise<{ ms: number; wire: numbe
 
 async function runAll() {
   runBtn.disabled = true;
+  runBtn.textContent = "Running…";
   summary.className = "";
   summary.textContent = "";
   const iters = parseInt(itersSel.value, 10);
@@ -255,6 +256,7 @@ async function runAll() {
   }
   status.textContent = `done — ${iters} iter (median)`;
   runBtn.disabled = false;
+  runBtn.textContent = "Run all workloads";
 }
 
 let inFlight = false;
