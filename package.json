@@ -1,17 +1,25 @@
 {
   "name": "capnwasm",
   "version": "0.0.1",
-  "description": "Zig + WasmGC implementation of Cap'n Proto RPC for the browser",
+  "description": "Real Cap'n Proto C++ compiled to wasm + npx CLI for typed JS bindings",
   "type": "module",
-  "main": "js/index.js",
-  "files": ["js", "dist"],
+  "main": "js/index.mjs",
+  "exports": {
+    ".": "./js/index.mjs",
+    "./cpp_loader": "./js/cpp_loader.mjs",
+    "./tape_codec": "./js/tape_codec.mjs"
+  },
+  "bin": {
+    "capnwasm-gen": "./bin/capnwasm-gen.mjs"
+  },
+  "files": [
+    "js",
+    "bin",
+    "zig-out/capnp_cpp.opt.wasm"
+  ],
   "scripts": {
-    "build:wasm": "zig build opt",
-    "build:js": "node js/bundle.mjs",
-    "build": "npm run build:wasm && npm run build:js",
-    "test": "zig build test && node --test js/*.test.mjs",
-    "bench": "node bench/run.mjs",
-    "size": "node bench/size.mjs"
+    "build:wasm": "bash cpp/build.sh",
+    "bench": "node bench/runner.mjs"
   },
   "license": "MIT",
   "devDependencies": {

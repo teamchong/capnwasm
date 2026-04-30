@@ -5,6 +5,7 @@
 #include "typed_schema.capnp.h"
 #include <capnp/serialize.h>
 #include <capnp/message.h>
+#include <capnp/any.h>
 #include <kj/array.h>
 #include <kj/io.h>
 #include <cstring>
@@ -498,6 +499,134 @@ uint32_t cpp_typed_field_at(uint32_t field_idx) {
   std::memcpy(cpp_out, text.cStr(), text.size());
   return static_cast<uint32_t>(text.size());
 }
+
+// ---------------------------------------------------------------------------
+// Generic AnyStruct navigation. One wasm binary serves every user schema:
+// codegen-emitted JS classes know each field's offset (computed at build time
+// from the .capnp file) and call these primitives to read individual fields.
+// No string lookups, no schema reflection at runtime.
+// ---------------------------------------------------------------------------
+
+alignas(8) static char any_reader_storage[1024];
+static capnp::FlatArrayMessageReader* any_reader = nullptr;
+
+// Stack of struct readers so generated code can navigate into sub-structs
+// without persisting opaque handles in JS.
+constexpr size_t ANY_STACK_DEPTH = 32;
+static capnp::AnyStruct::Reader any_stack[ANY_STACK_DEPTH];
+static int32_t any_stack_top = -1;
+
+uint32_t cpp_any_open(uint32_t bytes_len) {
+  if (any_reader) {
+    any_reader->~FlatArrayMessageReader();
+    any_reader = nullptr;
+  }
+  static_assert(sizeof(capnp::FlatArrayMessageReader) <= sizeof(any_reader_storage),
+                "any_reader_storage too small");
+  auto words = kj::ArrayPtr<const capnp::word>(
+      reinterpret_cast<const capnp::word*>(cpp_in),
+      bytes_len / sizeof(capnp::word));
+  any_reader = new (any_reader_storage) capnp::FlatArrayMessageReader(words);
+  any_stack_top = 0;
+  any_stack[0] = any_reader->getRoot<capnp::AnyPointer>().getAs<capnp::AnyStruct>();
+  return 1;
+}
+
+// Push the struct at pointer slot `ptr_idx` of the current top onto the stack.
+// Returns 1 on success, 0 if the pointer is null or out of range.
+uint32_t cpp_any_enter_struct(uint32_t ptr_idx) {
+  if (any_stack_top < 0 || any_stack_top + 1 >= (int32_t)ANY_STACK_DEPTH) return 0;
+  auto top = any_stack[any_stack_top];
+  auto ptrs = top.getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  auto sub = ptrs[ptr_idx].getAs<capnp::AnyStruct>();
+  any_stack_top++;
+  any_stack[any_stack_top] = sub;
+  return 1;
+}
+
+void cpp_any_leave_struct() {
+  if (any_stack_top > 0) any_stack_top--;
+}
+
+// Read a Text from pointer slot `ptr_idx` of the current top struct.
+// Copies bytes to cpp_out, returns count. 0 if missing / non-text.
+uint32_t cpp_any_text_at(uint32_t ptr_idx) {
+  if (any_stack_top < 0) return 0;
+  auto top = any_stack[any_stack_top];
+  auto ptrs = top.getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  auto text = ptrs[ptr_idx].getAs<capnp::Text>();
+  if (text.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, text.cStr(), text.size());
+  return static_cast<uint32_t>(text.size());
+}
+
+// Read a Data field (raw bytes) from pointer slot `ptr_idx`.
+uint32_t cpp_any_data_at(uint32_t ptr_idx) {
+  if (any_stack_top < 0) return 0;
+  auto top = any_stack[any_stack_top];
+  auto ptrs = top.getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  auto data = ptrs[ptr_idx].getAs<capnp::Data>();
+  if (data.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, data.begin(), data.size());
+  return static_cast<uint32_t>(data.size());
+}
+
+// Read scalar fields from the data section by byte offset. The default value
+// is XOR'd with the on-wire bits, matching Cap'n Proto's encoding rule.
+int64_t cpp_any_int64_at(uint32_t byte_offset, int64_t default_val) {
+  if (any_stack_top < 0) return default_val;
+  auto top = any_stack[any_stack_top];
+  auto data = top.getDataSection();
+  if (byte_offset + 8 > data.size()) return default_val;
+  int64_t v;
+  std::memcpy(&v, data.begin() + byte_offset, 8);
+  return v ^ default_val;
+}
+
+uint32_t cpp_any_uint32_at(uint32_t byte_offset, uint32_t default_val) {
+  if (any_stack_top < 0) return default_val;
+  auto top = any_stack[any_stack_top];
+  auto data = top.getDataSection();
+  if (byte_offset + 4 > data.size()) return default_val;
+  uint32_t v;
+  std::memcpy(&v, data.begin() + byte_offset, 4);
+  return v ^ default_val;
+}
+
+uint32_t cpp_any_uint16_at(uint32_t byte_offset, uint32_t default_val) {
+  if (any_stack_top < 0) return default_val;
+  auto top = any_stack[any_stack_top];
+  auto data = top.getDataSection();
+  if (byte_offset + 2 > data.size()) return default_val;
+  uint16_t v;
+  std::memcpy(&v, data.begin() + byte_offset, 2);
+  return static_cast<uint32_t>(v) ^ default_val;
+}
+
+uint32_t cpp_any_uint8_at(uint32_t byte_offset, uint32_t default_val) {
+  if (any_stack_top < 0) return default_val;
+  auto top = any_stack[any_stack_top];
+  auto data = top.getDataSection();
+  if (byte_offset >= data.size()) return default_val;
+  uint8_t v = data[byte_offset];
+  return static_cast<uint32_t>(v) ^ default_val;
+}
+
+uint32_t cpp_any_bool_at(uint32_t bit_offset, uint32_t default_val) {
+  if (any_stack_top < 0) return default_val;
+  auto top = any_stack[any_stack_top];
+  auto data = top.getDataSection();
+  uint32_t byte = bit_offset / 8;
+  uint32_t bit = bit_offset & 7;
+  if (byte >= data.size()) return default_val;
+  uint32_t v = (data[byte] >> bit) & 1;
+  return v ^ (default_val & 1);
+}
+
+// ---------------------------------------------------------------------------
 
 uint32_t cpp_deserialize_to_tape(uint32_t bytes_len) {
   // The framed message starts with stream-framing header. We use

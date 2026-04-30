@@ -78,6 +78,53 @@ the wasm instance; the JS host catches `proc_exit` from the WASI shim.
 Bundle size: capnp_cpp.opt.wasm is **35 KB gzip** vs capnweb's 21 KB —
 **1.68x larger** on the wire.
 
+## CLI: `npx capnwasm-gen schema.capnp`
+
+The deployment story for users with existing `.capnp` schemas:
+
+```bash
+# Server already uses Cap'n Proto and has user.capnp.
+# Browser just runs the codegen:
+
+npx capnwasm-gen user.capnp -o user.gen.mjs
+```
+
+This emits a typed reader class per struct. Field access is a normal JS
+property — V8-inlinable, no Proxy traps, no string lookup:
+
+```js
+import { CapnCpp } from "capnwasm/cpp_loader";
+import { UserReader, openUser } from "./user.gen.mjs";
+
+const cpp = await CapnCpp.load("/capnp_cpp.opt.wasm");
+const reader = openUser(cpp, bytesFromServer);
+console.log(reader.id, reader.email);   // direct getter, integer-offset wasm call
+```
+
+The generated getters look like:
+```js
+get id()    { return this._cpp._exports.cpp_any_int64_at(0, 0n); }
+get email() { return decodeAscii(/* cpp_any_text_at(1) result */); }
+```
+
+Each getter knows its field's offset because the `.capnp` schema told the
+codegen at build time. Same wire format as any other Cap'n Proto language
+binding — server emits bytes, browser consumes them, schema is the source
+of truth.
+
+**Bench (typed schema, 32 named string fields):**
+
+| Workload | cpp wasm | capnweb | result |
+|---|---|---|---|
+| Encode | 21.6 µs | 13.7 µs | capnweb 1.6x |
+| **Decode + read 3 fields** | **1.35 µs** | 2.50 µs | **cpp 1.85x** |
+| Decode + read all 32 fields | 11.85 µs | 3.10 µs | capnweb 3.8x |
+
+The lazy-access workload — read few fields out of many — is where Cap'n Proto's
+wire format actually delivers, and it does. capnweb pays full `JSON.parse`
+either way; we pay parse-once + cheap field walks. The `reader.field0` API
+is identical between the two.
+
 ## Honest conclusions
 
 The original hypothesis was: *real capnproto compiled to wasm should beat

@@ -91,6 +91,16 @@ FLAGS=(
   -Wl,--export=cpp_typed_open
   -Wl,--export=cpp_typed_serialize_wide
   -Wl,--export=cpp_typed_field_at
+  -Wl,--export=cpp_any_open
+  -Wl,--export=cpp_any_enter_struct
+  -Wl,--export=cpp_any_leave_struct
+  -Wl,--export=cpp_any_text_at
+  -Wl,--export=cpp_any_data_at
+  -Wl,--export=cpp_any_int64_at
+  -Wl,--export=cpp_any_uint32_at
+  -Wl,--export=cpp_any_uint16_at
+  -Wl,--export=cpp_any_uint8_at
+  -Wl,--export=cpp_any_bool_at
   -lwasi-emulated-signal
   -lwasi-emulated-mman
 )
