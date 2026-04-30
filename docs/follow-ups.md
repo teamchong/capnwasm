@@ -139,14 +139,24 @@ WASI shim further, replacing some C++ inner loops with WAT.
 Diminishing returns; below ~35 KB there's nothing major to grab without
 rewriting the wasm in hand-tuned WAT — a lot of maintenance for a couple of KB.
 
-## 9. CI / publishing automation
+## 9. CI / publishing automation — scaffolded
 
-No release workflow. `npm publish` is manual, docs site deploy is manual, the
-inspector URL is hand-coded. For a serious project this matters; for an
-internal-blog-post project it doesn't.
+**Update (2026-04-30):** three workflows landed under `.github/workflows/`.
 
-Cost: half a day to wire up GitHub Actions for `npm publish` on tag push and
-`web/dist` → GitHub Pages on main push.
+- `test.yml` — runs `npm test` on every push/PR to main.
+- `publish.yml` — `npm publish` on `v*` tag push (also manual-dispatchable).
+  Verifies the tag matches `package.json`'s version before publishing.
+  Uses npm provenance.
+- `pages.yml` — builds `web/` and deploys to GitHub Pages on every push
+  to main.
+
+Required one-time repo configuration before the workflows actually fire:
+
+- Settings → Secrets → Actions → `NPM_TOKEN` (npm automation token with
+  publish access to the `capnwasm` package).
+- Settings → Pages → Source set to "GitHub Actions".
+- If the Pages URL is `https://<user>.github.io/capnwasm/` rather than a
+  custom domain, set `base: "/capnwasm/"` in `web/vite.config.ts`.
 
 ---
 

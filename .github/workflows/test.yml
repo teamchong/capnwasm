@@ -1,0 +1,31 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # The wasm artifacts in dist/ are committed, so the test suite (which
+      # imports dist/inlined.mjs) runs without a wasm rebuild. Reproducing
+      # the wasm build in CI requires zig + binaryen and is left out here on
+      # purpose — those tools change less than the JS code, and a separate
+      # workflow can run them on a schedule when we want to verify the
+      # checked-in wasm matches a fresh build.
+      - name: Run unit tests
+        run: npm test

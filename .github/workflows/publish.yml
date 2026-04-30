@@ -1,0 +1,52 @@
+name: publish
+
+# Triggered when a tag matching v* is pushed (e.g. `git tag v0.1.0 && git push --tags`).
+# A manual dispatch is also allowed for re-publishing without a new tag.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Required repo configuration before this can run:
+#   - Settings → Secrets → Actions → NPM_TOKEN  (an npm automation token with
+#     publish access to the `capnwasm` package)
+#   - The version field in package.json matches the pushed tag (without `v`).
+#     The workflow refuses to publish if they disagree.
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # for npm provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Run tests before publishing
+        run: npm test
+
+      - name: Verify tag matches package.json version
+        if: github.event_name == 'push'
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Tag v$TAG does not match package.json version $PKG"
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
