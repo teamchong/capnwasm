@@ -651,3 +651,38 @@ test("abort: signal that never fires doesn't change normal completion", async ()
   assert.ok(r);  // resolved, not rejected
   client.close();
 });
+
+test("close: eagerly fans out Release for live imports", async () => {
+  // The auto-release path waits for FinalizationRegistry, which can take
+  // a major GC cycle to fire. close() should issue Release synchronously
+  // for every still-imported cap so the peer's export table is empty
+  // before the transport tears down.
+  const RELEASE = 6;
+  const IFC = 0xc1c1c1c1c1c1c1c1n;
+  const registry = new InterfaceRegistry();
+  registry.register(IFC, 0, async () => ({ caps: [{ kind: "x" }, { kind: "y" }] }));
+  const cppA = await loadWasm();
+  const cppB = await loadWasm();
+  const { a, b } = createMemoryTransportPair();
+  const aTap = tap(a);
+  new RpcSession(cppB, b, registry, { bootstrap: {} });
+  const client = new RpcSession(cppA, a);
+
+  const root = client.bootstrap();
+  // Hold imported caps to keep the FinalizationRegistry from racing us.
+  const result = await root.call(IFC, 0, emptyMessage()).promise;
+  assert.equal(result.caps.length, 2);
+
+  const releasesBefore = aTap.sentKinds.filter(k => k === RELEASE).length;
+  client.close();
+  // Drain microtasks so the close-flush runs.
+  await new Promise(r => setImmediate(r));
+  const releasesAfter = aTap.sentKinds.filter(k => k === RELEASE).length;
+  // Bootstrap (id 0) + 2 returned caps = 3 imports the client knows about.
+  // Eager fan-out on close should send one Release per — at minimum more
+  // than zero, regardless of whether GC has fired in this tick.
+  assert.ok(
+    releasesAfter > releasesBefore,
+    `expected close() to fan out Release frames; before=${releasesBefore} after=${releasesAfter}`,
+  );
+});

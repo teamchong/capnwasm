@@ -435,6 +435,17 @@ export class RpcSession {
     // Drain queued sends before tearing down — otherwise a call right
     // before close() could be dropped.
     this.#flush();
+    // Eager Release fan-out, BEFORE flipping #closed: #sendRelease bails out
+    // on a closed session, and we want these to land while the transport
+    // is still up. After this loop the peer's export entries are accurate
+    // without waiting for our FinalizationRegistry callbacks to fire on the
+    // next major GC, which can be seconds or longer.
+    if (this.#imports.size && !this.#closed) {
+      // Snapshot keys — #sendRelease mutates #imports as we iterate.
+      const ids = Array.from(this.#imports.keys());
+      for (const id of ids) this.#sendRelease(id, 1);
+      this.#flush();
+    }
     this.#closed = true;
     const closeErr = new Error("session closed");
     for (const q of this.#questions.values()) {
@@ -450,6 +461,14 @@ export class RpcSession {
     // unwind instead of hanging on a chunk that will never arrive.
     for (const stream of this.#streamQuestions.values()) stream.end(closeErr);
     this.#streamQuestions.clear();
+    // The remaining tables hold no awaitable state — clear them now so a
+    // long-lived process churning sessions doesn't accumulate Map entries
+    // until the next major GC. The application-supplied cap targets in
+    // #localCaps and the answer-record snapshots in #answers become eligible
+    // for collection immediately after this.
+    this.#answers.clear();
+    this.#localCaps.clear();
+    this.#imports.clear();
     this.#transport.close?.();
   }
 

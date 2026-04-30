@@ -111,15 +111,20 @@ events, and `createMemoryTransportPair` propagates close across the pair.
 both `#questions` (existing) and `#streamQuestions` (added in #5). Pending
 calls and stream iterators reject with `session closed` instead of hanging.
 
-What's still on the list:
+**Update (2026-04-30, second pass):** the cleanup parts also done.
+`RpcSession.close()` now:
 
-- **Explicit `#imports` / `#answers` / `#localCaps` cleanup on close.**
-  Today these are left for GC. Memory cost is small but a long-lived
-  process that opens and tears down many sessions accumulates the
-  per-session FinalizationRegistry registrations until the next major GC.
-- **Session-teardown sweep that explicitly fires Release for every still-
-  imported cap.** Currently relies on JS GC eventually firing the
-  FinalizationRegistry; immediate close-time release would be cleaner.
+- Fans out `Release` for every still-imported cap *before* the transport
+  tears down, so the peer's export table is accurate immediately rather
+  than waiting on the next major GC.
+- Clears `#imports`, `#answers`, and `#localCaps` so a long-lived process
+  that churns through many sessions doesn't accumulate Map entries.
+
+`test/rpc.test.mjs` now asserts that close fans out at least one Release
+frame after a call that returned multiple caps.
+
+Still on the list:
+
 - **Half-close detection on a slow peer.** `wsTransport` reacts to the
   WebSocket's close/error events; it does not detect a peer that's stopped
   reading our sends but isn't yet closed. A heartbeat / write-stalled
