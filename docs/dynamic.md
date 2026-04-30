@@ -125,6 +125,26 @@ r.get("author");     // { name: "..." }
 
 For null-pointer slots, nested structs come back with each field at its type's default (zero / `""` / `[]`), matching the codegen reader's wire-format semantics. List slots default to `[]`.
 
+## Performance
+
+Bench on Node 22, `Primitives` struct from `cpp/conformance_schema.capnp` (13 fields covering every primitive type). Each test runs in its own subprocess to isolate V8 state; numbers are medians across 5 runs after a 1000-iteration warmup. Reproduce with `npm run bench:dynamic`.
+
+```
+read all 13 fields           codegen ~456 ns,  dynamic ~534 ns/call    (codegen 1.17× faster)
+batched pick(3 fields)       codegen ~494 ns,  dynamic ~429 ns/call    (dynamic 1.15× faster)
+build with 13 fields         codegen ~835 ns,  dynamic ~1343 ns/call   (codegen 1.61× faster)
+```
+
+**Per-field reads**: codegen wins because field offsets are baked as integer literals at the call site; the dynamic path looks up the field by name in a Map and dispatches via switch-on-type.
+
+**Batched `pick(...)`**: roughly tied. Both paths do the same single wasm boundary call. Dynamic edges out slightly because its constructor allocates one fewer hidden class.
+
+**Writes**: codegen wins by a wider margin. Codegen builders write primitives directly to memory at literal byte offsets; the dynamic builder dispatches by field type for every `set()`.
+
+**Caveat about an earlier number.** A previous pass of this bench showed dynamic ~30% *faster* on per-field reads. That was a codegen bug — the float getters had a per-instance lazy `new ArrayBuffer` allocation. Each new reader paid the alloc on first f32/f64 access. Fixed by hoisting the buffer to module scope; numbers above are post-fix. The lesson: a 13-field bench where one field happens to be `f32` measures a different thing than the wasm-boundary call cost. Drop floats and codegen is 1.22× faster than dynamic on the rest.
+
+For tenant-uploaded schemas and admin tools — the cases the dynamic path exists to serve — sub-microsecond per field-read and < 1.4 µs per built struct is fast enough. Don't pick dynamic for hot loops if the schema is stable; pick it for the cases codegen can't reach.
+
 ## Compatibility with codegen output
 
 `defineSchema`'s internal representation matches the `_FIELDS` static that codegen emits on each generated reader class. A build pipeline that wants both worlds can:

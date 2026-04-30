@@ -136,6 +136,49 @@ function buildFinishFrame(questionId) {
 
 This is the same shape as DNS replies (mostly canned), TCP ACK packets (mostly canned), HTTP/2 SETTINGS frames (mostly canned). When most of your bytes are already known, don't run code to produce them.
 
+## Trap 6: a bench that flattered us — codegen had a per-instance alloc
+
+Late in the run I added a runtime-schema reader (`capnwasm/dynamic`) — schema is plain JS data, no codegen step, useful for tenant-uploaded schemas and admin tools. Wrote a bench comparing it against the codegen path on the conformance schema's 13-field `Primitives` struct. The numbers were strange:
+
+```
+read all 13 fields    codegen ~745 ns   dynamic ~511 ns/call    (dynamic 0.69×)
+```
+
+Dynamic *faster* than codegen — even though codegen has the offsets baked as integer literals at the call site and dynamic does a Map lookup + switch. The natural reaction to this shape of result is "great, it's a feature, ship it." I almost did. Then I re-read the bench, ran it in subprocess isolation to make sure V8 IC carryover wasn't doing it, used a sink to defeat dead-code elimination — same result.
+
+Then I read the codegen output for the float fields:
+
+```js
+get f32() {
+  const u = this._exp.cpp_any_uint32_at(32, 0) >>> 0;
+  if (!this._f32buf) {
+    this._f32buf = new ArrayBuffer(4);
+    this._f32u32 = new Uint32Array(this._f32buf);
+    this._f32f32 = new Float32Array(this._f32buf);
+  }
+  this._f32u32[0] = u;
+  return this._f32f32[0];
+}
+```
+
+Lazy-init on the reader instance. Each new reader paid an `ArrayBuffer` alloc + 2 typed-array allocs the first time you read `f32` (and again for `f64`). The bench creates a new reader per iteration, so every iteration paid the alloc on every float field. The `_F32_VIEW_*` shared buffers were declared at module scope at the top of the same file — they just weren't being used in the per-field getters.
+
+Hoist the buffers, regenerate, re-bench:
+
+```
+read all 13 fields    codegen ~456 ns   dynamic ~534 ns/call    (codegen 1.17× faster)
+batched pick(3)       codegen ~494 ns   dynamic ~429 ns/call    (dynamic 1.15× faster)
+build with 13 fields  codegen ~835 ns   dynamic ~1343 ns/call   (codegen 1.61× faster)
+```
+
+The honest result: codegen wins per-field reads (offset literals beat Map lookups), batched picks are a wash (one wasm boundary call regardless of access path), codegen wins writes by a wider margin. Dynamic is "fast enough for the cases it exists for" — sub-microsecond per field on a tenant-uploaded schema is fine.
+
+**Lesson 1**: a flattering benchmark is the most dangerous kind. If the result contradicts what the abstraction layer should cost (Map lookup + switch can't be free), check what the *other* side is doing wrong. The "fast" thing was actually the slow thing wearing makeup.
+
+**Lesson 2**: per-instance lazy init is a smell. The whole point of the lazy was to avoid the cost in cases where f32 is never accessed; in practice the cost-of-the-check at the call site lost to the cost-of-the-alloc-when-it-fires, and the reader instances were short-lived enough that "first call ever" was effectively "every call." Module-scope shared buffers are the correct shape — one alloc per process, reused forever.
+
+**Lesson 3**: when you publish a perf claim that surprises you, make it cheap to retract. The original bench script was committed under `bench/dynamic_bench.mjs`. The retraction needed a new isolated bench (`dynamic_bench_isolated.mjs`), an updated README, and a doc note. Cheaper than letting the wrong number propagate into a blog post.
+
 ## The SIMD experiment, with a negative result
 
 The natural next thing to try after all of the above: enable wasm SIMD and let the compiler auto-vectorize what it can.
