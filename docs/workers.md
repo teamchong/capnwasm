@@ -91,10 +91,13 @@ registry.register(ASSETS_IFC, 0, async (target, ctx) => {
   if (!obj) throw new Error(`asset not found: ${key}`);
   const bytes = new Uint8Array(await obj.arrayBuffer());
 
-  const reply = ctx.beginResults(AssetBuilder);
-  reply.name = key;
-  reply.mime = obj.httpMetadata?.contentType ?? "application/octet-stream";
-  reply.bytes = bytes;   // ← raw binary on the wire, no base64
+  // JSON.stringify-shaped: pass an object, get a typed message.
+  // Same wire bytes as setting fields one-by-one, fewer lines.
+  ctx.beginResults(AssetBuilder).fromObject({
+    name: key,
+    mime: obj.httpMetadata?.contentType ?? "application/octet-stream",
+    bytes,                                  // raw binary on the wire — no base64
+  });
 });
 
 export default {
@@ -114,12 +117,22 @@ export default {
 
 For a 5 MB image asset, the wire bytes are:
 
-| | wire bytes | egress at $0.045/GB | per million requests |
-|---|---|---|---|
-| capnweb (base64 in JSON) | ~6.6 MB | $0.30/req | $300,000 |
-| capnwasm (binary) | 5.0 MB | $0.225/req | $225,000 |
+| | wire bytes |
+|---|---|
+| capnweb (base64 in JSON) | ~6.6 MB |
+| capnwasm (binary) | 5.0 MB |
 
-That's $75,000/M-requests saved on egress for a single asset shape, before factoring in CPU savings on the Worker (no base64 encode loop, no JSON serialize for the bytes).
+That's **24% fewer bytes on the wire** for a single asset shape.
+
+### Where the savings actually go
+
+A note on honest accounting: **Cloudflare R2 egress to the public internet is zero-rated** (and has been since R2's launch in 2022), so the wire-byte savings here do *not* translate into a smaller Cloudflare bill. What you do get on Cloudflare:
+
+- **Faster time-to-first-byte for the user** — 1.6 MB less data over a 10 Mbps mobile link is ~1.3 s of wall-clock time.
+- **Lower client-side CPU** — the browser doesn't run a base64 decode loop on a 5 MB string.
+- **Less Worker CPU on the codegen path** — `Builder.from(cpp, obj)` outputs binary bytes faster than `JSON.stringify` outputs text for typical responses (codegen is straight-line setter calls; JSON.stringify is V8-internal but pays for string-building).
+
+If you deploy on **AWS S3** ($0.09/GB egress) or **GCP Storage** ($0.12/GB), the same 24% savings does translate into money — about $0.108/M-requests on AWS for the example above. But on Cloudflare, the win is UX and Worker-CPU-time, not the bill.
 
 ## Durable Objects
 

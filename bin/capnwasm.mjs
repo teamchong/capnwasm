@@ -891,6 +891,54 @@ function _capnwasmPick(cpp, fields, names) {`);
       lines.push(`  }`);
     }
     lines.push("");
+    // fromObject / from — the JSON.stringify-shaped ergonomic helper.
+    // Walks a plain JS object and applies its fields to this builder.
+    // Per-field code is straight-line setter calls; no runtime dispatch
+    // since the field list is hard-coded at codegen time. Missing fields
+    // are skipped (caller's intent), unknown fields are ignored (caller's
+    // intent — schema is the contract). Same wire bytes as a hand-rolled
+    // setter loop; this is just the codegen writing the loop for you.
+    lines.push(`  /**`);
+    lines.push(`   * Apply fields from a plain JS object to this builder. Same shape`);
+    lines.push(`   * as JSON.stringify on the wire side: pass any object whose keys`);
+    lines.push(`   * match the schema field names. Missing keys are skipped, unknown`);
+    lines.push(`   * keys are ignored. Returns \`this\` for chaining.`);
+    lines.push(`   */`);
+    lines.push(`  fromObject(o) {`);
+    lines.push(`    if (o == null) return this;`);
+    for (const f of s.fields) {
+      if (f.kind === "group") {
+        // Group fields share storage with the parent struct. Recurse via
+        // the getter (which auto-sets the union discriminant if needed).
+        lines.push(`    if (o.${f.name} !== undefined) this.${f.name}.fromObject(o.${f.name});`);
+        continue;
+      }
+      // Skip fields the codegen has no setter for — list pointers and
+      // struct-ref pointers that aren't text/data. The codegen suppresses
+      // these via `generateSetter` returning null; if we emitted them in
+      // fromObject they'd silently set a regular JS property and never
+      // make it into the wire bytes. Document the gap inline so users
+      // see it in their generated file.
+      if (!hasFieldSetter(f)) {
+        lines.push(`    // ${f.name}: ${f.type ?? f.kind} — no Builder setter yet (list / struct ref); skipped by fromObject`);
+        continue;
+      }
+      // The public setter handles type coercion (BigInt for u64/i64,
+      // string for text, Uint8Array for data, etc.) and auto-writes any
+      // union discriminant.
+      lines.push(`    if (o.${f.name} !== undefined) this.${f.name} = o.${f.name};`);
+    }
+    lines.push(`    return this;`);
+    lines.push(`  }`);
+    lines.push("");
+    lines.push(`  /**`);
+    lines.push(`   * Build a ${s.name} from a plain JS object in one call.`);
+    lines.push(`   * Shorthand for \`new ${s.name}Builder(cpp).fromObject(o)\`.`);
+    lines.push(`   */`);
+    lines.push(`  static from(cpp, o) {`);
+    lines.push(`    return new ${s.name}Builder(cpp).fromObject(o);`);
+    lines.push(`  }`);
+    lines.push("");
     lines.push(`  /** Serialize the message to framed Cap'n Proto bytes. */`);
     lines.push(`  toBytes() {`);
     lines.push(`    const len = this._exp.cpp_any_builder_finalize();`);
@@ -927,6 +975,19 @@ function _capnwasmPick(cpp, fields, names) {`);
   }
 
   return lines.join("\n") + "\n";
+}
+
+// Mirror of generateSetter's "would I emit a setter for this field?" logic.
+// Used by the fromObject template to decide whether to skip a field. Kept
+// in lockstep with generateSetter — if generateSetter starts emitting list
+// or struct-ref setters, this needs to learn about them too.
+function hasFieldSetter(field) {
+  if (field.kind === "group") return false;       // groups are sub-builder getters, not setters
+  if (field.kind === "pointer") {
+    return field.type === "Text" || field.type === "Data";
+  }
+  // Primitive — generateSetter handles every type via the switch below.
+  return true;
 }
 
 function generateSetter(field) {

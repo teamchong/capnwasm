@@ -59,18 +59,55 @@ const User = defineSchema({
   active: { kind: "bool",   bitOffset: 64 },
   name:   { kind: "text",   slot: 0 },
 }, { dataWords: 2, ptrWords: 1 });
+```
 
-import { buildDynamic } from "capnwasm/dynamic";
+Three ways to build a message, in order from most explicit to most ergonomic.
+
+```js
+import { buildDynamic, encodeDynamic } from "capnwasm/dynamic";
+
+// 1. Setter-by-setter — most control, useful when fields come from
+//    different sources or need conditional logic.
 const b = buildDynamic(cpp, User);
-b.set("id", 42);
+b.set("id", 42n);
 b.set("active", true);
 b.set("name", "Alice");
-const bytes = b.finalize();   // framed Cap'n Proto bytes
+const bytes = b.finalize();
+
+// 2. fromObject(obj) — apply a plain JS object in one call. Same wire
+//    bytes as the setter loop above; the helper just walks the schema
+//    fields and calls set() for each defined property.
+const bytes2 = buildDynamic(cpp, User)
+  .fromObject({ id: 42n, active: true, name: "Alice" })
+  .finalize();
+
+// 3. encodeDynamic — one call. Same shape as JSON.stringify on the
+//    wire-encoding side. Equivalent to buildDynamic + fromObject + finalize.
+const bytes3 = encodeDynamic(cpp, User, { id: 42n, active: true, name: "Alice" });
 ```
+
+All three produce identical wire bytes. The `encodeDynamic(cpp, schema, obj)` form is the JSON-stringify-shaped one-liner — the form you reach for when the data already lives in a JS object (a D1 row, a parsed third-party API response, an in-memory state object) and you want bytes back.
 
 `dataWords` is the number of 8-byte words in the data section (covers all primitive + bool fields). `ptrWords` is the number of pointer slots (covers all text/data/list/struct fields). For schemas you've codegen'd, the values are `SomethingBuilder._DATA_WORDS` and `_PTR_WORDS`; for fresh schemas you compute them from the field offsets.
 
-`finalize()` is one-shot — calling it twice throws.
+`finalize()` is one-shot — calling it twice throws. `fromObject` is chainable — it returns the builder so you can pipe it into `.finalize()`.
+
+### Type coercion in `fromObject` / `encodeDynamic`
+
+The same coercions `set(name, value)` does, applied per field:
+
+| capnp field | accepts | rule |
+|---|---|---|
+| `uint64` / `int64` | `bigint`, `number` | Number coerced if safe-integer; precision-lossy values not detected |
+| `uint32` / `int32` and below | `number` | masked / shifted as appropriate |
+| `float32` / `float64` | `number` | direct |
+| `bool` | any truthy/falsy | `if (value)` semantics |
+| `text` | `string` or `Uint8Array` | string goes through `TextEncoder.encodeInto` |
+| `data` | `Uint8Array` | direct copy into wasm memory |
+| missing key | unset | leave default (zero / empty) |
+| unknown key | ignored | schema is the contract |
+
+Set `value: undefined` or simply omit the key to leave a field at its default.
 
 ## Field kind reference
 

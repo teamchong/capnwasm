@@ -11,13 +11,16 @@ Typed RPC for the browser, with a real Cap'n Proto C++ runtime in 42 KB gz (40 K
 
 // 3. Use it:
 import { load } from "capnwasm";
-import { openUser, buildUser } from "./user.capnp.gen.mjs";
+import { UserBuilder, openUser } from "./user.capnp.gen.mjs";
 
 const cpp = await load();
 
-const b = buildUser(cpp);
-b.id = 42n; b.name = "Alice"; b.email = "alice@example.com";
-const bytes = b.toBytes();      // binary wire — schema-versioned, no JSON tax
+// JSON.stringify-shaped — pass any JS object whose keys match the schema:
+const bytes = UserBuilder.from(cpp, {
+  id: 42n,
+  name: "Alice",
+  email: "alice@example.com",
+}).toBytes();                   // binary wire — schema-versioned, no JSON tax
 
 const r = openUser(cpp, bytes);
 console.log(r.name);            // "Alice" — read by walking 8 bytes; rest of the message untouched

@@ -310,6 +310,28 @@ export class DynamicBuilder {
     }
   }
 
+  /**
+   * Apply fields from a plain JS object. Same shape as JSON.stringify on
+   * the wire side: keys match the schema's field names, missing keys are
+   * skipped, unknown keys are ignored. Returns `this` for chaining.
+   *
+   * Per-field cost is the same as calling `set(name, value)` directly —
+   * one switch-on-type and one wasm setter call. The schema's `fields`
+   * object is iterated via `Object.keys` once; that's a hash-walk but it
+   * happens once per fromObject call, not per field, so it's amortized.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (this._finalized) throw new Error("builder is finalized");
+    const fields = this._schema.fields;
+    for (const name in fields) {
+      const v = o[name];
+      if (v === undefined) continue;
+      this.set(name, v);
+    }
+    return this;
+  }
+
   /** Finalize the builder and return the framed Cap'n Proto bytes. */
   finalize() {
     if (this._finalized) throw new Error("builder already finalized");
@@ -319,6 +341,32 @@ export class DynamicBuilder {
     if (!len) throw new Error("cpp_any_builder_finalize failed");
     return this._cpp._u8.slice(this._cpp._outPtr, this._cpp._outPtr + len);
   }
+}
+
+/**
+ * One-call equivalent of `JSON.stringify` for the dynamic path: take a
+ * schema descriptor and a plain JS object, return framed Cap'n Proto bytes.
+ *
+ *   import { defineSchema, encodeDynamic } from "capnwasm/dynamic";
+ *
+ *   const User = defineSchema({
+ *     id:    { kind: "uint64", offset: 0 },
+ *     name:  { kind: "text",   slot: 0 },
+ *   }, { dataWords: 1, ptrWords: 1 });
+ *
+ *   const bytes = encodeDynamic(cpp, User, { id: 42n, name: "Alice" });
+ *
+ * Equivalent to `buildDynamic(cpp, User).fromObject(obj).finalize()`.
+ * The codegen path's `XBuilder.from(cpp, obj)` is the same shape but
+ * faster because the field list is hard-coded at codegen time.
+ *
+ * @param {object} cpp     loaded CapnCpp
+ * @param {object} schema  return value of defineSchema(spec, { dataWords, ptrWords })
+ * @param {object} obj     plain JS object whose keys match the schema
+ * @returns {Uint8Array}   framed Cap'n Proto wire bytes
+ */
+export function encodeDynamic(cpp, schema, obj) {
+  return buildDynamic(cpp, schema).fromObject(obj).finalize();
 }
 
 /**

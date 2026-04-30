@@ -707,6 +707,57 @@ export class WideUserDataBuilder {
     if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
 
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.field0 !== undefined) this.field0 = o.field0;
+    if (o.field1 !== undefined) this.field1 = o.field1;
+    if (o.field2 !== undefined) this.field2 = o.field2;
+    if (o.field3 !== undefined) this.field3 = o.field3;
+    if (o.field4 !== undefined) this.field4 = o.field4;
+    if (o.field5 !== undefined) this.field5 = o.field5;
+    if (o.field6 !== undefined) this.field6 = o.field6;
+    if (o.field7 !== undefined) this.field7 = o.field7;
+    if (o.field8 !== undefined) this.field8 = o.field8;
+    if (o.field9 !== undefined) this.field9 = o.field9;
+    if (o.field10 !== undefined) this.field10 = o.field10;
+    if (o.field11 !== undefined) this.field11 = o.field11;
+    if (o.field12 !== undefined) this.field12 = o.field12;
+    if (o.field13 !== undefined) this.field13 = o.field13;
+    if (o.field14 !== undefined) this.field14 = o.field14;
+    if (o.field15 !== undefined) this.field15 = o.field15;
+    if (o.field16 !== undefined) this.field16 = o.field16;
+    if (o.field17 !== undefined) this.field17 = o.field17;
+    if (o.field18 !== undefined) this.field18 = o.field18;
+    if (o.field19 !== undefined) this.field19 = o.field19;
+    if (o.field20 !== undefined) this.field20 = o.field20;
+    if (o.field21 !== undefined) this.field21 = o.field21;
+    if (o.field22 !== undefined) this.field22 = o.field22;
+    if (o.field23 !== undefined) this.field23 = o.field23;
+    if (o.field24 !== undefined) this.field24 = o.field24;
+    if (o.field25 !== undefined) this.field25 = o.field25;
+    if (o.field26 !== undefined) this.field26 = o.field26;
+    if (o.field27 !== undefined) this.field27 = o.field27;
+    if (o.field28 !== undefined) this.field28 = o.field28;
+    if (o.field29 !== undefined) this.field29 = o.field29;
+    if (o.field30 !== undefined) this.field30 = o.field30;
+    if (o.field31 !== undefined) this.field31 = o.field31;
+    return this;
+  }
+
+  /**
+   * Build a WideUserData from a plain JS object in one call.
+   * Shorthand for `new WideUserDataBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new WideUserDataBuilder(cpp).fromObject(o);
+  }
+
   /** Serialize the message to framed Cap'n Proto bytes. */
   toBytes() {
     const len = this._exp.cpp_any_builder_finalize();

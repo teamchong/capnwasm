@@ -358,6 +358,42 @@ export class PrimitivesBuilder {
     if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
 
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.u8 !== undefined) this.u8 = o.u8;
+    if (o.u16 !== undefined) this.u16 = o.u16;
+    if (o.u32 !== undefined) this.u32 = o.u32;
+    if (o.u64 !== undefined) this.u64 = o.u64;
+    if (o.i8 !== undefined) this.i8 = o.i8;
+    if (o.i16 !== undefined) this.i16 = o.i16;
+    if (o.i32 !== undefined) this.i32 = o.i32;
+    if (o.i64 !== undefined) this.i64 = o.i64;
+    if (o.f32 !== undefined) this.f32 = o.f32;
+    if (o.f64 !== undefined) this.f64 = o.f64;
+    if (o.flag0 !== undefined) this.flag0 = o.flag0;
+    if (o.flag1 !== undefined) this.flag1 = o.flag1;
+    if (o.flag2 !== undefined) this.flag2 = o.flag2;
+    if (o.text !== undefined) this.text = o.text;
+    if (o.data !== undefined) this.data = o.data;
+    if (o.emptyText !== undefined) this.emptyText = o.emptyText;
+    if (o.emptyData !== undefined) this.emptyData = o.emptyData;
+    return this;
+  }
+
+  /**
+   * Build a Primitives from a plain JS object in one call.
+   * Shorthand for `new PrimitivesBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new PrimitivesBuilder(cpp).fromObject(o);
+  }
+
   /** Serialize the message to framed Cap'n Proto bytes. */
   toBytes() {
     const len = this._exp.cpp_any_builder_finalize();

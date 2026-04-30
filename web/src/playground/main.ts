@@ -347,18 +347,22 @@ async function runBench() {
   const winner = sorted[0];
   const honestLink = `<a href="./honest.html" style="color:inherit;text-decoration:underline">honest comparison page</a>`;
 
-  // Bandwidth savings extrapolated to a sustained 1k req/s Worker workload.
-  // Multiplies the per-request bytes by 3.6 M requests/hour so the tail of
-  // the message lands as "X GB/h saved" — the Cloudflare-egress framing.
+  // Bandwidth savings extrapolated to a sustained 1k req/s workload —
+  // 1000 req/s × 3600 s = 3.6 M requests/hour, so this is "GB transferred
+  // per hour at that load." Translating to dollars depends on the cloud:
+  // Cloudflare R2 + Workers egress to clients is **zero-rated** (no
+  // savings on the bill there). AWS S3 charges $0.09/GB; GCP $0.12/GB.
+  // We show both — Cloudflare for "free, but UX win" and AWS for the
+  // real-money case.
   const perReqRest  = rest.bytes  / count;
   const perReqCapnp = capnp.bytes / count;
   const perHourRest  = perReqRest  * REQ_PER_SEC * SECONDS;
   const perHourCapnp = perReqCapnp * REQ_PER_SEC * SECONDS;
   const savedPerHour = perHourRest - perHourCapnp;
-  const r2GbPrice = 0.045;   // Cloudflare R2 egress: $0.045/GB after free tier
-  const savedDollarsPerHour = (savedPerHour / 1e9) * r2GbPrice;
+  const awsGbPrice = 0.09;
+  const savedDollarsPerMonthAws = (savedPerHour / 1e9) * awsGbPrice * 24 * 30;
   const bandwidthLine = savedPerHour > 0
-    ? `At <strong>1k req/s sustained</strong> that's <strong>${fmtBytes(savedPerHour)}/hour</strong> less egress vs REST &mdash; ~$${(savedDollarsPerHour * 24 * 30).toFixed(2)}/month at Cloudflare R2 prices.`
+    ? `At <strong>1k req/s sustained</strong> that's <strong>${fmtBytes(savedPerHour)}/hour</strong> less wire vs REST. On Cloudflare (zero-rated egress) the win is UX and Worker CPU, not the bill; on AWS S3 ($0.09/GB) it's ~$${savedDollarsPerMonthAws.toFixed(2)}/month.`
     : "";
 
   if (winner.name === "capnwasm") {
