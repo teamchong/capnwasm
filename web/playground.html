@@ -20,11 +20,18 @@
     <div id="controls">
       <button id="run-btn">Run benchmark</button>
       <label>
+        <span>Workload:</span>
+        <select id="workload-selector">
+          <option value="small">small (32 B avatars, 200 records max)</option>
+          <option value="blob" selected>blob (4 KB avatars, 50 records max)</option>
+        </select>
+      </label>
+      <label>
         <span>Records:</span>
         <select id="count-selector">
           <option value="10">10</option>
-          <option value="50">50</option>
-          <option value="100" selected>100</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
           <option value="200">200</option>
         </select>
       </label>

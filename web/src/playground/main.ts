@@ -14,8 +14,24 @@ const $ = (id: string) => document.getElementById(id)!;
 const status = $("status");
 const summary = $("summary");
 const runBtn = $("run-btn") as HTMLButtonElement;
+const workloadSel = $("workload-selector") as HTMLSelectElement;
 const countSel = $("count-selector") as HTMLSelectElement;
 const itersSel = $("iters-selector") as HTMLSelectElement;
+
+// Cap the per-workload record count so users can't ask for 200 records
+// from the "blob" workload (only 50 fixtures are emitted).
+const WORKLOAD_MAX = { small: 200, blob: 50 } as const;
+function clampCount() {
+  const max = WORKLOAD_MAX[workloadSel.value as keyof typeof WORKLOAD_MAX];
+  for (const opt of Array.from(countSel.options)) {
+    opt.disabled = parseInt(opt.value, 10) > max;
+  }
+  if (parseInt(countSel.value, 10) > max) {
+    countSel.value = String(max);
+  }
+}
+workloadSel.addEventListener("change", clampCount);
+clampCount();
 
 type Phase = { fetchMs: number; decodeMs: number; renderMs: number; bytes: number };
 
@@ -30,12 +46,12 @@ async function ensureWasm() {
   return cpp;
 }
 
-async function fetchJson(count: number): Promise<{ phase: Phase; users: any[] }> {
+async function fetchJson(workload: string, count: number): Promise<{ phase: Phase; users: any[] }> {
   const t0 = performance.now();
   // Parallel fetch — like a real list view kicking off N requests at once.
   const promises: Promise<Response>[] = [];
   for (let i = 1; i <= count; i++) {
-    promises.push(fetch(`/data/user-${i}.json`));
+    promises.push(fetch(`/data/${workload}/user-${i}.json`));
   }
   const responses = await Promise.all(promises);
   const texts = await Promise.all(responses.map((r) => r.text()));
@@ -74,12 +90,12 @@ async function fetchJson(count: number): Promise<{ phase: Phase; users: any[] }>
   };
 }
 
-async function fetchCapnp(count: number): Promise<{ phase: Phase; rendered: number }> {
+async function fetchCapnp(workload: string, count: number): Promise<{ phase: Phase; rendered: number }> {
   await ensureWasm();
   const t0 = performance.now();
   const promises: Promise<Response>[] = [];
   for (let i = 1; i <= count; i++) {
-    promises.push(fetch(`/data/user-${i}.capnp`));
+    promises.push(fetch(`/data/${workload}/user-${i}.capnp`));
   }
   const responses = await Promise.all(promises);
   const buffers = await Promise.all(responses.map((r) => r.arrayBuffer()));
@@ -142,21 +158,22 @@ async function runBench() {
   summary.className = "";
   summary.textContent = "";
   status.textContent = "Warming up…";
+  const workload = workloadSel.value;
   const count = parseInt(countSel.value, 10);
   const iters = parseInt(itersSel.value, 10);
 
   // One warmup round so neither side pays HTTP-cache or wasm-init cost
   // in the measured iterations.
-  await fetchJson(count);
-  await fetchCapnp(count);
+  await fetchJson(workload, count);
+  await fetchCapnp(workload, count);
 
   const restRuns: Phase[] = [];
   const capnpRuns: Phase[] = [];
   for (let i = 0; i < iters; i++) {
     status.textContent = `Iteration ${i + 1}/${iters} — REST…`;
-    restRuns.push((await fetchJson(count)).phase);
+    restRuns.push((await fetchJson(workload, count)).phase);
     status.textContent = `Iteration ${i + 1}/${iters} — capnwasm…`;
-    capnpRuns.push((await fetchCapnp(count)).phase);
+    capnpRuns.push((await fetchCapnp(workload, count)).phase);
   }
 
   const rest: Phase = {
@@ -208,11 +225,12 @@ async function runBench() {
     summary.className = "win";
     summary.innerHTML = `capnwasm <strong>${ratio.toFixed(2)}× faster</strong> end-to-end (${fmtMs(restTotal)} → ${fmtMs(capnpTotal)}). Wire bytes: ${fmtBytes(rest.bytes)} → ${fmtBytes(capnp.bytes)}.`;
   } else {
+    const byteRatio = rest.bytes / capnp.bytes;
     summary.className = "lose";
-    summary.innerHTML = `capnwasm <strong>${(1 / ratio).toFixed(2)}× slower</strong> end-to-end (${fmtMs(capnpTotal)} vs ${fmtMs(restTotal)}). For many tiny records, V8&apos;s native JSON.parse beats the wasm boundary cost. capnwasm wins on bigger payloads, binary data, or RPC bursts &mdash; not "fetch lots of tiny records".`;
+    summary.innerHTML = `capnwasm <strong>${(1 / ratio).toFixed(2)}× slower</strong> end-to-end (${fmtMs(capnpTotal)} vs ${fmtMs(restTotal)}). Wire bytes ${fmtBytes(rest.bytes)} → ${fmtBytes(capnp.bytes)} (<strong>${byteRatio.toFixed(2)}× smaller</strong>) but on localhost the bytes savings can&apos;t pay back the wasm load + per-record decode cost. Capnwasm&apos;s wins (3.2× burst RPC, binary wire interop with C++/Rust/Go peers, sparse-read perf) need a different workload than parallel HTTP fetches to surface &mdash; the <a href="https://github.com/anthropics/capnwasm/blob/main/docs/honest-comparison.md" style="color:inherit;text-decoration:underline">honest comparison doc</a> covers when each one wins.`;
   }
 
-  status.textContent = `done — ${count} records × ${iters} iter (median)`;
+  status.textContent = `done — ${workload} workload, ${count} records × ${iters} iter (median)`;
   runBtn.disabled = false;
 }
 
