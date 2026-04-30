@@ -104,12 +104,14 @@ For comparison: capnweb is ~21 KB gzip. We're roughly 2x larger because we ship 
 
 Microsecond per-call differences vanish behind any real network. The cases where capnwasm matters at user-perceived scale:
 
-| workload | JSON | capnwasm | win |
+| workload | capnweb (JSON) | capnwasm (binary) | win |
 |---|---|---|---|
 | **Decode 1000 records, read 5 fields each** (sparse access) | 20.4 ms | 1.7 ms | **12x faster** |
 | **5 MB binary asset** over 10 Mbps link | 5.33 s | 4.00 s | **1.33 s saved per asset** (no base64 bloat) |
 | **10K-msg/s telemetry stream decode** | 1.0 M msgs/sec | 3.3 M msgs/sec | **3.2x throughput** |
-| Single tiny RPC call (latency) | 9 µs | 15 µs | (6 µs slower — invisible behind any network) |
+| **In-process RPC, 64 KB text echo** | 365 µs | 96 µs | **3.8x faster** |
+| **In-process RPC, 4 KB text echo** | 26 µs | 17 µs | **1.5x faster** |
+| **In-process RPC, single tiny call** | 15 µs | 8.5 µs | **1.75x faster** |
 
 Choose capnwasm when:
 - You're moving binary data (images, audio, models, embeddings) and want raw bytes on the wire
