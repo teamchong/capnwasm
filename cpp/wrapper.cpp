@@ -502,6 +502,102 @@ uint32_t cpp_typed_field_at(uint32_t field_idx) {
   return static_cast<uint32_t>(text.size());
 }
 
+// Forward decl — the AnyStruct section below owns the storage.
+extern capnp::FlatArrayMessageReader* any_reader;
+
+// Walk every Text field and emit JSON: {"field0":"v0","field1":"v1",...}
+// One wasm call -> one bulk JSON.parse on the JS side. V8 builds the entire
+// 256-field object in its tightest hot path, beating per-field
+// String.fromCharCode loops.
+uint32_t cpp_big_user_emit_json() {
+  if (!any_reader) return 0;
+  auto root = any_reader->getRoot<BigUser>();
+
+  using Getter = capnp::Text::Reader (BigUser::Reader::*)() const;
+#define G2(N) &BigUser::Reader::getField##N
+#define R28(B0, B1, B2, B3, B4, B5, B6, B7) G2(B0), G2(B1), G2(B2), G2(B3), G2(B4), G2(B5), G2(B6), G2(B7)
+  static constexpr Getter getters[256] = {
+    R28(0,1,2,3,4,5,6,7),       R28(8,9,10,11,12,13,14,15),
+    R28(16,17,18,19,20,21,22,23), R28(24,25,26,27,28,29,30,31),
+    R28(32,33,34,35,36,37,38,39), R28(40,41,42,43,44,45,46,47),
+    R28(48,49,50,51,52,53,54,55), R28(56,57,58,59,60,61,62,63),
+    R28(64,65,66,67,68,69,70,71), R28(72,73,74,75,76,77,78,79),
+    R28(80,81,82,83,84,85,86,87), R28(88,89,90,91,92,93,94,95),
+    R28(96,97,98,99,100,101,102,103), R28(104,105,106,107,108,109,110,111),
+    R28(112,113,114,115,116,117,118,119), R28(120,121,122,123,124,125,126,127),
+    R28(128,129,130,131,132,133,134,135), R28(136,137,138,139,140,141,142,143),
+    R28(144,145,146,147,148,149,150,151), R28(152,153,154,155,156,157,158,159),
+    R28(160,161,162,163,164,165,166,167), R28(168,169,170,171,172,173,174,175),
+    R28(176,177,178,179,180,181,182,183), R28(184,185,186,187,188,189,190,191),
+    R28(192,193,194,195,196,197,198,199), R28(200,201,202,203,204,205,206,207),
+    R28(208,209,210,211,212,213,214,215), R28(216,217,218,219,220,221,222,223),
+    R28(224,225,226,227,228,229,230,231), R28(232,233,234,235,236,237,238,239),
+    R28(240,241,242,243,244,245,246,247), R28(248,249,250,251,252,253,254,255),
+  };
+#undef R28
+#undef G2
+
+  size_t pos = 0;
+  cpp_out[pos++] = '{';
+  for (uint32_t i = 0; i < 256; i++) {
+    if (i > 0) cpp_out[pos++] = ',';
+    int n = std::snprintf(reinterpret_cast<char*>(cpp_out + pos), SCRATCH_CAP - pos,
+                          "\"field%u\":\"", i);
+    pos += n;
+    auto text = (root.*getters[i])();
+    // Trust the bench fixture: fields are JSON-safe ASCII.
+    std::memcpy(cpp_out + pos, text.cStr(), text.size());
+    pos += text.size();
+    cpp_out[pos++] = '"';
+  }
+  cpp_out[pos++] = '}';
+  return static_cast<uint32_t>(pos);
+}
+
+// Walk every Text field of an open BigUser and pack the results into
+// cpp_out as: [u32 len, bytes]*256. One wasm boundary crossing fetches all
+// 256 fields, eliminating the 256-call overhead of per-field accessors.
+uint32_t cpp_big_user_all_packed() {
+  if (!any_reader) return 0;
+  auto root = any_reader->getRoot<BigUser>();
+
+  using Getter = capnp::Text::Reader (BigUser::Reader::*)() const;
+#define G(N) &BigUser::Reader::getField##N
+#define R8(B0, B1, B2, B3, B4, B5, B6, B7) G(B0), G(B1), G(B2), G(B3), G(B4), G(B5), G(B6), G(B7)
+  static constexpr Getter getters[256] = {
+    R8(0,1,2,3,4,5,6,7),       R8(8,9,10,11,12,13,14,15),
+    R8(16,17,18,19,20,21,22,23), R8(24,25,26,27,28,29,30,31),
+    R8(32,33,34,35,36,37,38,39), R8(40,41,42,43,44,45,46,47),
+    R8(48,49,50,51,52,53,54,55), R8(56,57,58,59,60,61,62,63),
+    R8(64,65,66,67,68,69,70,71), R8(72,73,74,75,76,77,78,79),
+    R8(80,81,82,83,84,85,86,87), R8(88,89,90,91,92,93,94,95),
+    R8(96,97,98,99,100,101,102,103), R8(104,105,106,107,108,109,110,111),
+    R8(112,113,114,115,116,117,118,119), R8(120,121,122,123,124,125,126,127),
+    R8(128,129,130,131,132,133,134,135), R8(136,137,138,139,140,141,142,143),
+    R8(144,145,146,147,148,149,150,151), R8(152,153,154,155,156,157,158,159),
+    R8(160,161,162,163,164,165,166,167), R8(168,169,170,171,172,173,174,175),
+    R8(176,177,178,179,180,181,182,183), R8(184,185,186,187,188,189,190,191),
+    R8(192,193,194,195,196,197,198,199), R8(200,201,202,203,204,205,206,207),
+    R8(208,209,210,211,212,213,214,215), R8(216,217,218,219,220,221,222,223),
+    R8(224,225,226,227,228,229,230,231), R8(232,233,234,235,236,237,238,239),
+    R8(240,241,242,243,244,245,246,247), R8(248,249,250,251,252,253,254,255),
+  };
+#undef R8
+#undef G
+
+  size_t pos = 0;
+  for (uint32_t i = 0; i < 256; i++) {
+    auto text = (root.*getters[i])();
+    if (pos + 4 + text.size() > SCRATCH_CAP) return 0;
+    uint32_t tl = static_cast<uint32_t>(text.size());
+    std::memcpy(cpp_out + pos, &tl, 4);
+    pos += 4;
+    std::memcpy(cpp_out + pos, text.cStr(), text.size());
+    pos += text.size();
+  }
+  return static_cast<uint32_t>(pos);
+}
+
 // ---------------------------------------------------------------------------
 // Bench helper: build a fully-populated BigUser test message in cpp_out.
 // Used by bench/ to get real BigUser-shaped bytes without writing a full
@@ -560,7 +656,7 @@ uint32_t cpp_make_big_user_bytes() {
 // ---------------------------------------------------------------------------
 
 alignas(8) static char any_reader_storage[1024];
-static capnp::FlatArrayMessageReader* any_reader = nullptr;
+capnp::FlatArrayMessageReader* any_reader = nullptr;
 
 // Stack of struct readers so generated code can navigate into sub-structs
 // without persisting opaque handles in JS.

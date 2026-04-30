@@ -72,18 +72,24 @@ async function main() {
   console.log(`  cap'n proto wire: ${r.fixture.cppBytes} bytes`);
   console.log(`  capnweb JSON:     ${r.fixture.cwbBytes} bytes`);
   console.log(sep);
-  console.log("READ 5 FIELDS  (sparse access — Cap'n Proto's design intent)");
+  console.log("READ 5 OF 256 FIELDS");
   console.log(row("capnweb",    r.read5.capnweb));
   console.log(row("cpp raw",    r.read5.cpp_raw));
   console.log(row("cpp reader", r.read5.cpp_reader));
   const sp5 = r.read5.capnweb.medianNs / r.read5.cpp_reader.medianNs;
   console.log(`  cpp_reader speedup over capnweb: ${sp5.toFixed(2)}x`);
   console.log(sep);
-  console.log("READ ALL 256 FIELDS  (full materialization — JSON.parse home turf)");
-  console.log(row("capnweb", r.readAll.capnweb));
-  console.log(row("cpp",     r.readAll.cpp));
-  const spA = r.readAll.capnweb.medianNs / r.readAll.cpp.medianNs;
-  console.log(`  cpp speedup over capnweb: ${spA.toFixed(2)}x`);
+  console.log("READ ALL 256 FIELDS");
+  console.log(row("capnweb",         r.readAll.capnweb));
+  console.log(row("cpp per-field",   r.readAll.cpp));
+  console.log(row("cpp batched",     r.readAll.cpp_batched));
+  console.log(row("cpp json-emit",   r.readAll.cpp_json_emit));
+  const spA   = r.readAll.capnweb.medianNs / r.readAll.cpp.medianNs;
+  const spAB  = r.readAll.capnweb.medianNs / r.readAll.cpp_batched.medianNs;
+  const spAJ  = r.readAll.capnweb.medianNs / r.readAll.cpp_json_emit.medianNs;
+  console.log(`  per-field speedup:  ${spA.toFixed(2)}x`);
+  console.log(`  batched speedup:    ${spAB.toFixed(2)}x`);
+  console.log(`  json-emit speedup:  ${spAJ.toFixed(2)}x`);
   console.log(sep);
 }
 

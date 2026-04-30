@@ -103,6 +103,8 @@ FLAGS=(
   -Wl,--export=cpp_any_uint8_at
   -Wl,--export=cpp_any_bool_at
   -Wl,--export=cpp_make_big_user_bytes
+  -Wl,--export=cpp_big_user_all_packed
+  -Wl,--export=cpp_big_user_emit_json
   -lwasi-emulated-signal
   -lwasi-emulated-mman
 )

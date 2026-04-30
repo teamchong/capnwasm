@@ -104,13 +104,49 @@ async function run() {
     for (let i = 0; i < 256; i++) total += v[`field${i}`].length;
     return total;
   };
-  // Apples-to-apples: capnweb fully materializes 256 JS strings + the object.
-  // Our reader path also materializes each accessed field as a JS string.
+  // Per-field path: 256 wasm boundary calls, one materialization per field.
   const cppReadAll = () => {
     const r = openBigUser(cpp, cppBytes);
     let total = 0;
     for (let i = 0; i < 256; i++) total += r[`field${i}`].length;
     return total;
+  };
+
+  // JSON-emit path: wasm walks all fields and writes a JSON object string.
+  // JS does one TextDecoder + JSON.parse — V8's hottest object-construction
+  // path. Goal: actually beat capnweb on full materialization too.
+  const cpp_big_user_emit_json = exp.cpp_big_user_emit_json;
+  const SHARED_TEXT_DECODER = new TextDecoder();
+  const cppReadAllJson = () => {
+    cpp_any_open(cppBytes.length);
+    const len = cpp_big_user_emit_json();
+    const u8 = cpp._u8;
+    return JSON.parse(SHARED_TEXT_DECODER.decode(u8.subarray(cpp_out_ptr, cpp_out_ptr + len)));
+  };
+
+  // Batched path: ONE wasm call walks all 256 fields and packs them into
+  // scratch_out. JS reads with one tight loop. Builds the equivalent JS
+  // object so the comparison stays apples-to-apples with capnweb's full
+  // deserialize result.
+  const cpp_big_user_all_packed = exp.cpp_big_user_all_packed;
+  const cppReadAllBatched = () => {
+    cpp_any_open(cppBytes.length);
+    const total = cpp_big_user_all_packed();
+    const u8 = cpp._u8;
+    const dv = new DataView(u8.buffer, cpp_out_ptr, total);
+    const obj = {};
+    let pos = 0;
+    for (let i = 0; i < 256; i++) {
+      const flen = dv.getUint32(pos, true);
+      pos += 4;
+      const start = cpp_out_ptr + pos;
+      // Inline ASCII materialization (no TextDecoder overhead per call).
+      let s = "";
+      for (let j = 0; j < flen; j++) s += String.fromCharCode(u8[start + j]);
+      obj[`field${i}`] = s;
+      pos += flen;
+    }
+    return Object.keys(obj).length;
   };
 
   const out = {
@@ -121,8 +157,10 @@ async function run() {
       cpp_reader: timed(cppRead5UsingReader),
     },
     readAll: {
-      capnweb: timed(cwbReadAll),
-      cpp:     timed(cppReadAll),
+      capnweb:       timed(cwbReadAll),
+      cpp:           timed(cppReadAll),
+      cpp_batched:   timed(cppReadAllBatched),
+      cpp_json_emit: timed(cppReadAllJson),
     },
   };
 
