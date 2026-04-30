@@ -19,6 +19,7 @@ import { auth } from "capnwasm/rest";  // REST client runtime
 
 **Documentation paths:**
 - [Zero to working RPC in 5 minutes](docs/zero-to-rpc.md) — schema → codegen → server → client
+- [Runtime-schema reader / builder](docs/dynamic.md) — `capnwasm/dynamic`, when schema arrives at runtime
 - [Production deployment](docs/deployment.md) — auth, backpressure, error handling, reverse proxy
 - [capnwasm vs gRPC-Web](docs/grpc-web-comparison.md) — when to choose each
 - [Cloudflare Workers](docs/workers.md) — Workers-specific entrypoint
