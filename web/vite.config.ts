@@ -31,6 +31,7 @@ export default defineConfig(({ command }) => ({
         index: resolve(__dirname, "index.html"),
         playground: resolve(__dirname, "playground.html"),
         rpc: resolve(__dirname, "rpc.html"),
+        chat: resolve(__dirname, "chat.html"),
         honest: resolve(__dirname, "honest.html"),
         inspect: resolve(__dirname, "inspect.html"),
         notes: resolve(__dirname, "notes.html"),
