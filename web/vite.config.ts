@@ -1,0 +1,30 @@
+import { defineConfig } from "vite";
+import { resolve } from "node:path";
+
+// Multi-page Vite site: a landing page and the live perf playground.
+// Pages are wired up in rollupOptions.input so the build emits both.
+export default defineConfig(({ command }) => ({
+  // For local dev / playwright tests we serve from "/". For a published
+  // GitHub Pages deploy, set base to "/capnwasm/" via env or a CI flag.
+  base: "/",
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    target: "esnext",
+    rollupOptions: {
+      input: {
+        index: resolve(__dirname, "index.html"),
+        playground: resolve(__dirname, "playground.html"),
+      },
+    },
+  },
+  server: {
+    port: 5173,
+    fs: {
+      // Allow Vite to serve files from the parent capnwasm dir so the
+      // playground can `import "../../js/rpc.mjs"` directly during dev.
+      // Production builds resolve everything through the bundler instead.
+      allow: [resolve(__dirname, ".."), __dirname],
+    },
+  },
+}));

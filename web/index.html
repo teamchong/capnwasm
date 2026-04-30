@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>capnwasm — Cap'n Proto for the browser</title>
+  <meta name="description" content="Real Cap'n Proto C++ compiled to wasm. Type-safe binary RPC for the browser, faster than capnweb on every workload that matters." />
+  <meta property="og:title" content="capnwasm — Cap'n Proto for the browser" />
+  <meta property="og:description" content="Type-safe binary RPC, real Cap'n Proto wasm runtime. 3.2x faster than capnweb on burst throughput, 3.8x faster on big payloads." />
+  <link rel="stylesheet" href="./src/landing/style.css" />
+</head>
+<body>
+  <div id="app">
+    <h1>capn<span class="dim">wasm</span></h1>
+    <p class="tagline">Real Cap'n Proto C++ in the browser. Typed RPC, binary wire, 44 KB gzip.</p>
+    <p class="description">
+      One typed-client toolchain for any backend &mdash; write a <code>.capnp</code> schema, get
+      a fast typed JS client back. <code>npx capnwasm gen user.capnp</code> emits a reader/builder
+      that runs against real upstream Cap'n Proto C++ statically compiled to wasm.
+    </p>
+
+    <div class="headline">
+      <h2>vs capnweb (in-process bench, Apple Silicon)</h2>
+      <div class="headline-row">
+        <span class="label">Burst 1000 calls (per-call)</span>
+        <span class="value win">2.5 &mu;s &mdash; 3.2x faster</span>
+      </div>
+      <div class="headline-row">
+        <span class="label">64 KB text echo round-trip</span>
+        <span class="value win">96 &mu;s &mdash; 3.8x faster</span>
+      </div>
+      <div class="headline-row">
+        <span class="label">Single tiny RPC call</span>
+        <span class="value win">8.5 &mu;s &mdash; 1.75x faster</span>
+      </div>
+      <div class="headline-row">
+        <span class="label">Bundle (JS + wasm, gzip)</span>
+        <span class="value lose">44 KB &mdash; 2.1x larger</span>
+      </div>
+      <div class="headline-row">
+        <span class="label">Cold start (init + first call)</span>
+        <span class="value lose">~3 ms &mdash; 15x slower</span>
+      </div>
+    </div>
+
+    <div class="demos">
+      <a href="./playground.html" class="demo-card">
+        <div class="demo-icon">&#x26A1;</div>
+        <div class="demo-title">Live playground</div>
+        <div class="demo-desc">
+          Run REST/JSON, capnweb, and capnwasm side-by-side in your browser against the
+          same backend. See the wire bytes, decode time, and render-to-DOM time for each.
+        </div>
+        <span class="demo-tag">Interactive</span>
+      </a>
+
+      <a href="https://github.com/anthropics/capnwasm/blob/main/docs/honest-comparison.md" class="demo-card">
+        <div class="demo-icon">&#x2696;&#xFE0F;</div>
+        <div class="demo-title">Honest comparison</div>
+        <div class="demo-desc">
+          Where capnwasm wins, where it loses, where it&rsquo;s tied. With reproducible
+          numbers, no marketing handwave. Bundle size and cold start go to capnweb.
+        </div>
+        <span class="demo-tag honesty">Tradeoffs</span>
+      </a>
+
+      <a href="https://github.com/anthropics/capnwasm#three-quickstarts" class="demo-card">
+        <div class="demo-icon">&#x1F680;</div>
+        <div class="demo-title">Quickstart</div>
+        <div class="demo-desc">
+          <code>.capnp</code> schemas, TypeScript interfaces with <code>@rest</code> directives,
+          or OpenAPI specs &rarr; typed JS client. <code>npx capnwasm gen</code>.
+        </div>
+        <span class="demo-tag">3 quickstarts</span>
+      </a>
+
+      <a href="https://github.com/anthropics/capnwasm#rpc--full-capn-proto-pillars" class="demo-card">
+        <div class="demo-icon">&#x1F517;</div>
+        <div class="demo-title">RPC pillars</div>
+        <div class="demo-desc">
+          Promise pipelining, capability passing, auto-release via FinalizationRegistry,
+          microtask batching, streaming. Wire-compatible with C++/Rust/Go peers.
+        </div>
+        <span class="demo-tag">Full RPC</span>
+      </a>
+    </div>
+
+    <div class="links">
+      <a href="https://www.npmjs.com/package/capnwasm">npm</a>
+      <a href="https://github.com/anthropics/capnwasm">GitHub</a>
+      <a href="./playground.html">Playground</a>
+    </div>
+  </div>
+</body>
+</html>

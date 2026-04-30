@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>capnwasm playground &mdash; live REST vs capnwasm bench</title>
+  <link rel="stylesheet" href="./src/playground/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>capnwasm <span class="dim">playground</span></h1>
+      <p class="subtitle">
+        Live in-browser bench. Fetch 200 user records in parallel from static fixtures,
+        decode, render. Same data both sides &mdash; only the wire format and decoder differ.
+      </p>
+      <nav><a href="./">&larr; All demos</a></nav>
+    </header>
+
+    <div id="controls">
+      <button id="run-btn">Run benchmark</button>
+      <label>
+        <span>Records:</span>
+        <select id="count-selector">
+          <option value="10">10</option>
+          <option value="50">50</option>
+          <option value="100" selected>100</option>
+          <option value="200">200</option>
+        </select>
+      </label>
+      <label>
+        <span>Iterations:</span>
+        <select id="iters-selector">
+          <option value="1">1</option>
+          <option value="3" selected>3 (median)</option>
+          <option value="10">10 (median)</option>
+        </select>
+      </label>
+      <span id="status"></span>
+    </div>
+
+    <div id="results">
+      <div class="protocol" id="rest-col">
+        <div class="protocol-header">
+          <span class="protocol-name">REST / JSON</span>
+          <span class="protocol-tag">fetch + JSON.parse</span>
+        </div>
+        <table class="metrics">
+          <tr><th>fetch</th><td id="rest-fetch">&mdash;</td></tr>
+          <tr><th>decode</th><td id="rest-decode">&mdash;</td></tr>
+          <tr><th>render</th><td id="rest-render">&mdash;</td></tr>
+          <tr class="total"><th>total</th><td id="rest-total">&mdash;</td></tr>
+          <tr><th>wire bytes</th><td id="rest-bytes">&mdash;</td></tr>
+        </table>
+        <ul class="render-target" id="rest-list"></ul>
+      </div>
+
+      <div class="protocol" id="capnp-col">
+        <div class="protocol-header">
+          <span class="protocol-name">capnwasm</span>
+          <span class="protocol-tag">fetch + Cap'n Proto reader</span>
+        </div>
+        <table class="metrics">
+          <tr><th>fetch</th><td id="capnp-fetch">&mdash;</td></tr>
+          <tr><th>decode</th><td id="capnp-decode">&mdash;</td></tr>
+          <tr><th>render</th><td id="capnp-render">&mdash;</td></tr>
+          <tr class="total"><th>total</th><td id="capnp-total">&mdash;</td></tr>
+          <tr><th>wire bytes</th><td id="capnp-bytes">&mdash;</td></tr>
+        </table>
+        <ul class="render-target" id="capnp-list"></ul>
+      </div>
+    </div>
+
+    <div id="summary"></div>
+  </div>
+
+  <script type="module" src="./src/playground/main.ts"></script>
+</body>
+</html>
