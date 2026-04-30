@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>capnwasm &mdash; wire inspector</title>
+  <meta name="description" content="A standalone Cap'n Proto wire inspector. One line in DevTools, schemaless or schema-aware." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="./src/honest/style.css" />
+  <link rel="stylesheet" href="./src/inspect/style.css" />
+</head>
+<body>
+  <article id="app">
+    <header>
+      <h1><a href="./">capnwasm</a> <span class="dim">wire inspector</span></h1>
+      <p class="subtitle">
+        A standalone Cap&apos;n Proto wire inspector hosted as a single file on this site.
+        <strong>Not part of the npm package</strong> &mdash; you don&apos;t pay for it in
+        production. Paste one line into DevTools when you need to see what&apos;s actually on
+        the wire.
+      </p>
+      <nav>
+        <a href="./">&larr; Landing</a> &middot;
+        <a href="./playground.html">Fetch playground</a> &middot;
+        <a href="./rpc.html">RPC bench</a> &middot;
+        <a href="./honest.html">Honest comparison</a>
+      </nav>
+    </header>
+
+    <section>
+      <h2>One line</h2>
+      <pre class="copyable" id="snippet-import"><code>const cw = await import(<span class="origin"></span> + "/inspect.js");
+cw.inspect(fetch("/api/user.capnp"));</code></pre>
+      <p>That&apos;s it. The console gets an expandable tree: segment count, root pointer,
+        struct shape, list elements, embedded text, hex previews of binary data.</p>
+    </section>
+
+    <section>
+      <h2>What <code>inspect()</code> accepts</h2>
+      <pre><code>cw.inspect(fetch("/api/user.capnp"));            // Promise&lt;Response&gt;
+cw.inspect(response);                            // Response
+cw.inspect(arrayBuffer);                         // ArrayBuffer
+cw.inspect(uint8Array);                          // Uint8Array
+cw.inspect(dataView);                            // DataView</code></pre>
+      <p>Whatever shape you have, it figures out the bytes and walks them. Returns a
+        <code>Promise</code> that resolves to the decoded structure (so you can also do
+        <code>const decoded = await cw.inspect(...)</code>).</p>
+    </section>
+
+    <section>
+      <h2>Schema-aware decode</h2>
+      <p>Without a schema, the walker prints raw struct bytes and pointer kinds. Pass a
+        generated reader and a loaded <code>CapnCpp</code> to get field names back:</p>
+      <pre><code>import { UserReader } from "./user.capnp.gen.mjs";
+import { load } from "capnwasm/browser";
+
+const cpp = await load(...);
+
+cw.inspect(fetch("/api/user.capnp"), { reader: UserReader, cpp });
+<span class="dim-comment">// → { id: 42n, name: "Alice", email: "...", joinedAtMs: ..., active: true, avatar: Uint8Array }</span></code></pre>
+    </section>
+
+    <section>
+      <h2>What the schemaless walker shows</h2>
+      <p>For a <code>User</code> message with
+        <code>id: 42, name: &quot;Alice&quot;, email: &quot;alice@&hellip;&quot;, active: true, avatar: &lt;8 bytes&gt;</code>:</p>
+      <pre><code>▾ Cap&apos;n Proto frame  144 bytes, 1 segment(s)
+   bytes: 144
+   ▸ segments: [{ index: 0, words: 17, bytes: 136 }]
+   ▾ root:
+       kind: "struct"
+       dataWords: 3
+       ptrWords: 3
+       data: "2a 00 00 00 00 00 00 00 00 00 c0 d3 50 ec 8b 01 …"
+       ▸ dataDecoded: [{ word: 0, u64: 42n, ... }, ...]
+       ▾ pointers:
+           ▸ { kind: "text", length: 5, value: "Alice" }
+           ▸ { kind: "text", length: 17, value: "alice@example.com" }
+           ▸ { kind: "bytes", length: 8, preview: "01 02 03 04 05 06 07 08" }</code></pre>
+      <p>Lists, composite-element lists, and far-pointer chasing all decode
+        automatically. Cycles are guarded against (max depth 16).</p>
+    </section>
+
+    <section>
+      <h2>CSP fallback</h2>
+      <p>If the page you&apos;re debugging has a strict
+        <code>Content-Security-Policy: script-src &apos;self&apos;</code>, dynamic
+        <code>import()</code> from a different origin gets blocked. Fetch as text and
+        evaluate locally instead:</p>
+      <pre class="copyable" id="snippet-csp"><code>const src = await fetch(<span class="origin"></span> + "/inspect.js").then(r =&gt; r.text());
+const cw = await new Function("const m={};const exports=m;" + src + "; return m")();
+cw.inspect(...);</code></pre>
+      <p>For most apps the dynamic-import form works fine.</p>
+    </section>
+
+    <section>
+      <h2>Why it&apos;s not in the npm package</h2>
+      <ul>
+        <li>Production users never need it &mdash; debug-only weight shouldn&apos;t ship in
+          <code>capnwasm</code>.</li>
+        <li>A hosted single file is more discoverable from a stack trace
+          (&ldquo;paste this URL into your console&rdquo;).</li>
+        <li>Versioning is implicit &mdash; the docs-site URL always serves the latest source.</li>
+      </ul>
+      <p>If you want the file in your repo for offline use, grab it from this site once and
+        commit it locally. Pure JS, no dependencies, ~17 KB / 5.5 KB gz. Walks the
+        Cap&apos;n Proto wire format directly &mdash; no wasm needed for the schemaless
+        path. The schema-aware path delegates to whatever generated reader you pass in.</p>
+    </section>
+
+    <footer>
+      <a href="https://github.com/teamchong/capnwasm">GitHub</a> &middot;
+      <a href="https://www.npmjs.com/package/capnwasm">npm</a> &middot;
+      <a href="./">capnwasm</a>
+    </footer>
+  </article>
+
+  <script type="module">
+    // Substitute the visitor's actual origin into the snippet so they can
+    // copy and paste it as-is. Beats hardcoding teamchong.github.io.
+    const url = JSON.stringify(location.origin);
+    for (const span of document.querySelectorAll(".origin")) {
+      span.textContent = url;
+    }
+    // Click-to-copy on .copyable snippets. Show a transient "copied!"
+    // tooltip in the same spot the hover hint sits.
+    for (const pre of document.querySelectorAll("pre.copyable")) {
+      pre.addEventListener("click", async () => {
+        const text = pre.querySelector("code")?.innerText ?? pre.innerText;
+        try {
+          await navigator.clipboard.writeText(text);
+          const before = pre.style.borderColor;
+          pre.style.borderColor = "#66bb6a";
+          const tip = pre.appendChild(Object.assign(document.createElement("span"), {
+            textContent: "copied!",
+            style: "position:absolute;top:6px;right:10px;font-size:0.66rem;color:#66bb6a;",
+          }));
+          setTimeout(() => { pre.style.borderColor = before; tip.remove(); }, 1100);
+        } catch { /* clipboard write blocked — leave the snippet visible */ }
+      });
+    }
+  </script>
+</body>
+</html>

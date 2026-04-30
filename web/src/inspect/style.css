@@ -1,0 +1,57 @@
+/* The inspect page reuses the honest page's typography + layout. This
+   file just adds <pre><code> styling that matches the rest of the site. */
+
+pre {
+  background: #0d1418;
+  border: 1px solid #1a2832;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 12px 0;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: #d0d0d0;
+  white-space: pre;
+}
+
+pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+pre.copyable {
+  position: relative;
+  cursor: copy;
+  transition: border-color 0.15s;
+}
+
+pre.copyable:hover {
+  border-color: #4fc3f7;
+}
+
+pre.copyable::after {
+  content: "click to copy";
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  font-size: 0.66rem;
+  color: #4fc3f7;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+pre.copyable:hover::after {
+  opacity: 0.7;
+}
+
+.origin {
+  color: #4fc3f7;
+}
+
+.dim-comment {
+  color: #666;
+  font-style: italic;
+}
