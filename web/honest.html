@@ -96,10 +96,10 @@
         <thead><tr><th></th><th>gzip</th><th>brotli</th></tr></thead>
         <tbody>
           <tr><td>capnweb</td><td class="win">21 KB</td><td>~19 KB</td></tr>
-          <tr><td>capnwasm/browser</td><td>44 KB</td><td>41 KB</td></tr>
+          <tr><td>capnwasm/browser</td><td>39 KB</td><td>36 KB</td></tr>
         </tbody>
       </table>
-      <p>40 of those 44 KB is the wasm runtime &mdash; a real Cap&apos;n Proto C++ implementation. Hard to shrink further without dropping wire compatibility with non-JS peers.</p>
+      <p>35 of those 39 KB is the wasm runtime &mdash; a real Cap&apos;n Proto C++ implementation. Down from 44 KB across three bundle-shrinkage passes (drop <code>--export-dynamic</code>, strip KJ assertion strings, audit the export list against actual JS callers). Hard to shrink further without dropping wire compatibility with non-JS peers.</p>
       <p>If your bundle budget is tight and you don&apos;t need binary wire interop, <strong>capnweb is the smaller choice</strong>. There is no way for capnwasm to reach 21 KB without giving up the wasm runtime, which is what makes the rest of the wins possible.</p>
 
       <h3>2. Cold start: now essentially tied in Node, still slower in the browser</h3>

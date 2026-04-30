@@ -6,7 +6,7 @@
   <title>capnwasm — Cap'n Proto for the browser</title>
   <meta name="description" content="Real Cap'n Proto C++ compiled to wasm. Type-safe binary RPC for the browser, faster than capnweb on every workload that matters." />
   <meta property="og:title" content="capnwasm — Cap'n Proto for the browser" />
-  <meta property="og:description" content="Type-safe binary RPC, real Cap'n Proto wasm runtime. ~5x faster than capnweb on burst throughput, 3.8x faster on big payloads. 44 KB gzip." />
+  <meta property="og:description" content="Type-safe binary RPC, real Cap'n Proto wasm runtime. ~5x faster than capnweb on burst throughput, 3.8x faster on big payloads. 39 KB gzip." />
   <meta property="og:image" content="/og-image.svg" />
   <meta property="og:type" content="website" />
   <meta name="twitter:card" content="summary_large_image" />
@@ -19,7 +19,7 @@
 <body>
   <div id="app">
     <h1>capn<span class="dim">wasm</span></h1>
-    <p class="tagline">Real Cap'n Proto C++ in the browser. Typed RPC, binary wire, 44 KB gzip.</p>
+    <p class="tagline">Real Cap'n Proto C++ in the browser. Typed RPC, binary wire, 39 KB gzip.</p>
     <p class="description">
       One typed-client toolchain for any backend &mdash; write a <code>.capnp</code> schema, get
       a fast typed JS client back. <code>npx capnwasm gen user.capnp</code> emits a reader/builder
@@ -46,7 +46,7 @@
       </div>
       <div class="headline-row">
         <span class="label">Bundle (JS + wasm, gzip)</span>
-        <span class="value lose">44 KB &mdash; 2.1&times; larger than capnweb</span>
+        <span class="value lose">39 KB &mdash; 1.85&times; larger than capnweb</span>
       </div>
       <div class="headline-row">
         <span class="label">Cold start (Node, fresh process, total)</span>
