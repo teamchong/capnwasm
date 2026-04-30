@@ -50,10 +50,22 @@
     <div class="demos">
       <a href="./playground.html" class="demo-card">
         <div class="demo-icon">&#x26A1;</div>
-        <div class="demo-title">Live playground</div>
+        <div class="demo-title">Fetch playground</div>
         <div class="demo-desc">
-          Run REST/JSON, capnweb, and capnwasm side-by-side in your browser against the
-          same backend. See the wire bytes, decode time, and render-to-DOM time for each.
+          REST/JSON vs capnweb vs capnwasm side-by-side, fetching static fixtures.
+          Wire bytes, decode time, and render-to-DOM time for each. Localhost numbers
+          come out tied; the wire savings show in the egress row.
+        </div>
+        <span class="demo-tag">HTTP</span>
+      </a>
+
+      <a href="./rpc.html" class="demo-card">
+        <div class="demo-icon">&#x1F501;</div>
+        <div class="demo-title">RPC bench</div>
+        <div class="demo-desc">
+          Live WebSocket RPC against a Node server. Three workloads:
+          200-call burst, promise pipelining, 64 KB binary echo. capnwasm
+          is supposed to win all three &mdash; see if it does.
         </div>
         <span class="demo-tag">Interactive</span>
       </a>

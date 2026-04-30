@@ -6,11 +6,13 @@
     "prepare": "cp ../dist/capnp.slim.wasm public/ && node scripts/generate-fixtures.mjs",
     "dev": "npm run prepare && vite",
     "build": "npm run prepare && vite build",
-    "preview": "vite preview --port 4173"
+    "preview": "vite preview --port 4173",
+    "server": "node server.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.0",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "ws": "^8.20.0"
   },
   "dependencies": {
     "capnweb": "^0.7.0"

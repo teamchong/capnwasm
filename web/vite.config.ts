@@ -15,6 +15,7 @@ export default defineConfig(({ command }) => ({
       input: {
         index: resolve(__dirname, "index.html"),
         playground: resolve(__dirname, "playground.html"),
+        rpc: resolve(__dirname, "rpc.html"),
         honest: resolve(__dirname, "honest.html"),
       },
     },
