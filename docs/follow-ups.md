@@ -173,12 +173,21 @@ Linked from the README's documentation index.
 
 ## 8. Bundle-size headline
 
-44 KB gz vs capnweb's 21 KB. Could shave another 5–8 KB by stripping more KJ
-debug strings (the data section has assertion expression text), splitting the
-WASI shim further, replacing some C++ inner loops with WAT.
+**Update (2026-04-30):** down from 44 → 38.7 KB gz across three passes:
+- Drop `--export-dynamic` from the wasm link, keeping only the explicit
+  `--export=cpp_*` list (saved ~200 bytes gz).
+- Override KJ_REQUIRE / KJ_ASSERT macros to elide stringified condition +
+  message text (saved ~2 KB gz; see `cpp/kj_strip_strings.h`).
+- Audit the export list against actual JS call sites and remove the ones
+  no JS path touches: `cpp_any_list_size` (subsumed by open_list's return
+  value), `cpp_out_capacity` (the output buffer cap is the same as input
+  and never queried), `cpp_rpc_build_finish` (JS-side template builds
+  Finish frames), several per-call-field RPC getters that the
+  per-summary getter packs into one call (~300 bytes gz).
 
-Diminishing returns; below ~35 KB there's nothing major to grab without
-rewriting the wasm in hand-tuned WAT — a lot of maintenance for a couple of KB.
+Still on the list: 38.7 KB → ~35 KB needs structural changes — splitting
+the WASI shim further, replacing some C++ hot inner loops with hand-tuned
+WAT. Diminishing returns past that without rewriting in WAT.
 
 ## 9. CI / publishing automation — scaffolded
 
