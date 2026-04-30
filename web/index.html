@@ -23,28 +23,28 @@
     <div class="headline">
       <h2>vs capnweb &amp; REST/JSON</h2>
       <div class="headline-row">
-        <span class="label">In-browser fetch+render (any workload)</span>
-        <span class="value">essentially tied &mdash; localhost network dominates</span>
+        <span class="label">RPC burst, 200 concurrent calls (browser&rarr;Node WS)</span>
+        <span class="value win">~4&ndash;6&times; faster than capnweb</span>
       </div>
       <div class="headline-row">
-        <span class="label">Burst 1000 RPC calls (in-process, per-call)</span>
-        <span class="value win">2.5 &mu;s &mdash; 3.2x faster than capnweb</span>
-      </div>
-      <div class="headline-row">
-        <span class="label">64 KB text echo round-trip (in-process)</span>
-        <span class="value win">96 &mu;s &mdash; 3.8x faster than capnweb</span>
+        <span class="label">RPC 64 KB binary echo (browser&rarr;Node WS)</span>
+        <span class="value win">~1.3&ndash;1.7&times; faster, 25% less wire</span>
       </div>
       <div class="headline-row">
         <span class="label">Wire bytes for 4 KB binary blob (gzip)</span>
         <span class="value win">2.4&times; smaller than JSON / capnweb</span>
       </div>
       <div class="headline-row">
+        <span class="label">In-browser parallel HTTP fetch (small records)</span>
+        <span class="value">essentially tied &mdash; localhost network dominates</span>
+      </div>
+      <div class="headline-row">
         <span class="label">Bundle (JS + wasm, gzip)</span>
-        <span class="value lose">44 KB &mdash; 2.1x larger than capnweb</span>
+        <span class="value lose">44 KB &mdash; 2.1&times; larger than capnweb</span>
       </div>
       <div class="headline-row">
         <span class="label">Cold start (init + first call)</span>
-        <span class="value lose">~3 ms &mdash; 15x slower than capnweb</span>
+        <span class="value lose">~3 ms &mdash; 15&times; slower than capnweb</span>
       </div>
     </div>
 
