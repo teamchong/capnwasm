@@ -5,13 +5,17 @@
   "type": "module",
   "main": "js/index.mjs",
   "exports": {
-    ".":          "./dist/inlined.mjs",
-    "./browser":  "./js/browser.mjs",
-    "./tape":     "./js/tape_serializer.mjs",
-    "./rest":     "./js/rest_runtime.mjs",
-    "./stream":   "./js/stream.mjs",
-    "./rpc":      "./js/rpc.mjs",
-    "./codegen":  "./dist/codegen.mjs",
+    ".":             "./dist/inlined.mjs",
+    "./browser":     "./js/browser.mjs",
+    "./tape":        "./js/tape_serializer.mjs",
+    "./rest":        "./js/rest_runtime.mjs",
+    "./stream":      "./js/stream.mjs",
+    "./rpc":         "./js/rpc.mjs",
+    "./codegen":     "./dist/codegen.mjs",
+    "./vite-plugin": {
+      "types":   "./js/vite-plugin.d.ts",
+      "default": "./js/vite-plugin.mjs"
+    },
     "./capnp.slim.wasm": "./dist/capnp.slim.wasm",
     "./capnp.wasm":      "./dist/capnp.wasm"
   },

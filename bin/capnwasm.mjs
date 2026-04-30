@@ -1558,7 +1558,131 @@ async function main() {
   topUsage();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// --------------------------------------------------------------------------
+// Programmatic API — for the Vite plugin and any other tool that wants to
+// drive codegen without shelling out.
+//
+// generateFromSchema(path) → { mjs, dts, meta }
+//
+//   path: absolute or cwd-relative path to a .capnp, .ts, .yaml, or .json
+//   schema. The format is auto-detected from the extension.
+//   mjs:  the JS module text. Write to disk or feed straight to a bundler.
+//   dts:  the corresponding TypeScript declarations.
+//   meta: { schemaName, structs, restApis, typeInterfaces } — useful for
+//         logging or display in a build dashboard.
+//
+// Errors are thrown as `CapnwasmCodegenError` so callers (e.g. Vite's HMR
+// path) can format them in a dev-server overlay without sniffing strings.
+// --------------------------------------------------------------------------
+
+export class CapnwasmCodegenError extends Error {
+  constructor(message, { schemaPath, cause } = {}) {
+    super(message);
+    this.name = "CapnwasmCodegenError";
+    this.schemaPath = schemaPath;
+    if (cause) this.cause = cause;
+  }
+}
+
+export async function generateFromSchema(schemaPath) {
+  if (!schemaPath) {
+    throw new CapnwasmCodegenError("schemaPath is required");
+  }
+  const abs = resolve(schemaPath);
+  if (!existsSync(abs)) {
+    throw new CapnwasmCodegenError(`schema not found: ${abs}`, { schemaPath: abs });
+  }
+  const ext = extname(abs).toLowerCase();
+  const isOpenapi = ext === ".yaml" || ext === ".yml" || ext === ".json";
+
+  let structs, restApis, typeInterfaces;
+  try {
+    if (isOpenapi) {
+      // OpenAPI path: read + parse the spec, then run it through the same
+      // openapi_parser the CLI uses. YAML support requires the optional
+      // 'yaml' package; surface that as a clear codegen error.
+      const text = await import("node:fs/promises").then((m) => m.readFile(abs, "utf8"));
+      let spec;
+      if (ext === ".json") {
+        spec = JSON.parse(text);
+      } else {
+        try {
+          const yaml = await import("yaml");
+          spec = yaml.parse(text);
+        } catch (yamlErr) {
+          throw new CapnwasmCodegenError(
+            `YAML OpenAPI specs require the optional 'yaml' package — run \`npm install yaml\`, or convert to JSON.`,
+            { schemaPath: abs, cause: yamlErr },
+          );
+        }
+      }
+      const { parseOpenApi } = await import("../js/openapi_parser.mjs");
+      ({ restApis, typeInterfaces, structs } = parseOpenApi(spec));
+    } else {
+      ({ structs, restApis, typeInterfaces } = await parseSchema(abs));
+    }
+  } catch (err) {
+    if (err instanceof CapnwasmCodegenError) throw err;
+    throw new CapnwasmCodegenError(
+      `failed to parse ${abs}: ${err.message}`,
+      { schemaPath: abs, cause: err },
+    );
+  }
+
+  if (structs.length === 0 && restApis.length === 0) {
+    throw new CapnwasmCodegenError(
+      `no struct or REST interface definitions found in ${abs}`,
+      { schemaPath: abs },
+    );
+  }
+
+  const schemaName = basename(abs);
+  let mjs, dts;
+  try {
+    const mjsParts = [];
+    if (structs.length > 0) mjsParts.push(generateJs(structs, schemaName));
+    for (const api of restApis) mjsParts.push(generateRestClient(api, schemaName, structs));
+    mjs = mjsParts.join("\n\n");
+
+    const dtsParts = [];
+    if (structs.length > 0) dtsParts.push(generateDts(structs, schemaName));
+    for (const api of restApis) dtsParts.push(generateRestDts(api, schemaName, structs, typeInterfaces ?? []));
+    dts = dtsParts.join("\n\n");
+  } catch (err) {
+    throw new CapnwasmCodegenError(
+      `failed to emit code for ${abs}: ${err.message}`,
+      { schemaPath: abs, cause: err },
+    );
+  }
+
+  return {
+    mjs,
+    dts,
+    meta: {
+      schemaName,
+      structs: structs.map((s) => ({ name: s.name, fieldCount: s.fields.length })),
+      restApis: restApis.map((a) => ({ name: a.name, methodCount: a.methods.length })),
+      typeInterfaces: (typeInterfaces ?? []).map((t) => ({ name: t.name })),
+    },
+  };
+}
+
+// Only execute the CLI when this file is invoked directly (node bin/...,
+// npx capnwasm). Importing it as a module — e.g. from the Vite plugin —
+// must not run main(), or the imported file's top-level work would race
+// with whatever the importer was doing.
+const isDirectInvocation = (() => {
+  if (!process.argv[1]) return false;
+  try {
+    return fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+  } catch {
+    return false;
+  }
+})();
+
+if (isDirectInvocation) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

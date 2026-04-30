@@ -93,6 +93,7 @@ for await (const event of stripe.listEvents()) console.log(event.id);
 | `import "capnwasm/tape"` | optional capnweb-shape `serialize`/`deserialize` helpers | small | small |
 | `import "capnwasm/codegen"` | wasm-built capnp schema compiler — runs in browser | 356 KB | — |
 | `import "capnwasm/stream"` | helper to stream `fetch` bytes straight into wasm | small | small |
+| `import "capnwasm/vite-plugin"` | Vite plugin: schemas regenerate on save, no manual `npx capnwasm gen` ([docs](docs/vite-plugin.md)) | dev-only | dev-only |
 
 For browsers, prefer `capnwasm/browser`: 44 KB gzip / 41 KB brotli (counting both the JS shim and the separately-fetched `dist/capnp.slim.wasm`, which excludes the bench/test helpers baked into the default wasm). Without the 33% base64 inflation, and with `WebAssembly.instantiateStreaming` so the wasm starts compiling while it's still being downloaded.
 
