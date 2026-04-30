@@ -126,6 +126,15 @@ FLAGS=(
   -Wl,--export=cpp_any_bool_at
   -Wl,--export=cpp_conformance_serialize
   -Wl,--export=cpp_any_batch_read
+  -Wl,--export=cpp_any_builder_init
+  -Wl,--export=cpp_any_builder_set_uint8
+  -Wl,--export=cpp_any_builder_set_uint16
+  -Wl,--export=cpp_any_builder_set_uint32
+  -Wl,--export=cpp_any_builder_set_int64_lo_hi
+  -Wl,--export=cpp_any_builder_set_bool
+  -Wl,--export=cpp_any_builder_set_text
+  -Wl,--export=cpp_any_builder_set_data
+  -Wl,--export=cpp_any_builder_finalize
   -lwasi-emulated-signal
   -lwasi-emulated-mman
   -Wl,--gc-sections

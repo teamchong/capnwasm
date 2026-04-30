@@ -939,6 +939,107 @@ uint32_t cpp_any_batch_read(uint32_t input_len) {
 }
 
 // ---------------------------------------------------------------------------
+// Generic AnyStruct BUILDER — counterpart to the reader. Codegen-emitted
+// XBuilder classes know each field's offset/type at build time; these
+// primitives let them write into a shared message via integer-indexed calls.
+//
+// The builder is held in heap-allocated storage so its lifetime spans many
+// set-field calls between cpp_any_builder_init and cpp_any_builder_finalize.
+
+static capnp::MallocMessageBuilder* any_builder = nullptr;
+alignas(8) static char any_builder_root_storage[64];
+static capnp::AnyStruct::Builder* any_builder_root = nullptr;
+
+uint32_t cpp_any_builder_init(uint32_t data_words, uint32_t ptr_words) {
+  if (any_builder_root) {
+    any_builder_root->~Builder();
+    any_builder_root = nullptr;
+  }
+  if (any_builder) {
+    delete any_builder;
+    any_builder = nullptr;
+  }
+  any_builder = new capnp::MallocMessageBuilder();
+  auto root = any_builder->initRoot<capnp::AnyPointer>();
+  auto anyStruct = root.initAsAnyStruct(data_words, ptr_words);
+  static_assert(sizeof(capnp::AnyStruct::Builder) <= sizeof(any_builder_root_storage),
+                "any_builder_root_storage too small");
+  any_builder_root = new (any_builder_root_storage) capnp::AnyStruct::Builder(kj::mv(anyStruct));
+  return 1;
+}
+
+void cpp_any_builder_set_uint8(uint32_t byte_off, uint32_t value) {
+  if (!any_builder_root) return;
+  auto data = any_builder_root->getDataSection();
+  if (byte_off < data.size()) data[byte_off] = static_cast<uint8_t>(value);
+}
+
+void cpp_any_builder_set_uint16(uint32_t byte_off, uint32_t value) {
+  if (!any_builder_root) return;
+  auto data = any_builder_root->getDataSection();
+  if (byte_off + 2 <= data.size()) {
+    uint16_t v = static_cast<uint16_t>(value);
+    std::memcpy(data.begin() + byte_off, &v, 2);
+  }
+}
+
+void cpp_any_builder_set_uint32(uint32_t byte_off, uint32_t value) {
+  if (!any_builder_root) return;
+  auto data = any_builder_root->getDataSection();
+  if (byte_off + 4 <= data.size()) {
+    std::memcpy(data.begin() + byte_off, &value, 4);
+  }
+}
+
+void cpp_any_builder_set_int64_lo_hi(uint32_t byte_off, uint32_t lo, uint32_t hi) {
+  if (!any_builder_root) return;
+  auto data = any_builder_root->getDataSection();
+  if (byte_off + 8 <= data.size()) {
+    std::memcpy(data.begin() + byte_off, &lo, 4);
+    std::memcpy(data.begin() + byte_off + 4, &hi, 4);
+  }
+}
+
+void cpp_any_builder_set_bool(uint32_t bit_off, uint32_t value) {
+  if (!any_builder_root) return;
+  auto data = any_builder_root->getDataSection();
+  uint32_t byte = bit_off / 8;
+  uint32_t bit = bit_off & 7;
+  if (byte >= data.size()) return;
+  if (value) data[byte] |= static_cast<uint8_t>(1u << bit);
+  else       data[byte] &= static_cast<uint8_t>(~(1u << bit));
+}
+
+// Set a Text field at pointer slot `ptr_idx` from cpp_in[0..text_len].
+uint32_t cpp_any_builder_set_text(uint32_t ptr_idx, uint32_t text_len) {
+  if (!any_builder_root) return 0;
+  auto ptrs = any_builder_root->getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  auto sp = capnp::Text::Reader(reinterpret_cast<const char*>(cpp_in), text_len);
+  ptrs[ptr_idx].setAs<capnp::Text>(sp);
+  return 1;
+}
+
+uint32_t cpp_any_builder_set_data(uint32_t ptr_idx, uint32_t data_len) {
+  if (!any_builder_root) return 0;
+  auto ptrs = any_builder_root->getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  auto d = capnp::Data::Reader(cpp_in, data_len);
+  ptrs[ptr_idx].setAs<capnp::Data>(d);
+  return 1;
+}
+
+// Serialize the current builder's message to cpp_out as framed bytes.
+uint32_t cpp_any_builder_finalize() {
+  if (!any_builder) return 0;
+  auto words = capnp::messageToFlatArray(*any_builder);
+  auto bytes = words.asBytes();
+  if (bytes.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, bytes.begin(), bytes.size());
+  return static_cast<uint32_t>(bytes.size());
+}
+
+// ---------------------------------------------------------------------------
 
 uint32_t cpp_deserialize_to_tape(uint32_t bytes_len) {
   // The framed message starts with stream-framing header. We use

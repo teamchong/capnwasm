@@ -238,6 +238,110 @@ export class PrimitivesReader {
   }
 }
 
+export class PrimitivesBuilder {
+  constructor(cpp) {
+    this._cpp = cpp;
+    if (cpp._exports.cpp_any_builder_init(6, 4) !== 1) {
+      throw new Error("cpp_any_builder_init failed");
+    }
+  }
+
+  set u8(value) {
+    this._cpp._exports.cpp_any_builder_set_uint8(0, value & 0xff);
+  }
+  set u16(value) {
+    this._cpp._exports.cpp_any_builder_set_uint16(2, value & 0xffff);
+  }
+  set u32(value) {
+    this._cpp._exports.cpp_any_builder_set_uint32(4, value >>> 0);
+  }
+  set u64(value) {
+    let lo, hi;
+    if (typeof value === "bigint") {
+      lo = Number(value & 0xffffffffn) >>> 0;
+      hi = Number((value >> 32n) & 0xffffffffn) | 0;
+    } else if (value >= 0) {
+      lo = (value >>> 0); hi = ((value / 4294967296) >>> 0);
+    } else {
+      const abs = -value; const aLo = (abs >>> 0); const aHi = ((abs / 4294967296) >>> 0);
+      lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0;
+    }
+    this._cpp._exports.cpp_any_builder_set_int64_lo_hi(8, lo, hi);
+  }
+  set i8(value) {
+    this._cpp._exports.cpp_any_builder_set_uint8(1, value & 0xff);
+  }
+  set i16(value) {
+    this._cpp._exports.cpp_any_builder_set_uint16(16, value & 0xffff);
+  }
+  set i32(value) {
+    this._cpp._exports.cpp_any_builder_set_uint32(20, value >>> 0);
+  }
+  set i64(value) {
+    let lo, hi;
+    if (typeof value === "bigint") {
+      lo = Number(value & 0xffffffffn) >>> 0;
+      hi = Number((value >> 32n) & 0xffffffffn) | 0;
+    } else if (value >= 0) {
+      lo = (value >>> 0); hi = ((value / 4294967296) >>> 0);
+    } else {
+      const abs = -value; const aLo = (abs >>> 0); const aHi = ((abs / 4294967296) >>> 0);
+      lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0;
+    }
+    this._cpp._exports.cpp_any_builder_set_int64_lo_hi(24, lo, hi);
+  }
+  set f32(value) {
+    if (!this._fbuf) { this._fbuf = new ArrayBuffer(4); this._fu = new Uint32Array(this._fbuf); this._ff = new Float32Array(this._fbuf); }
+    this._ff[0] = value;
+    this._cpp._exports.cpp_any_builder_set_uint32(32, this._fu[0]);
+  }
+  set f64(value) {
+    if (!this._dbuf) { this._dbuf = new ArrayBuffer(8); this._du = new Uint32Array(this._dbuf); this._dd = new Float64Array(this._dbuf); }
+    this._dd[0] = value;
+    this._cpp._exports.cpp_any_builder_set_int64_lo_hi(40, this._du[0], this._du[1]);
+  }
+  set flag0(value) {
+    this._cpp._exports.cpp_any_builder_set_bool(144, value ? 1 : 0);
+  }
+  set flag1(value) {
+    this._cpp._exports.cpp_any_builder_set_bool(145, value ? 1 : 0);
+  }
+  set flag2(value) {
+    this._cpp._exports.cpp_any_builder_set_bool(146, value ? 1 : 0);
+  }
+  set text(value) {
+    const enc = new TextEncoder().encode(value);
+    const u8 = this._cpp._u8;
+    u8.set(enc, this._cpp._exports.cpp_in_ptr());
+    this._cpp._exports.cpp_any_builder_set_text(0, enc.length);
+  }
+  set data(value) {
+    const u8 = this._cpp._u8;
+    u8.set(value, this._cpp._exports.cpp_in_ptr());
+    this._cpp._exports.cpp_any_builder_set_data(1, value.length);
+  }
+  set emptyText(value) {
+    const enc = new TextEncoder().encode(value);
+    const u8 = this._cpp._u8;
+    u8.set(enc, this._cpp._exports.cpp_in_ptr());
+    this._cpp._exports.cpp_any_builder_set_text(2, enc.length);
+  }
+  set emptyData(value) {
+    const u8 = this._cpp._u8;
+    u8.set(value, this._cpp._exports.cpp_in_ptr());
+    this._cpp._exports.cpp_any_builder_set_data(3, value.length);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._cpp._exports.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const u8 = this._cpp._u8;
+    const out = this._cpp._outPtr;
+    return u8.slice(out, out + len);
+  }
+}
+
 /**
  * Open framed Cap'n Proto bytes for typed access. Returns a PrimitivesReader.
  */
@@ -246,4 +350,9 @@ export function openPrimitives(cpp, bytes) {
   cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
   if (cpp._exports.cpp_any_open(bytes.length) !== 1) throw new Error("cpp_any_open failed");
   return new PrimitivesReader(cpp);
+}
+
+/** Begin building a new Primitives message. Returns a PrimitivesBuilder. */
+export function buildPrimitives(cpp) {
+  return new PrimitivesBuilder(cpp);
 }

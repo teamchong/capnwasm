@@ -375,6 +375,10 @@ function computeOffsets(structs) {
       f.bitOffset = aligned;
       dataBits = aligned + size;
     }
+    // Round up to whole-word data section + persist sizes on the struct
+    // so the Builder codegen can call cpp_any_builder_init with correct sizes.
+    s.dataWords = Math.ceil(dataBits / 64);
+    s.ptrWords  = nextPtr;
   }
 }
 
@@ -587,6 +591,37 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push("");
   }
 
+  // Builder classes — counterpart to Readers. One Builder writes one
+  // message at a time (the wasm-side AnyStruct::Builder is a global slot).
+  for (const s of structs) {
+    lines.push(`export class ${s.name}Builder {`);
+    lines.push(`  constructor(cpp) {`);
+    lines.push(`    this._cpp = cpp;`);
+    lines.push(`    if (cpp._exports.cpp_any_builder_init(${s.dataWords}, ${s.ptrWords}) !== 1) {`);
+    lines.push(`      throw new Error("cpp_any_builder_init failed");`);
+    lines.push(`    }`);
+    lines.push(`  }`);
+    lines.push("");
+    for (const f of s.fields) {
+      const setter = generateSetter(f);
+      if (!setter) continue;
+      lines.push(`  set ${f.name}(value) {`);
+      for (const line of setter) lines.push(`    ${line}`);
+      lines.push(`  }`);
+    }
+    lines.push("");
+    lines.push(`  /** Serialize the message to framed Cap'n Proto bytes. */`);
+    lines.push(`  toBytes() {`);
+    lines.push(`    const len = this._cpp._exports.cpp_any_builder_finalize();`);
+    lines.push(`    if (!len) throw new Error("cpp_any_builder_finalize failed");`);
+    lines.push(`    const u8 = this._cpp._u8;`);
+    lines.push(`    const out = this._cpp._outPtr;`);
+    lines.push(`    return u8.slice(out, out + len);`);
+    lines.push(`  }`);
+    lines.push(`}`);
+    lines.push("");
+  }
+
   // Open helper for the first struct (treated as the root by convention).
   if (structs.length > 0) {
     const root = structs[0];
@@ -599,9 +634,78 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push(`  if (cpp._exports.cpp_any_open(bytes.length) !== 1) throw new Error("cpp_any_open failed");`);
     lines.push(`  return new ${root.name}Reader(cpp);`);
     lines.push(`}`);
+    lines.push("");
+    lines.push(`/** Begin building a new ${root.name} message. Returns a ${root.name}Builder. */`);
+    lines.push(`export function build${root.name}(cpp) {`);
+    lines.push(`  return new ${root.name}Builder(cpp);`);
+    lines.push(`}`);
   }
 
   return lines.join("\n") + "\n";
+}
+
+function generateSetter(field) {
+  if (field.kind === "pointer") {
+    if (field.type === "Text") {
+      return [
+        `const enc = new TextEncoder().encode(value);`,
+        `const u8 = this._cpp._u8;`,
+        `u8.set(enc, this._cpp._exports.cpp_in_ptr());`,
+        `this._cpp._exports.cpp_any_builder_set_text(${field.ptrIndex}, enc.length);`,
+      ];
+    }
+    if (field.type === "Data") {
+      return [
+        `const u8 = this._cpp._u8;`,
+        `u8.set(value, this._cpp._exports.cpp_in_ptr());`,
+        `this._cpp._exports.cpp_any_builder_set_data(${field.ptrIndex}, value.length);`,
+      ];
+    }
+    return null;  // struct refs need nested builder support
+  }
+  const off = field.bitOffset >> 3;
+  switch (field.type) {
+    case "Bool":
+      return [`this._cpp._exports.cpp_any_builder_set_bool(${field.bitOffset}, value ? 1 : 0);`];
+    case "UInt8":
+    case "Int8":
+      return [`this._cpp._exports.cpp_any_builder_set_uint8(${off}, value & 0xff);`];
+    case "UInt16":
+    case "Int16":
+      return [`this._cpp._exports.cpp_any_builder_set_uint16(${off}, value & 0xffff);`];
+    case "UInt32":
+    case "Int32":
+      return [`this._cpp._exports.cpp_any_builder_set_uint32(${off}, value >>> 0);`];
+    case "UInt64":
+    case "Int64":
+      return [
+        `let lo, hi;`,
+        `if (typeof value === "bigint") {`,
+        `  lo = Number(value & 0xffffffffn) >>> 0;`,
+        `  hi = Number((value >> 32n) & 0xffffffffn) | 0;`,
+        `} else if (value >= 0) {`,
+        `  lo = (value >>> 0); hi = ((value / 4294967296) >>> 0);`,
+        `} else {`,
+        `  const abs = -value; const aLo = (abs >>> 0); const aHi = ((abs / 4294967296) >>> 0);`,
+        `  lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0;`,
+        `}`,
+        `this._cpp._exports.cpp_any_builder_set_int64_lo_hi(${off}, lo, hi);`,
+      ];
+    case "Float32":
+      return [
+        `if (!this._fbuf) { this._fbuf = new ArrayBuffer(4); this._fu = new Uint32Array(this._fbuf); this._ff = new Float32Array(this._fbuf); }`,
+        `this._ff[0] = value;`,
+        `this._cpp._exports.cpp_any_builder_set_uint32(${off}, this._fu[0]);`,
+      ];
+    case "Float64":
+      return [
+        `if (!this._dbuf) { this._dbuf = new ArrayBuffer(8); this._du = new Uint32Array(this._dbuf); this._dd = new Float64Array(this._dbuf); }`,
+        `this._dd[0] = value;`,
+        `this._cpp._exports.cpp_any_builder_set_int64_lo_hi(${off}, this._du[0], this._du[1]);`,
+      ];
+    default:
+      return null;
+  }
 }
 
 /**
