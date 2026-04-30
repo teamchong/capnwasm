@@ -125,6 +125,14 @@ table.cmp {
   border-collapse: collapse;
   margin: 14px 0;
   font-size: 0.82rem;
+  /* Wide comparison tables scroll horizontally on narrow viewports
+     instead of pushing the page off-screen. The .cmp-scroll wrapper
+     applied below adds the scroll container; a bare <table> falls
+     back to display: block so a single hard-coded long row still
+     gets its own scroll bar. */
+  display: block;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 table.cmp th {
