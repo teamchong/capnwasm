@@ -21,7 +21,8 @@
   ],
   "scripts": {
     "build:wasm": "bash cpp/build.sh",
-    "bench": "node bench/runner.mjs"
+    "bench":      "node bench/runner.mjs",
+    "test":       "node --test test/*.test.mjs"
   },
   "license": "MIT",
   "devDependencies": {

@@ -109,11 +109,36 @@ separate `.wasm` asset.
 One package, one CLI, library import all share the name:
 
 ```bash
-npx capnwasm gen user.capnp -o user.gen.mjs   # codegen
+npx capnwasm gen user.capnp -o user.gen.mjs   # codegen from .capnp
+npx capnwasm gen user.ts    -o user.gen.mjs   # codegen from TS interfaces
 npx capnwasm user.capnp                        # shorthand for gen
 npx capnwasm build                             # rebuild the wasm
 npx capnwasm bench                             # run the Playwright bench
 ```
+
+The CLI accepts either format. Web devs who don't want to learn the
+`.capnp` grammar can just write TypeScript interfaces:
+
+```ts
+export interface User {
+  // @capnp UInt64
+  id: number;
+  // @capnp UInt32
+  age: number;
+  active: boolean;
+  name: string;
+  email: string;
+}
+```
+
+Default mapping: `string`→Text, `boolean`→Bool, `bigint`→Int64,
+`Uint8Array`→Data, `number`→Float64. Use `// @capnp Type` on the line
+above a field to override (typically for integer subtypes). Capitalised
+type names that match another `interface` in the same file are treated
+as struct references.
+
+Anything outside this subset (methods, generics, mapped types) raises
+an explicit error — never silently produces a half-broken reader.
 
 Library import from the same package:
 ```js

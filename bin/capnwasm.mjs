@@ -53,6 +53,153 @@ function parseGenArgs(argv) {
 }
 
 /**
+ * Parse a TypeScript file's interface declarations into our struct model.
+ *
+ * Strategy: line-based. We walk the file one line at a time, track which
+ * interface body we're inside (via brace depth), and read directive
+ * comments as they precede field declarations. Easy to reason about, hard
+ * to break.
+ *
+ * Supported subset:
+ *   export? interface Name {
+ *     // @capnp Int64        -- optional type override directive
+ *     // @ordinal N           -- optional explicit @-ordinal
+ *     fieldName: tsType;
+ *     // ...
+ *   }
+ *
+ * Default TS -> Cap'n Proto type mapping:
+ *   string     -> Text
+ *   boolean    -> Bool
+ *   bigint     -> Int64
+ *   Uint8Array -> Data
+ *   number     -> Float64    (JS number is double; override with @capnp)
+ *   OtherName  -> struct reference (must also be in this file)
+ *
+ * Anything else inside an interface body (methods, unions, generics,
+ * mapped types, computed properties) raises an explicit error so users
+ * are never silently shipped a half-broken reader.
+ */
+const TS_TO_CAPNP = {
+  "string":     "Text",
+  "boolean":    "Bool",
+  "bigint":     "Int64",
+  "Uint8Array": "Data",
+  "number":     "Float64",
+};
+
+const VALID_CAPNP_PRIMS = new Set([
+  "Bool",
+  "UInt8", "UInt16", "UInt32", "UInt64",
+  "Int8",  "Int16",  "Int32",  "Int64",
+  "Float32", "Float64",
+  "Text", "Data", "Void",
+]);
+
+async function parseTsInterfaces(text) {
+  const lines = text.split(/\r?\n/);
+  const structs = [];
+  let current = null;       // {name, fields, nextOrdinal} when inside an interface
+  let braceDepth = 0;       // # of unmatched { inside the current interface body
+  let pendingDirectives = {};
+
+  for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+    const raw = lines[lineNo];
+    const stripped = raw.replace(/\/\*.*?\*\//g, "").trimEnd();
+    const lineCtx = `${lineNo + 1}: ${raw.trim()}`;
+
+    if (current === null) {
+      const m = stripped.match(/^\s*(?:export\s+)?interface\s+([A-Z][A-Za-z0-9_]*)\s*{?\s*$/);
+      if (m) {
+        current = { name: m[1], fields: [], nextOrdinal: 0 };
+        braceDepth = stripped.endsWith("{") ? 1 : 0;
+        pendingDirectives = {};
+      }
+      continue;
+    }
+
+    // We're inside an interface body. Track braces.
+    for (const ch of stripped) {
+      if (ch === "{") braceDepth++;
+      else if (ch === "}") braceDepth--;
+    }
+
+    // Empty / whitespace-only -> skip.
+    if (!stripped.trim()) continue;
+
+    // Closing brace ends the interface.
+    if (braceDepth === 0) {
+      structs.push({ name: current.name, fields: current.fields });
+      current = null;
+      pendingDirectives = {};
+      continue;
+    }
+
+    // Directive comment: `// @capnp X` or `// @ordinal N`.
+    const dm = stripped.match(/^\s*\/\/\s*@(capnp|ordinal)\s+(\S+)\s*$/);
+    if (dm) {
+      pendingDirectives[dm[1]] = dm[2];
+      continue;
+    }
+
+    // Pure comment line -> skip.
+    if (/^\s*\/\//.test(stripped)) continue;
+
+    // Field declaration.
+    const fm = stripped.match(/^\s*([a-zA-Z_][a-zA-Z0-9_]*)\??\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*[;,]?\s*$/);
+    if (fm) {
+      const tsName = fm[1];
+      const tsType = fm[2];
+      let capnpType = pendingDirectives.capnp ?? TS_TO_CAPNP[tsType];
+      if (!capnpType && /^[A-Z]/.test(tsType)) capnpType = tsType;  // struct ref
+      if (!capnpType) {
+        throw new Error(`capnwasm: line ${lineNo + 1}: unsupported TS type '${tsType}'. Add '// @capnp <Type>' directive.`);
+      }
+      if (pendingDirectives.capnp && !VALID_CAPNP_PRIMS.has(pendingDirectives.capnp)
+          && !/^[A-Z][A-Za-z0-9_]*$/.test(pendingDirectives.capnp)) {
+        throw new Error(`capnwasm: line ${lineNo + 1}: '@capnp ${pendingDirectives.capnp}' is not a recognized Cap'n Proto type.`);
+      }
+      const ordinal = pendingDirectives.ordinal !== undefined
+        ? +pendingDirectives.ordinal
+        : current.nextOrdinal++;
+      if (pendingDirectives.ordinal !== undefined) current.nextOrdinal = ordinal + 1;
+      current.fields.push({ name: tsName, ordinal, type: capnpType });
+      pendingDirectives = {};
+      continue;
+    }
+
+    // Anything else -> reject loudly.
+    throw new Error(`capnwasm: line ${lineNo + 1}: cannot parse '${raw.trim()}'. Supported: simple field declarations 'name: Type;'`);
+  }
+
+  if (current !== null) {
+    throw new Error("capnwasm: TS source ended inside an interface body (unbalanced braces).");
+  }
+  validateStructs(structs);
+  computeOffsets(structs);
+  return structs;
+}
+
+/**
+ * Cross-check that every field's type is either a known Cap'n Proto
+ * primitive or a struct declared in the same file. Catches typos in
+ * `// @capnp Foo` directives and forward references to non-existent types.
+ */
+function validateStructs(structs) {
+  const declared = new Set(structs.map((s) => s.name));
+  for (const s of structs) {
+    for (const f of s.fields) {
+      if (VALID_CAPNP_PRIMS.has(f.type)) continue;
+      if (declared.has(f.type)) continue;
+      throw new Error(
+        `capnwasm: ${s.name}.${f.name}: type '${f.type}' is not a known ` +
+        `Cap'n Proto primitive nor a struct declared in this file.`
+      );
+    }
+  }
+}
+
+/**
  * Parse a .capnp file directly in JS — no external binary required, so
  * `npx capnwasm gen schema.capnp` works on every platform out of the box.
  *
@@ -73,10 +220,13 @@ function parseGenArgs(argv) {
  */
 async function parseSchema(schemaPath) {
   const abs = resolve(schemaPath);
+  const text = await import("node:fs/promises").then((m) => m.readFile(abs, "utf8"));
+  if (abs.endsWith(".ts") || abs.endsWith(".tsx")) {
+    return parseTsInterfaces(text);
+  }
   if (process.env.CAPNP_BIN) {
     return parseSchemaViaUpstream(abs, process.env.CAPNP_BIN);
   }
-  const text = await import("node:fs/promises").then((m) => m.readFile(abs, "utf8"));
   return parseRawCapnp(text);
 }
 
@@ -135,6 +285,7 @@ function parseRawCapnp(srcRaw) {
     structs.push({ name: m[1], fields: parseStructBody(body) });
     i = j;
   }
+  validateStructs(structs);
   computeOffsets(structs);
   return structs;
 }
