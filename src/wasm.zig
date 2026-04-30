@@ -351,6 +351,71 @@ export fn cw_lazy_obj_fields_text(input_ptr: [*]const u8, input_len: u32) u32 {
     return @intCast(write_pos);
 }
 
+/// Emit the already-parsed lazy message as capnweb-shape JSON into scratch_out.
+/// Skips the wire parse cost (done by cw_lazy_open with zero copy) and the
+/// JSON-emit cost dominated by simple byte writes — feeding JS a JSON
+/// string ready for `JSON.parse`. Returns bytes written, 0 on failure.
+export fn cw_lazy_emit_json() u32 {
+    const lp = lazy_parsed orelse return 0;
+    var w: json_emit.Writer = .{ .bytes = scratch_out[0..] };
+    json_emit.emitMessage(lp.root(), &w) catch return 0;
+    return @intCast(w.pos);
+}
+
+/// Walk the lazy message's object payload once and emit every (key, value)
+/// text pair into scratch_out. Designed for the "read everything via lazy
+/// reader" path: avoids JSON.parse round-trips on the JS side and lets the
+/// caller build the JS object in a single tight loop.
+///
+/// Output layout:
+///   u32 count
+///   for each entry:
+///     u32 key_len
+///     u32 val_len     (0xFFFFFFFF for non-text values, no value bytes follow)
+///     bytes key
+///     bytes value
+///
+/// Returns total bytes written, or 0 if the message isn't an object expression.
+export fn cw_lazy_obj_all_text(_: u32) u32 {
+    const lp = lazy_parsed orelse return 0;
+    const expr = msgExpression(lp.root()) orelse return 0;
+    const list = (asObjectExpr(expr)) orelse return 0;
+
+    var write_pos: usize = 4;
+    std.mem.writeInt(u32, scratch_out[0..4], list.count, .little);
+
+    var i: u32 = 0;
+    while (i < list.count) : (i += 1) {
+        const kv = list.getStruct(i);
+        const key = kv.readText(0);
+        const val_struct = kv.readStruct(1);
+        const tag_byte: u8 = @truncate(val_struct.readU16(0, 0));
+        const tag: tape.ExprTag = @enumFromInt(tag_byte);
+
+        if (write_pos + 8 + key.len > SCRATCH_OUT_CAP) return 0;
+        std.mem.writeInt(u32, scratch_out[write_pos..][0..4], @intCast(key.len), .little);
+        write_pos += 4;
+
+        if (tag != .text) {
+            std.mem.writeInt(u32, scratch_out[write_pos..][0..4], 0xFFFFFFFF, .little);
+            write_pos += 4;
+            @memcpy(scratch_out[write_pos .. write_pos + key.len], key);
+            write_pos += key.len;
+            continue;
+        }
+
+        const val_text = val_struct.readText(0);
+        if (write_pos + 4 + key.len + val_text.len > SCRATCH_OUT_CAP) return 0;
+        std.mem.writeInt(u32, scratch_out[write_pos..][0..4], @intCast(val_text.len), .little);
+        write_pos += 4;
+        @memcpy(scratch_out[write_pos .. write_pos + key.len], key);
+        write_pos += key.len;
+        @memcpy(scratch_out[write_pos .. write_pos + val_text.len], val_text);
+        write_pos += val_text.len;
+    }
+    return @intCast(write_pos);
+}
+
 /// Like the above but for an integer-typed field. Returns the value (as i64)
 /// via a 16-byte struct in scratch_out: bytes 0..8 = value, byte 8 = found
 /// flag (1 found, 0 not found).

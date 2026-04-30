@@ -286,6 +286,7 @@ export const TAGS = { TAG_PUSH, TAG_PULL, TAG_RESOLVE, TAG_REJECT, TAG_RELEASE, 
 // waste. UTF-8 bytes for any name string are immutable, so we intern them.
 const NAME_ENCODE_CACHE = new Map();
 const SHARED_TEXT_ENCODER = new TextEncoder();
+const SHARED_TEXT_DECODER = new TextDecoder();
 function encodeName(name) {
   let e = NAME_ENCODE_CACHE.get(name);
   if (!e) {
@@ -387,6 +388,75 @@ export class LazyReader {
       }
     }
     return results;
+  }
+
+  /**
+   * Full eager read via the lazy infrastructure: emit JSON from the
+   * already-parsed message and JSON.parse it. The lazy open avoided the
+   * parse-time memcpy; the JSON.parse step uses V8's optimized native parser.
+   *
+   * For medium/wide payloads this is faster than the default `deserialize`
+   * (which re-parses the bytes) because openLazy already paid for parse
+   * with zero copy.
+   */
+  toValue() {
+    const len = this.#wasm._exports.cw_lazy_emit_json();
+    if (len === 0) throw new Error("cw_lazy_emit_json failed");
+    const u8 = this.#wasm._u8;
+    const buf = u8.subarray(this.#wasm._outPtr, this.#wasm._outPtr + len);
+    return JSON.parse(SHARED_TEXT_DECODER.decode(buf));
+  }
+
+  /**
+   * Read every (key, value) string pair from the lazy message's object
+   * payload in one wasm boundary call. Returns a plain JS object.
+   *
+   * Beats the eager JSON.parse path when V8's per-property insert cost is
+   * cheaper than the wasm-side JSON encode + parse round-trip — i.e. for
+   * messages dominated by short string fields.
+   */
+  objectAllText() {
+    const len = this.#wasm._exports.cw_lazy_obj_all_text(0);
+    if (len === 0) return undefined;
+    const u8 = this.#wasm._u8;
+    const outPtr = this.#wasm._outPtr;
+    const dv = new DataView(u8.buffer, outPtr, len);
+    const count = dv.getUint32(0, true);
+    const out = {};
+    let pos = 4;
+    for (let i = 0; i < count; i++) {
+      const keyLen = dv.getUint32(pos, true);
+      const valLen = dv.getUint32(pos + 4, true);
+      pos += 8;
+      // Key
+      let key;
+      let ascii = true;
+      for (let j = 0; j < keyLen; j++) if (u8[outPtr + pos + j] >= 0x80) { ascii = false; break; }
+      if (ascii) {
+        key = "";
+        for (let j = 0; j < keyLen; j++) key += String.fromCharCode(u8[outPtr + pos + j]);
+      } else {
+        key = new TextDecoder().decode(u8.subarray(outPtr + pos, outPtr + pos + keyLen));
+      }
+      pos += keyLen;
+      // Value
+      if (valLen === 0xFFFFFFFF) {
+        out[key] = undefined;
+        continue;
+      }
+      let val;
+      ascii = true;
+      for (let j = 0; j < valLen; j++) if (u8[outPtr + pos + j] >= 0x80) { ascii = false; break; }
+      if (ascii) {
+        val = "";
+        for (let j = 0; j < valLen; j++) val += String.fromCharCode(u8[outPtr + pos + j]);
+      } else {
+        val = new TextDecoder().decode(u8.subarray(outPtr + pos, outPtr + pos + valLen));
+      }
+      pos += valLen;
+      out[key] = val;
+    }
+    return out;
   }
 
   /** For an object-typed expression, return the int value of the named field. */

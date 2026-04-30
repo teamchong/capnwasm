@@ -160,8 +160,8 @@ async function main() {
     console.log("LAZY ACCESS  (decode + read 3 fields, lower µs is better)");
     console.log("This is the access pattern Cap'n Proto's wire format is designed for.");
     console.log(sep);
-    const head2 = ["fixture", "cw lazy3", "cw batch3", "cwb (full+access)", "lazy x", "batch x"];
-    console.log(head2.map((c) => c.padStart(20)).join(""));
+    const head2 = ["fixture", "cw lazy3", "cw batch3", "cwb (decode+3)", "lazy x", "batch x"];
+    console.log(head2.map((c) => c.padStart(18)).join(""));
     for (const [name, p] of lazyRows) {
       const lazySpd = (p.capnweb_lazy3_us / p.capnwasm_lazy3_us).toFixed(2);
       const batchSpd = (p.capnweb_lazy3_us / p.capnwasm_batch3_us).toFixed(2);
@@ -173,7 +173,24 @@ async function main() {
         lazySpd + "x",
         batchSpd + "x",
       ];
-      console.log(row.map((c) => String(c).padStart(20)).join(""));
+      console.log(row.map((c) => String(c).padStart(18)).join(""));
+    }
+
+    console.log("\n" + sep);
+    console.log("FULL READ via LAZY  (decode + iterate ALL fields)");
+    console.log("This is 'eager full read' but routed through the lazy reader path.");
+    console.log(sep);
+    const head3 = ["fixture", "cw lazyAll", "cwb (full+iter)", "speedup"];
+    console.log(head3.map((c) => c.padStart(18)).join(""));
+    for (const [name, p] of lazyRows) {
+      const spd = (p.capnweb_fullread_us / p.capnwasm_lazyall_us).toFixed(2);
+      const row = [
+        name,
+        p.capnwasm_lazyall_us?.toFixed(2) ?? "-",
+        p.capnweb_fullread_us?.toFixed(2) ?? "-",
+        spd + "x",
+      ];
+      console.log(row.map((c) => String(c).padStart(18)).join(""));
     }
   }
 

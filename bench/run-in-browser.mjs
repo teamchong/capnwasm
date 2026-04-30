@@ -101,6 +101,8 @@ function perfFor(wasm, fx) {
     capnwasm_lazy3_us: lazy3.cwUs,
     capnwasm_batch3_us: lazy3.cwBatchUs,
     capnweb_lazy3_us: lazy3.cwbUs,
+    capnwasm_lazyall_us: lazy3.cwAllUs,
+    capnweb_fullread_us: lazy3.cwbAllUs,
     lazy3_supported: lazy3.supported,
     capnweb_encode_us: tCwbEnc.usPerOp,
     capnweb_decode_us: tCwbDec.usPerOp,
@@ -137,13 +139,39 @@ function lazyAccessBench(wasm, fx, cwBytes, cwbBytes, iters) {
     const vs = r.fieldsText(fieldNames);
     return vs[0].length + vs[1].length + vs[2].length;
   });
+  // Full-read via lazy: zero-copy parse + wasm-emit JSON + native JSON.parse.
+  // This routes through the lazy infrastructure (avoids the eager-decode memcpy)
+  // and uses V8's optimized parser for object construction.
+  const tCwAll = bench(iters, () => {
+    const r = wasm.openLazy(cwBytes);
+    const v = r.toValue();
+    const obj = v[1];
+    let total = 0;
+    for (const k in obj) total += obj[k].length;
+    return total;
+  });
+  // Full read in capnweb terms: full decode + iterate every value.
+  const tCwbAll = bench(iters, () => {
+    const v = capnweb.deserialize(cwbBytes);
+    const obj = v[1];
+    let total = 0;
+    for (const k in obj) total += obj[k].length;
+    return total;
+  });
   const tCwb = bench(iters, () => {
     const v = capnweb.deserialize(cwbBytes);
     // v is ["push", {field0: "...", ...}]
     const obj = v[1];
     return obj[fieldNames[0]].length + obj[fieldNames[1]].length + obj[fieldNames[2]].length;
   });
-  return { supported: true, cwUs: tCw.usPerOp, cwBatchUs: tCwBatch.usPerOp, cwbUs: tCwb.usPerOp };
+  return {
+    supported: true,
+    cwUs: tCw.usPerOp,
+    cwBatchUs: tCwBatch.usPerOp,
+    cwbUs: tCwb.usPerOp,
+    cwAllUs: tCwAll.usPerOp,
+    cwbAllUs: tCwbAll.usPerOp,
+  };
 }
 
 function benchWasmDecodeOnly(wasm, bytes, iters) {
