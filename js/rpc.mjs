@@ -405,6 +405,11 @@ export class RpcSession {
     this.#closed = true;
     for (const q of this.#questions.values()) q.deferred.reject(new Error("session closed"));
     this.#questions.clear();
+    // Same for in-flight streams: reject the iterator so for-await loops
+    // unwind instead of hanging on a chunk that will never arrive.
+    const closeErr = new Error("session closed");
+    for (const stream of this.#streamQuestions.values()) stream.end(closeErr);
+    this.#streamQuestions.clear();
     this.#transport.close?.();
   }
 

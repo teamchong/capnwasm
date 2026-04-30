@@ -74,14 +74,26 @@ happy; others will hit pattern (2) and be confused.
 Less important than #3. Documentation can paper over it: "use `Promise.all`
 for batched calls."
 
-## 5. Streaming response handling is undertested
+## 5. Streaming response handling — adversarial tests added
 
-`callStream` works for the basic case. Real streaming has surprises:
-backpressure, mid-stream errors, peer disconnect, abort signals. Our test
-suite has one streaming test; production use will probably surface bugs.
+**Update (2026-04-30):** added 5 adversarial cases to `test/stream.test.mjs`:
+session-closed-mid-stream, client breaks-out-early, concurrent streams,
+empty chunks, 500 tiny chunks in order. The first one exposed a real bug —
+`RpcSession.close()` didn't reject pending stream iterators, so any
+for-await loop running when the session closed would hang forever. Fixed
+in `js/rpc.mjs`: close now drains `#streamQuestions` with `session closed`
+errors.
 
-Cost: ~half a day for adversarial tests. Worth doing the moment someone tries
-to use streaming for real.
+Still on the list if anyone uses streams hard:
+
+- **Backpressure**: today the chunk queue is unbounded. A fast server +
+  slow client lets memory grow without limit. Needs a high-water mark on
+  the queue and a flow-control signal back to the server.
+- **Server-side break detection**: when the client breaks out of for-await
+  early, the server keeps yielding (the test documents this). A return
+  signal from client → server would let the handler stop.
+- **Abort signals**: `callStream` has no AbortSignal parameter. Adding one
+  would let callers tear down a stream cleanly.
 
 ## 6. Capability lifecycle under failure
 
