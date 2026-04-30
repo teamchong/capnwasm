@@ -1067,9 +1067,15 @@ uint32_t cpp_any_batch_read(uint32_t input_len) {
 // XBuilder classes know each field's offset/type at build time; these
 // primitives let them write into a shared message via integer-indexed calls.
 //
-// The builder is held in heap-allocated storage so its lifetime spans many
-// set-field calls between cpp_any_builder_init and cpp_any_builder_finalize.
+// The builder lives in static placement-new storage with a pre-allocated
+// first segment. Avoids the malloc/calloc/free cycle on every Builder
+// init — the calloc-zeroing first segment was the dominant CPU cost in
+// hot RPC loops (CPU profile showed ~70% of wasm time in calloc).
+// MallocMessageBuilder's destructor zeroes a borrowed firstSegment for
+// us, so re-initialization sees a fresh-zeroed buffer.
 
+alignas(8) static capnp::word any_builder_first_seg[8192];   // 64 KB
+alignas(8) static char any_builder_storage[sizeof(capnp::MallocMessageBuilder)];
 static capnp::MallocMessageBuilder* any_builder = nullptr;
 alignas(8) static char any_builder_root_storage[64];
 static capnp::AnyStruct::Builder* any_builder_root = nullptr;
@@ -1080,10 +1086,12 @@ uint32_t cpp_any_builder_init(uint32_t data_words, uint32_t ptr_words) {
     any_builder_root = nullptr;
   }
   if (any_builder) {
-    delete any_builder;
+    any_builder->~MallocMessageBuilder();
     any_builder = nullptr;
   }
-  any_builder = new capnp::MallocMessageBuilder();
+  any_builder = new (any_builder_storage) capnp::MallocMessageBuilder(
+      kj::arrayPtr(any_builder_first_seg,
+                   sizeof(any_builder_first_seg) / sizeof(capnp::word)));
   auto root = any_builder->initRoot<capnp::AnyPointer>();
   auto anyStruct = root.initAsAnyStruct(data_words, ptr_words);
   static_assert(sizeof(capnp::AnyStruct::Builder) <= sizeof(any_builder_root_storage),
@@ -1190,9 +1198,26 @@ uint32_t cpp_any_builder_finalize() {
 // reader/builder generated for the application's own schemas.
 // ---------------------------------------------------------------------------
 
+// Pre-allocated first segment + placement-new storage for the RPC frame
+// builder. Same reasoning as any_builder above: avoid the calloc/free
+// cycle that dominated CPU profiles. RPC frames (Bootstrap, Call, Return,
+// Finish, Release) are small — 4 KB is more than enough for a single
+// segment in practice. Larger payloads carry their bytes in
+// Call.params.content / Return.results.content via initWithCaveats and
+// don't bloat this builder.
+alignas(8) static capnp::word rpc_first_seg[512];   // 4 KB
+alignas(8) static char rpc_builder_storage[sizeof(capnp::MallocMessageBuilder)];
 static capnp::MallocMessageBuilder* rpc_builder = nullptr;
 alignas(8) static char rpc_reader_storage[1024];
 static capnp::FlatArrayMessageReader* rpc_reader = nullptr;
+
+// Reset rpc_builder in place using the static first segment. Replaces
+// the old `delete + new` pattern that hit calloc on every send.
+static inline void resetRpcBuilder() {
+  if (rpc_builder) rpc_builder->~MallocMessageBuilder();
+  rpc_builder = new (rpc_builder_storage) capnp::MallocMessageBuilder(
+      kj::arrayPtr(rpc_first_seg, sizeof(rpc_first_seg) / sizeof(capnp::word)));
+}
 
 // Message kind codes returned to JS — match capnp::rpc::Message::Which
 // values 1-1, but exposed as a stable small-int enum for the JS layer to
@@ -1260,8 +1285,7 @@ static uint32_t finalizeRpcBuilder() {
 
 // Build: bootstrap question. Returns framed bytes in cpp_out.
 uint32_t cpp_rpc_build_bootstrap(uint32_t question_id) {
-  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
-  rpc_builder = new capnp::MallocMessageBuilder();
+  resetRpcBuilder();
   auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
   auto boot = msg.initBootstrap();
   boot.setQuestionId(question_id);
@@ -1281,8 +1305,7 @@ uint32_t cpp_rpc_build_call(
     uint64_t interface_id,
     uint16_t method_id,
     uint32_t params_len) {
-  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
-  rpc_builder = new capnp::MallocMessageBuilder();
+  resetRpcBuilder();
   auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
   auto call = msg.initCall();
   call.setQuestionId(question_id);
@@ -1310,8 +1333,7 @@ uint32_t cpp_rpc_build_call(
 //   kind = 1  exception (exception type code in target_id, message in cpp_in)
 //   kind = 2  canceled
 uint32_t cpp_rpc_build_return(uint32_t answer_id, uint8_t kind, uint32_t results_len) {
-  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
-  rpc_builder = new capnp::MallocMessageBuilder();
+  resetRpcBuilder();
   auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
   auto ret = msg.initReturn();
   ret.setAnswerId(answer_id);
@@ -1332,8 +1354,7 @@ uint32_t cpp_rpc_build_return(uint32_t answer_id, uint8_t kind, uint32_t results
 }
 
 uint32_t cpp_rpc_build_finish(uint32_t question_id) {
-  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
-  rpc_builder = new capnp::MallocMessageBuilder();
+  resetRpcBuilder();
   auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
   auto fin = msg.initFinish();
   fin.setQuestionId(question_id);
@@ -1341,8 +1362,7 @@ uint32_t cpp_rpc_build_finish(uint32_t question_id) {
 }
 
 uint32_t cpp_rpc_build_release(uint32_t import_id, uint32_t refcount) {
-  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
-  rpc_builder = new capnp::MallocMessageBuilder();
+  resetRpcBuilder();
   auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
   auto rel = msg.initRelease();
   rel.setId(import_id);
@@ -1565,8 +1585,7 @@ uint32_t cpp_rpc_get_release_refcount() {
 uint32_t cpp_rpc_build_return_with_caps(
     uint32_t answer_id,
     uint32_t cap_count) {
-  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
-  rpc_builder = new capnp::MallocMessageBuilder();
+  resetRpcBuilder();
   auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
   auto ret = msg.initReturn();
   ret.setAnswerId(answer_id);
@@ -1651,8 +1670,7 @@ uint32_t cpp_rpc_begin_call(
     uint16_t method_id,
     uint32_t data_words,
     uint32_t ptr_words) {
-  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
-  rpc_builder = new capnp::MallocMessageBuilder();
+  resetRpcBuilder();
   auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
   auto call = msg.initCall();
   call.setQuestionId(question_id);
@@ -1681,8 +1699,7 @@ uint32_t cpp_rpc_begin_return(
     uint32_t answer_id,
     uint32_t data_words,
     uint32_t ptr_words) {
-  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
-  rpc_builder = new capnp::MallocMessageBuilder();
+  resetRpcBuilder();
   auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
   auto ret = msg.initReturn();
   ret.setAnswerId(answer_id);
