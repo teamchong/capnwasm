@@ -33,6 +33,7 @@ export default defineConfig(({ command }) => ({
         rpc: resolve(__dirname, "rpc.html"),
         honest: resolve(__dirname, "honest.html"),
         inspect: resolve(__dirname, "inspect.html"),
+        notes: resolve(__dirname, "notes.html"),
       },
     },
   },

@@ -5,4 +5,5 @@
   <url><loc>/rpc.html</loc>       <changefreq>weekly</changefreq><priority>0.9</priority></url>
   <url><loc>/honest.html</loc>    <changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>/inspect.html</loc>   <changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>/notes.html</loc>     <changefreq>monthly</changefreq><priority>0.7</priority></url>
 </urlset>
