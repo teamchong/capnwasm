@@ -42,13 +42,17 @@ the handlers in `vite-rpc-server.mjs` into your own deployment.
 
 ## Wiring
 
-- `users.capnp` &mdash; the demo schema. `npm run prepare` regenerates
-  `src/playground/users.gen.mjs` if you edit it.
-- `scripts/generate-fixtures.mjs` &mdash; emits the static `.json`, `.cwb`, and
-  `.capnp` fixture files. Edit the `COUNTS` / avatar sizes here to change
-  the bench surface.
+- `users.capnp` &mdash; the demo schema. `npm run codegen` runs `npx
+  capnwasm gen users.capnp` to produce `src/playground/users.gen.mjs`,
+  and the `capnwasm/vite-plugin` plugin regenerates it on save during
+  dev. The generated file is gitignored.
+- `scripts/generate-fixtures.mjs` &mdash; emits the static `.json`, `.cwb`,
+  and `.capnp` fixture files. Edit the record counts / avatar sizes
+  here to change the bench surface.
 - `src/playground/main.ts` &mdash; runs all three protocols, measures
   `fetch` + `decode` + `render` per phase, picks the winner per row.
+- `vite-rpc-server.mjs` &mdash; the bench WebSocket server, attached to
+  Vite&apos;s HTTP server in both dev and preview.
 
 ## Honest about what this measures
 

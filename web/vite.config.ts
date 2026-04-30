@@ -2,6 +2,8 @@ import { defineConfig } from "vite";
 import { resolve } from "node:path";
 // @ts-ignore — JS module without a .d.ts file.
 import { rpcDevServer } from "./vite-rpc-server.mjs";
+// @ts-ignore — local plugin from the parent capnwasm package.
+import { capnwasm } from "../js/vite-plugin.mjs";
 
 // Multi-page Vite site: a landing page and the live perf playground.
 // Pages are wired up in rollupOptions.input so the build emits both.
@@ -9,7 +11,17 @@ export default defineConfig(({ command }) => ({
   // For local dev / playwright tests we serve from "/". For a published
   // GitHub Pages deploy, set base to "/capnwasm/" via env or a CI flag.
   base: "/",
-  plugins: [rpcDevServer()],
+  plugins: [
+    // Codegen plugin: regenerates web/users.capnp → web/src/playground/users.gen.mjs
+    // on save in dev, and on build. Means we don't have to commit the
+    // generated file or call `npx capnwasm gen` manually.
+    capnwasm({
+      schemas: ["users.capnp"],
+      outDir: "src/playground",
+      extension: ".gen.mjs",
+    }),
+    rpcDevServer(),
+  ],
   build: {
     outDir: "dist",
     emptyOutDir: true,

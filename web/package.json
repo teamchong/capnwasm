@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "cp ../dist/capnp.slim.wasm public/ && node scripts/generate-fixtures.mjs",
+    "codegen": "node ../bin/capnwasm.mjs gen users.capnp -o src/playground/users.gen.mjs",
+    "prepare": "cp ../dist/capnp.slim.wasm public/ && npm run codegen && node scripts/generate-fixtures.mjs",
     "dev": "npm run prepare && vite",
     "build": "npm run prepare && vite build",
     "preview": "vite preview --port 4173",
