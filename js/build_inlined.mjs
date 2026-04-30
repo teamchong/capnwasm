@@ -54,15 +54,9 @@ export async function load() {
 }
 `;
 
-// `--slim` writes dist/inlined.slim.mjs (the size-optimized opt-in build).
-// Default is dist/inlined.mjs (the full-featured bundle every test imports
-// and every existing `import "capnwasm"` user gets).
-const isSlim = process.argv.includes("--slim");
-const outName = isSlim ? "inlined.slim.mjs" : "inlined.mjs";
-
 await mkdir(resolve(ROOT, "dist"), { recursive: true });
-await writeFile(resolve(ROOT, "dist", outName), bundle);
+await writeFile(resolve(ROOT, "dist", "inlined.mjs"), bundle);
 
 const raw = Buffer.byteLength(bundle, "utf8");
 const gz = gzipSync(bundle, { level: 9 }).length;
-console.log(`dist/${outName}:  raw=${raw}  gzip=${gz}`);
+console.log(`dist/inlined.mjs:  raw=${raw}  gzip=${gz}`);

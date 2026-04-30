@@ -1,12 +1,15 @@
 // Browser-optimized entrypoint: small JS shim that loads dist/capnp.slim.wasm
 // over the network with WebAssembly.instantiateStreaming.
 //
-// Why this exists separately from `capnwasm/slim`:
-//   capnwasm/slim is a single-file inlined bundle — fine for Node, but the
-//   wasm is base64-encoded inside the JS, which inflates the on-the-wire
-//   bytes by ~33% before gzip recovers most. For a browser, shipping the
-//   .wasm as a separate asset is smaller (no base64 padding) and faster
-//   (streaming compile parses bytes as they arrive).
+// Why this exists separately from the default `capnwasm` import:
+//   The default is a single-file inlined bundle (base64-encoded wasm
+//   embedded in the JS) — fine for Node, but in a browser that wastes
+//   ~20 KB gzipped on base64 padding and forces a synchronous decode
+//   before instantiation. This entrypoint:
+//     - loads dist/capnp.slim.wasm (the production-only wasm, no
+//       bench/test helpers)
+//     - uses WebAssembly.instantiateStreaming so the browser parses
+//       bytes as they arrive instead of waiting for the full buffer
 //
 // Usage:
 //   import { load } from "capnwasm/browser";

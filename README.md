@@ -87,7 +87,6 @@ for await (const event of stripe.listEvents()) console.log(event.id);
 | | what | gzip | brotli |
 |---|---|---|---|
 | `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, base64-inlined wasm) | 68 KB | 63 KB |
-| `import "capnwasm/slim"` | production-only inlined runtime (no test fixtures) | 60 KB | 57 KB |
 | `import "capnwasm/browser"` | **browser-optimized: tiny JS shim + wasm fetched as a separate asset (streaming compile)** | **44 KB** | **41 KB** |
 | `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | small | small |
 | `import "capnwasm/rpc"` | full RPC layer (sessions, caps, streaming) | small | small |
@@ -95,7 +94,7 @@ for await (const event of stripe.listEvents()) console.log(event.id);
 | `import "capnwasm/codegen"` | wasm-built capnp schema compiler — runs in browser | 356 KB | — |
 | `import "capnwasm/stream"` | helper to stream `fetch` bytes straight into wasm | small | small |
 
-For browsers, prefer `capnwasm/browser`: 45 KB gzip / 42 KB brotli (counting both the JS shim and the separately-fetched `dist/capnp.slim.wasm`). The same bytes the inlined bundles ship, but without the 33% base64 inflation, and with `WebAssembly.instantiateStreaming` so the wasm starts compiling while it's still being downloaded.
+For browsers, prefer `capnwasm/browser`: 44 KB gzip / 41 KB brotli (counting both the JS shim and the separately-fetched `dist/capnp.slim.wasm`, which excludes the bench/test helpers baked into the default wasm). Without the 33% base64 inflation, and with `WebAssembly.instantiateStreaming` so the wasm starts compiling while it's still being downloaded.
 
 For comparison: capnweb is ~21 KB gzip. We're roughly 2x larger because we ship a real Cap'n Proto wasm runtime; that buys us things capnweb structurally can't have (binary wire, zero-copy field access, true sparse-read perf).
 

@@ -221,25 +221,23 @@ wasm-opt "$OUT" \
 echo "Optimized: $OPT_OUT"
 ls -la "$OPT_OUT"
 
-# Generate inlined single-file bundles:
-#   slim (-> dist/inlined.slim.mjs) when this is a non-bench build
-#   full (-> dist/inlined.mjs)       when this is a bench build
-# We always build the bench/full bundle as the default `dist/inlined.mjs`
-# so existing `import "capnwasm"` users keep getting the full feature set
-# (including conformance/typed test helpers) and tests don't break.
-# The slim bundle is opt-in via `import "capnwasm/slim"` for size-conscious
-# users who only need the production runtime + RPC.
+# Two artifacts go into dist/:
+#   dist/capnp.wasm       — full wasm (with bench/test helpers baked in),
+#                           consumed by `import "capnwasm"` (inlined as
+#                           base64) and tests that exercise typed/big/
+#                           conformance schemas
+#   dist/capnp.slim.wasm  — production-only wasm (no test helpers),
+#                           served by `import "capnwasm/browser"` as a
+#                           separately-fetched asset
+#
+# Building both requires two compilation passes (BENCH_MODE differs).
+# A non-bench invocation produces capnp.slim.wasm and then recursively
+# self-invokes in bench mode to produce capnp.wasm + dist/inlined.mjs.
 if [ "$BENCH_MODE" = "1" ]; then
-  node js/build_inlined.mjs   # writes dist/inlined.mjs (full)
+  node js/build_inlined.mjs   # writes dist/inlined.mjs
   cp "$OPT_OUT" dist/capnp.wasm
 else
-  node js/build_inlined.mjs --slim   # writes dist/inlined.slim.mjs
   cp "$OPT_OUT" dist/capnp.slim.wasm
-fi
-
-# When the user runs the slim build, also run the full build so dist/
-# always has both bundles after a single invocation.
-if [ "$BENCH_MODE" != "1" ]; then
   echo "[build.sh] building full bundle (for tests + default import)..."
   bash "$0" bench
 fi
