@@ -49,7 +49,6 @@ CAPNP_SOURCES=(
 # generated code (used by the RPC layer for rpc.capnp accessors).
 # Test-only schemas (typed/big/conformance) compile in only when BENCH_MODE=1.
 WRAPPER=(
-  cpp/schema.capnp.c++
   cpp/wrapper.cpp
   cpp/eh_runtime.cpp
 )
