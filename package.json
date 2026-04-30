@@ -38,6 +38,7 @@
     "bench:rpc":        "node bench/rpc-runner.mjs",
     "bench:rpc:node":   "node bench/rpc_bench.mjs",
     "bench:realistic":  "node bench/realistic.mjs",
+    "bench:dynamic":    "node bench/dynamic_bench.mjs",
     "test":             "node --test test/*.test.mjs"
   },
   "license": "MIT",

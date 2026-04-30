@@ -213,6 +213,16 @@ const bytes = b.finalize();   // framed Cap'n Proto bytes, wire-compatible with 
 
 Builders cover primitives + text + data. Lists and nested-struct builders aren't in this pass — codegen still wins for those write paths.
 
+**How fast?** Bench on Node 22, conformance schema's 13-field Primitives struct, 50k iterations after warmup. The dynamic path is competitive on reads — it's effectively tied with codegen because both do the same wasm-boundary calls and the per-field dispatch is small relative to that. Writes are ~1.45× slower because codegen bakes offsets as integer literals at the call site while the dynamic builder dispatches via switch-on-type per field.
+
+```
+read all 13 fields           codegen ~745 ns,  dynamic ~511 ns/call
+read 3 fields (pick)         codegen ~459 ns,  dynamic ~413 ns/call
+build with 13 fields         codegen ~943 ns,  dynamic ~1370 ns/call
+```
+
+`npm run bench:dynamic` reproduces these.
+
 When to choose dynamic:
 
 - **You don't control the schemas at build time** (tenant-supplied schemas, admin tooling)
