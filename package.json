@@ -5,7 +5,12 @@
   "type": "module",
   "main": "js/index.mjs",
   "exports": {
-    ".": "./dist/inlined.mjs"
+    ".":          "./dist/inlined.mjs",
+    "./slim":     "./dist/inlined.slim.mjs",
+    "./rest":     "./js/rest_runtime.mjs",
+    "./stream":   "./js/stream.mjs",
+    "./rpc":      "./js/rpc.mjs",
+    "./codegen":  "./dist/codegen.mjs"
   },
   "bin": {
     "capnwasm": "./bin/capnwasm.mjs"
@@ -16,9 +21,15 @@
     "dist"
   ],
   "scripts": {
-    "build:wasm": "bash cpp/build.sh",
-    "bench":      "node bench/runner.mjs",
-    "test":       "node --test test/*.test.mjs"
+    "build:wasm":          "bash cpp/build.sh",
+    "build:wasm:bench":    "bash cpp/build.sh bench",
+    "build:capnpc":        "bash cpp/embed_standard_schemas.sh && bash cpp/build_capnpc.sh && node js/build_codegen_inlined.mjs",
+    "bench":            "node bench/runner.mjs",
+    "bench:scale":      "node bench/scale-runner.mjs",
+    "bench:rpc":        "node bench/rpc-runner.mjs",
+    "bench:rpc:node":   "node bench/rpc_bench.mjs",
+    "bench:realistic":  "node bench/realistic.mjs",
+    "test":             "node --test test/*.test.mjs"
   },
   "license": "MIT",
   "devDependencies": {

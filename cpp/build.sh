@@ -40,17 +40,23 @@ CAPNP_SOURCES=(
   "$CAPNP_SRC/capnp/any.c++"
   "$CAPNP_SRC/capnp/message.c++"
   "$CAPNP_SRC/capnp/serialize.c++"
+  "$CAPNP_SRC/capnp/rpc.capnp.c++"
   # list.c++/stream.capnp.c++ removed — list is template-only at our usage
   # level; stream.capnp pulls in code we never call.
 )
 
+# Production runtime: only the wrapper itself + EH runtime + the schema.capnp
+# generated code (used by the RPC layer for rpc.capnp accessors).
+# Test-only schemas (typed/big/conformance) compile in only when BENCH_MODE=1.
 WRAPPER=(
   cpp/schema.capnp.c++
+  cpp/wrapper.cpp
+  cpp/eh_runtime.cpp
+)
+WRAPPER_BENCH_ONLY=(
   cpp/typed_schema.capnp.c++
   cpp/big_schema.capnp.c++
   cpp/conformance_schema.capnp.c++
-  cpp/wrapper.cpp
-  cpp/eh_runtime.cpp
 )
 
 # Pull in libcxxabi exception runtime that zig's wasm32-wasi-musl auto-build
@@ -111,12 +117,21 @@ FLAGS=(
   -Wl,--export=cpp_lazy_obj_fields_text
   -Wl,--export=cpp_lazy_aux_ptr
   -Wl,--export=cpp_lazy_aux_capacity
-  -Wl,--export=cpp_typed_open
-  -Wl,--export=cpp_typed_serialize_wide
-  -Wl,--export=cpp_typed_field_at
   -Wl,--export=cpp_any_open
   -Wl,--export=cpp_any_enter_struct
   -Wl,--export=cpp_any_leave_struct
+  -Wl,--export=cpp_any_open_list
+  -Wl,--export=cpp_any_enter_list_at
+  -Wl,--export=cpp_any_list_size
+  -Wl,--export=cpp_any_list_get_uint8
+  -Wl,--export=cpp_any_list_get_uint16
+  -Wl,--export=cpp_any_list_get_uint32
+  -Wl,--export=cpp_any_list_get_uint64
+  -Wl,--export=cpp_any_list_get_float32_bits
+  -Wl,--export=cpp_any_list_get_float64_bits
+  -Wl,--export=cpp_any_list_get_bool
+  -Wl,--export=cpp_any_list_get_text
+  -Wl,--export=cpp_any_list_get_data
   -Wl,--export=cpp_any_text_at
   -Wl,--export=cpp_any_data_at
   -Wl,--export=cpp_any_int64_at
@@ -124,7 +139,6 @@ FLAGS=(
   -Wl,--export=cpp_any_uint16_at
   -Wl,--export=cpp_any_uint8_at
   -Wl,--export=cpp_any_bool_at
-  -Wl,--export=cpp_conformance_serialize
   -Wl,--export=cpp_any_batch_read
   -Wl,--export=cpp_any_builder_init
   -Wl,--export=cpp_any_builder_set_uint8
@@ -135,6 +149,38 @@ FLAGS=(
   -Wl,--export=cpp_any_builder_set_text
   -Wl,--export=cpp_any_builder_set_data
   -Wl,--export=cpp_any_builder_finalize
+  -Wl,--export=cpp_any_builder_data_ptr
+  -Wl,--export=cpp_any_builder_data_size
+  -Wl,--export=cpp_rpc_build_bootstrap
+  -Wl,--export=cpp_rpc_build_call
+  -Wl,--export=cpp_rpc_build_return
+  -Wl,--export=cpp_rpc_build_finish
+  -Wl,--export=cpp_rpc_build_release
+  -Wl,--export=cpp_rpc_decode
+  -Wl,--export=cpp_rpc_get_bootstrap_question_id
+  -Wl,--export=cpp_rpc_get_call_summary
+  -Wl,--export=cpp_rpc_get_call_question_id
+  -Wl,--export=cpp_rpc_get_call_interface_id
+  -Wl,--export=cpp_rpc_get_call_method_id
+  -Wl,--export=cpp_rpc_get_call_target_kind
+  -Wl,--export=cpp_rpc_get_call_target_id
+  -Wl,--export=cpp_rpc_get_call_params
+  -Wl,--export=cpp_rpc_get_return_answer_id
+  -Wl,--export=cpp_rpc_get_return_kind
+  -Wl,--export=cpp_rpc_get_return_results
+  -Wl,--export=cpp_rpc_get_return_exception
+  -Wl,--export=cpp_rpc_get_finish_question_id
+  -Wl,--export=cpp_rpc_get_release_id
+  -Wl,--export=cpp_rpc_get_release_refcount
+  -Wl,--export=cpp_rpc_build_return_with_caps
+  -Wl,--export=cpp_rpc_get_return_cap_count
+  -Wl,--export=cpp_rpc_get_return_cap_kind
+  -Wl,--export=cpp_rpc_get_return_cap_id
+  -Wl,--export=cpp_rpc_begin_call
+  -Wl,--export=cpp_rpc_begin_return
+  -Wl,--export=cpp_rpc_finalize
+  -Wl,--export=cpp_rpc_open_call_params
+  -Wl,--export=cpp_rpc_open_return_results
   -lwasi-emulated-signal
   -lwasi-emulated-mman
   -Wl,--gc-sections
@@ -146,7 +192,12 @@ if [ "$BENCH_MODE" = "1" ]; then
     -Wl,--export=cpp_make_big_user_bytes
     -Wl,--export=cpp_big_user_all_packed
     -Wl,--export=cpp_big_user_emit_json
+    -Wl,--export=cpp_typed_open
+    -Wl,--export=cpp_typed_serialize_wide
+    -Wl,--export=cpp_typed_field_at
+    -Wl,--export=cpp_conformance_serialize
   )
+  WRAPPER+=("${WRAPPER_BENCH_ONLY[@]}")
 fi
 
 zig c++ "${FLAGS[@]}" \
@@ -170,5 +221,23 @@ wasm-opt "$OUT" \
 echo "Optimized: $OPT_OUT"
 ls -la "$OPT_OUT"
 
-# Generate the inlined single-file bundle for users who want one-fetch.
-node js/build_inlined.mjs
+# Generate inlined single-file bundles:
+#   slim (-> dist/inlined.slim.mjs) when this is a non-bench build
+#   full (-> dist/inlined.mjs)       when this is a bench build
+# We always build the bench/full bundle as the default `dist/inlined.mjs`
+# so existing `import "capnwasm"` users keep getting the full feature set
+# (including conformance/typed test helpers) and tests don't break.
+# The slim bundle is opt-in via `import "capnwasm/slim"` for size-conscious
+# users who only need the production runtime + RPC.
+if [ "$BENCH_MODE" = "1" ]; then
+  node js/build_inlined.mjs   # writes dist/inlined.mjs (full)
+else
+  node js/build_inlined.mjs --slim   # writes dist/inlined.slim.mjs
+fi
+
+# When the user runs the slim build, also run the full build so dist/
+# always has both bundles after a single invocation.
+if [ "$BENCH_MODE" != "1" ]; then
+  echo "[build.sh] building full bundle (for tests + default import)..."
+  bash "$0" bench
+fi

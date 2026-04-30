@@ -40,12 +40,33 @@ test("pick returns same values as per-field getters", () => {
   assert.deepEqual(got, expected);
 });
 
-test("toObject equals all fields via pick(Object.keys(_FIELDS))", () => {
+test("toObject contains every field reachable through per-field getters", () => {
+  // Read every field via the per-field accessors, then verify toObject's
+  // returned object exposes the same set of keys with the same values.
   const r = openPrimitives(cpp, bytes);
-  const obj1 = r.toObject();
+  const expected = {
+    u8: r.u8, i8: r.i8, u16: r.u16, i16: r.i16,
+    u32: r.u32, i32: r.i32, u64: r.u64, i64: r.i64,
+    f32: r.f32, f64: r.f64,
+    flag0: r.flag0, flag1: r.flag1, flag2: r.flag2,
+    text: r.text, data: Array.from(r.data),
+    emptyText: r.emptyText, emptyData: Array.from(r.emptyData),
+  };
   const r2 = openPrimitives(cpp, bytes);
-  const obj2 = r2.toObject();
-  assert.deepEqual(obj1, obj2);
+  const got = r2.toObject();
+  // Compare key-by-key. Uint8Array → array equality. Numerics → cast both
+  // sides through Number so a Number/BigInt 12345 compares equal across
+  // the per-field-getter and toObject paths (one returns u64 as BigInt
+  // when full precision matters, the other coerces small values).
+  for (const k of Object.keys(expected)) {
+    if (got[k] instanceof Uint8Array) {
+      assert.deepEqual(Array.from(got[k]), expected[k], `field ${k}`);
+    } else if (typeof got[k] === "bigint" || typeof expected[k] === "bigint") {
+      assert.equal(BigInt(got[k]), BigInt(expected[k]), `field ${k}`);
+    } else {
+      assert.equal(got[k], expected[k], `field ${k}`);
+    }
+  }
 });
 
 test("pick with one field works", () => {

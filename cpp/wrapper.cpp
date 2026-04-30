@@ -5,6 +5,7 @@
 #include "typed_schema.capnp.h"
 #include "big_schema.capnp.h"
 #include "conformance_schema.capnp.h"
+#include "vendor/capnp/rpc.capnp.h"
 #include <capnp/serialize.h>
 #include <capnp/message.h>
 #include <capnp/any.h>
@@ -20,8 +21,11 @@
 
 extern "C" {
 
-// Scratch regions in linear memory shared with JS.
-constexpr size_t SCRATCH_CAP = 256 * 1024;
+// Scratch regions in linear memory shared with JS. 4 MB each — enough for
+// most realistic RPC payloads (gRPC's default max-message size is also
+// 4 MB). Anything bigger should be chunked at the application layer or
+// streamed via openFromStream.
+constexpr size_t SCRATCH_CAP = 4 * 1024 * 1024;
 alignas(8) static uint8_t cpp_in[SCRATCH_CAP];
 alignas(8) static uint8_t cpp_out[SCRATCH_CAP];
 
@@ -765,6 +769,126 @@ void cpp_any_leave_struct() {
   if (any_stack_top > 0) any_stack_top--;
 }
 
+// ---- List iteration -----------------------------------------------------
+// For a List(Struct) wire pattern (the "1000 records in one message"
+// shape), JS opens the message once via cpp_any_open, then descends via
+// cpp_any_enter_list_at to position the reader on the i-th element. The
+// element appears on the AnyStruct stack just like cpp_any_enter_struct,
+// so all the typed Reader getters work unchanged.
+
+static capnp::AnyList::Reader any_list_reader;
+static bool any_list_reader_set = false;
+
+// Open the pointer at `ptr_idx` of the current top struct as a List of
+// AnyStructs. Returns the element count (0 if missing or wrong type).
+uint32_t cpp_any_open_list(uint32_t ptr_idx) {
+  if (any_stack_top < 0) return 0;
+  auto ptrs = any_stack[any_stack_top].getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  any_list_reader = ptrs[ptr_idx].getAs<capnp::AnyList>();
+  any_list_reader_set = true;
+  return any_list_reader.size();
+}
+
+// Push the i-th list element (as AnyStruct) onto the stack so the typed
+// Reader's getters address it. Returns 1 on success, 0 on out-of-range.
+uint32_t cpp_any_enter_list_at(uint32_t i) {
+  if (!any_list_reader_set) return 0;
+  if (i >= any_list_reader.size()) return 0;
+  if (any_stack_top + 1 >= (int32_t)ANY_STACK_DEPTH) return 0;
+  any_stack_top++;
+  any_stack[any_stack_top] = any_list_reader.as<capnp::List<capnp::AnyStruct>>()[i];
+  return 1;
+}
+
+// Current list size (after cpp_any_open_list).
+uint32_t cpp_any_list_size() {
+  if (!any_list_reader_set) return 0;
+  return any_list_reader.size();
+}
+
+// Primitive-list element access — read element i directly without pushing
+// it on the stack (lists of primitives don't have struct shape). The
+// templated helpers below work because the underlying List<T> stores
+// elements at fixed offsets.
+uint32_t cpp_any_list_get_uint32(uint32_t i) {
+  if (!any_list_reader_set) return 0;
+  auto list = any_list_reader.as<capnp::List<uint32_t>>();
+  if (i >= list.size()) return 0;
+  return list[i];
+}
+
+uint32_t cpp_any_list_get_uint16(uint32_t i) {
+  if (!any_list_reader_set) return 0;
+  auto list = any_list_reader.as<capnp::List<uint16_t>>();
+  if (i >= list.size()) return 0;
+  return list[i];
+}
+
+uint32_t cpp_any_list_get_uint8(uint32_t i) {
+  if (!any_list_reader_set) return 0;
+  auto list = any_list_reader.as<capnp::List<uint8_t>>();
+  if (i >= list.size()) return 0;
+  return list[i];
+}
+
+uint64_t cpp_any_list_get_uint64(uint32_t i) {
+  if (!any_list_reader_set) return 0;
+  auto list = any_list_reader.as<capnp::List<uint64_t>>();
+  if (i >= list.size()) return 0;
+  return list[i];
+}
+
+// Float reads via reinterpret-as-int so JS can recover the bit pattern.
+uint32_t cpp_any_list_get_float32_bits(uint32_t i) {
+  if (!any_list_reader_set) return 0;
+  auto list = any_list_reader.as<capnp::List<float>>();
+  if (i >= list.size()) return 0;
+  float f = list[i];
+  uint32_t bits;
+  std::memcpy(&bits, &f, 4);
+  return bits;
+}
+
+uint64_t cpp_any_list_get_float64_bits(uint32_t i) {
+  if (!any_list_reader_set) return 0;
+  auto list = any_list_reader.as<capnp::List<double>>();
+  if (i >= list.size()) return 0;
+  double d = list[i];
+  uint64_t bits;
+  std::memcpy(&bits, &d, 8);
+  return bits;
+}
+
+uint32_t cpp_any_list_get_bool(uint32_t i) {
+  if (!any_list_reader_set) return 0;
+  auto list = any_list_reader.as<capnp::List<bool>>();
+  if (i >= list.size()) return 0;
+  return list[i] ? 1 : 0;
+}
+
+// Get text element i — copies bytes to cpp_out, returns length.
+uint32_t cpp_any_list_get_text(uint32_t i) {
+  if (!any_list_reader_set) return 0;
+  auto list = any_list_reader.as<capnp::List<capnp::Text>>();
+  if (i >= list.size()) return 0;
+  auto t = list[i];
+  if (t.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, t.cStr(), t.size());
+  return static_cast<uint32_t>(t.size());
+}
+
+// Get data element i — copies bytes to cpp_out, returns length.
+uint32_t cpp_any_list_get_data(uint32_t i) {
+  if (!any_list_reader_set) return 0;
+  auto list = any_list_reader.as<capnp::List<capnp::Data>>();
+  if (i >= list.size()) return 0;
+  auto d = list[i];
+  if (d.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, d.begin(), d.size());
+  return static_cast<uint32_t>(d.size());
+}
+
 // Read a Text from pointer slot `ptr_idx` of the current top struct.
 // Copies bytes to cpp_out, returns count. 0 if missing / non-text.
 uint32_t cpp_any_text_at(uint32_t ptr_idx) {
@@ -968,6 +1092,21 @@ uint32_t cpp_any_builder_init(uint32_t data_words, uint32_t ptr_words) {
   return 1;
 }
 
+// Expose the address (in linear memory) and size of the current
+// any_builder_root's data section. JS can then write primitive fields
+// DIRECTLY into wasm memory at known offsets — no per-setter wasm call.
+// Pointer-section fields (text, data, structs) still need wasm because
+// they require arena allocation, but the inline data is just bytes.
+uint32_t cpp_any_builder_data_ptr() {
+  if (!any_builder_root) return 0;
+  return reinterpret_cast<uint32_t>(any_builder_root->getDataSection().begin());
+}
+
+uint32_t cpp_any_builder_data_size() {
+  if (!any_builder_root) return 0;
+  return static_cast<uint32_t>(any_builder_root->getDataSection().size());
+}
+
 void cpp_any_builder_set_uint8(uint32_t byte_off, uint32_t value) {
   if (!any_builder_root) return;
   auto data = any_builder_root->getDataSection();
@@ -1037,6 +1176,527 @@ uint32_t cpp_any_builder_finalize() {
   if (bytes.size() > SCRATCH_CAP) return 0;
   std::memcpy(cpp_out, bytes.begin(), bytes.size());
   return static_cast<uint32_t>(bytes.size());
+}
+
+// ---------------------------------------------------------------------------
+// RPC layer: thin wrapper over the vendored rpc.capnp generated code so the
+// JS-side RpcSession can build/parse the standard Cap'n Proto RPC protocol
+// without re-implementing 110 reader/builder classes. Wire-compatible with
+// any cxx/rust/go capnp server speaking rpc.capnp.
+//
+// State: a single MessageBuilder per "outgoing send". Decode operates on
+// cpp_in bytes (parsed once, fields then queried). Params/results bytes
+// are passed as raw blobs the JS layer encodes/decodes via the typed
+// reader/builder generated for the application's own schemas.
+// ---------------------------------------------------------------------------
+
+static capnp::MallocMessageBuilder* rpc_builder = nullptr;
+alignas(8) static char rpc_reader_storage[1024];
+static capnp::FlatArrayMessageReader* rpc_reader = nullptr;
+
+// Message kind codes returned to JS — match capnp::rpc::Message::Which
+// values 1-1, but exposed as a stable small-int enum for the JS layer to
+// switch on.
+enum CwRpcKind {
+  CWR_UNKNOWN     = 0,
+  CWR_BOOTSTRAP   = 1,
+  CWR_CALL        = 2,
+  CWR_RETURN      = 3,
+  CWR_FINISH      = 4,
+  CWR_RESOLVE     = 5,
+  CWR_RELEASE     = 6,
+  CWR_DISEMBARGO  = 7,
+  CWR_ABORT       = 8,
+};
+
+// Write rpc_builder's segments directly to cpp_out as a transport-framed
+// message: a 4-byte little-endian length prefix followed by the Cap'n
+// Proto bytes (segment table + segments). Returns total bytes written
+// (4 + payload). Skips messageToFlatArray's intermediate kj::Array<word>
+// allocation entirely.
+//
+// Layout in cpp_out:
+//   [0..4]      transport length prefix (u32 LE = payload size in bytes)
+//   [4..4+T]    Cap'n Proto segment table, T bytes (padded to 8-byte align)
+//   [4+T..]     segment data, concatenated
+static uint32_t finalizeRpcBuilder() {
+  auto segments = rpc_builder->getSegmentsForOutput();
+  uint32_t segCount = segments.size();
+  if (segCount == 0) return 0;
+
+  uint32_t tableBytes = 4 * (1 + segCount);
+  if (tableBytes % 8 != 0) tableBytes += 4;
+
+  uint32_t totalCapn = tableBytes;
+  for (uint32_t i = 0; i < segCount; i++) {
+    totalCapn += static_cast<uint32_t>(segments[i].size() * sizeof(capnp::word));
+  }
+  if (4 + totalCapn > SCRATCH_CAP) return 0;
+
+  // Length prefix.
+  uint32_t lenLE = totalCapn;
+  std::memcpy(cpp_out, &lenLE, 4);
+
+  // Segment table at cpp_out + 4.
+  uint32_t* table = reinterpret_cast<uint32_t*>(cpp_out + 4);
+  table[0] = segCount - 1;
+  for (uint32_t i = 0; i < segCount; i++) {
+    table[i + 1] = static_cast<uint32_t>(segments[i].size());
+  }
+  if (4 * (1 + segCount) != tableBytes) {
+    table[1 + segCount] = 0;
+  }
+
+  // Segments after the table.
+  uint32_t pos = 4 + tableBytes;
+  for (uint32_t i = 0; i < segCount; i++) {
+    auto seg = segments[i];
+    uint32_t segBytes = static_cast<uint32_t>(seg.size() * sizeof(capnp::word));
+    std::memcpy(cpp_out + pos, seg.begin(), segBytes);
+    pos += segBytes;
+  }
+  return pos;
+}
+
+// Build: bootstrap question. Returns framed bytes in cpp_out.
+uint32_t cpp_rpc_build_bootstrap(uint32_t question_id) {
+  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
+  rpc_builder = new capnp::MallocMessageBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto boot = msg.initBootstrap();
+  boot.setQuestionId(question_id);
+  return finalizeRpcBuilder();
+}
+
+// Build: a Call to a target. `target_kind` selects the MessageTarget union:
+//   0 = importedCap (target_id is the import id)
+//   1 = promisedAnswer (target_id is the question id this call pipes off of)
+// `params_len` bytes are pre-staged in cpp_in as the serialized params struct
+// (which the caller built via the application's typed Builder; we copy it
+// in as the params section's raw payload).
+uint32_t cpp_rpc_build_call(
+    uint32_t question_id,
+    uint8_t  target_kind,
+    uint64_t target_id,
+    uint64_t interface_id,
+    uint16_t method_id,
+    uint32_t params_len) {
+  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
+  rpc_builder = new capnp::MallocMessageBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto call = msg.initCall();
+  call.setQuestionId(question_id);
+  if (target_kind == 0) {
+    call.initTarget().setImportedCap(static_cast<uint32_t>(target_id));
+  } else {
+    auto pa = call.initTarget().initPromisedAnswer();
+    pa.setQuestionId(static_cast<uint32_t>(target_id));
+  }
+  call.setInterfaceId(interface_id);
+  call.setMethodId(method_id);
+  // Params are themselves an AnyPointer struct. Re-parse the staged bytes as
+  // a Cap'n Proto message and copy its root into the call's params field.
+  auto words = kj::ArrayPtr<const capnp::word>(
+      reinterpret_cast<const capnp::word*>(cpp_in),
+      params_len / sizeof(capnp::word));
+  capnp::FlatArrayMessageReader paramsReader(words);
+  auto payload = call.initParams();
+  payload.getContent().setAs<capnp::AnyPointer>(paramsReader.getRoot<capnp::AnyPointer>());
+  return finalizeRpcBuilder();
+}
+
+// Build: a Return for a previously-received call.
+//   kind = 0  results (results_len bytes pre-staged in cpp_in)
+//   kind = 1  exception (exception type code in target_id, message in cpp_in)
+//   kind = 2  canceled
+uint32_t cpp_rpc_build_return(uint32_t answer_id, uint8_t kind, uint32_t results_len) {
+  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
+  rpc_builder = new capnp::MallocMessageBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto ret = msg.initReturn();
+  ret.setAnswerId(answer_id);
+  if (kind == 0) {
+    auto words = kj::ArrayPtr<const capnp::word>(
+        reinterpret_cast<const capnp::word*>(cpp_in),
+        results_len / sizeof(capnp::word));
+    capnp::FlatArrayMessageReader resultsReader(words);
+    auto payload = ret.initResults();
+    payload.getContent().setAs<capnp::AnyPointer>(resultsReader.getRoot<capnp::AnyPointer>());
+  } else if (kind == 1) {
+    auto exc = ret.initException();
+    exc.setReason(capnp::Text::Reader(reinterpret_cast<const char*>(cpp_in), results_len));
+  } else {
+    ret.setCanceled();
+  }
+  return finalizeRpcBuilder();
+}
+
+uint32_t cpp_rpc_build_finish(uint32_t question_id) {
+  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
+  rpc_builder = new capnp::MallocMessageBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto fin = msg.initFinish();
+  fin.setQuestionId(question_id);
+  return finalizeRpcBuilder();
+}
+
+uint32_t cpp_rpc_build_release(uint32_t import_id, uint32_t refcount) {
+  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
+  rpc_builder = new capnp::MallocMessageBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto rel = msg.initRelease();
+  rel.setId(import_id);
+  rel.setReferenceCount(refcount);
+  return finalizeRpcBuilder();
+}
+
+// Decode incoming RPC message in cpp_in[0..len]. Returns the kind code.
+int32_t cpp_rpc_decode(uint32_t bytes_len) {
+  if (rpc_reader) {
+    rpc_reader->~FlatArrayMessageReader();
+    rpc_reader = nullptr;
+  }
+  auto words = kj::ArrayPtr<const capnp::word>(
+      reinterpret_cast<const capnp::word*>(cpp_in),
+      bytes_len / sizeof(capnp::word));
+  rpc_reader = new (rpc_reader_storage) capnp::FlatArrayMessageReader(words);
+  auto msg = rpc_reader->getRoot<capnp::rpc::Message>();
+  switch (msg.which()) {
+    case capnp::rpc::Message::BOOTSTRAP:  return CWR_BOOTSTRAP;
+    case capnp::rpc::Message::CALL:       return CWR_CALL;
+    case capnp::rpc::Message::RETURN:     return CWR_RETURN;
+    case capnp::rpc::Message::FINISH:     return CWR_FINISH;
+    case capnp::rpc::Message::RESOLVE:    return CWR_RESOLVE;
+    case capnp::rpc::Message::RELEASE:    return CWR_RELEASE;
+    case capnp::rpc::Message::DISEMBARGO: return CWR_DISEMBARGO;
+    case capnp::rpc::Message::ABORT:      return CWR_ABORT;
+    default: return CWR_UNKNOWN;
+  }
+}
+
+// Bootstrap accessors
+uint32_t cpp_rpc_get_bootstrap_question_id() {
+  if (!rpc_reader) return 0;
+  return rpc_reader->getRoot<capnp::rpc::Message>().getBootstrap().getQuestionId();
+}
+
+// Batched call-summary read: one wasm call returns all the per-Call
+// accessors a typical inbound dispatch needs (questionId, interfaceId,
+// methodId, targetKind, targetId). Saves N-1 boundary crossings on the
+// hot inbound path. JS reads the packed result from cpp_out:
+//   [0..4]    questionId       (u32 LE)
+//   [4..8]    targetKind       (u32 LE; 0=importedCap, 1=promisedAnswer)
+//   [8..16]   targetId         (u64 LE)
+//   [16..24]  interfaceId      (u64 LE)
+//   [24..28]  methodId         (u32 LE; really u16 but written as u32)
+// Returns 1 on success, 0 if rpc_reader is null or the message isn't a Call.
+uint32_t cpp_rpc_get_call_summary() {
+  if (!rpc_reader) return 0;
+  auto msg = rpc_reader->getRoot<capnp::rpc::Message>();
+  if (!msg.isCall()) return 0;
+  auto call = msg.getCall();
+  uint32_t questionId  = call.getQuestionId();
+  uint64_t interfaceId = call.getInterfaceId();
+  uint32_t methodId    = call.getMethodId();
+  uint32_t targetKind  = 0;
+  uint64_t targetId    = 0;
+  auto t = call.getTarget();
+  if (t.isImportedCap()) {
+    targetKind = 0;
+    targetId = t.getImportedCap();
+  } else if (t.isPromisedAnswer()) {
+    targetKind = 1;
+    targetId = t.getPromisedAnswer().getQuestionId();
+  }
+  std::memcpy(cpp_out + 0,  &questionId, 4);
+  std::memcpy(cpp_out + 4,  &targetKind, 4);
+  std::memcpy(cpp_out + 8,  &targetId,   8);
+  std::memcpy(cpp_out + 16, &interfaceId, 8);
+  std::memcpy(cpp_out + 24, &methodId,   4);
+  return 1;
+}
+
+// Call accessors
+uint32_t cpp_rpc_get_call_question_id() {
+  if (!rpc_reader) return 0;
+  return rpc_reader->getRoot<capnp::rpc::Message>().getCall().getQuestionId();
+}
+
+uint64_t cpp_rpc_get_call_interface_id() {
+  if (!rpc_reader) return 0;
+  return rpc_reader->getRoot<capnp::rpc::Message>().getCall().getInterfaceId();
+}
+
+uint32_t cpp_rpc_get_call_method_id() {
+  if (!rpc_reader) return 0;
+  return rpc_reader->getRoot<capnp::rpc::Message>().getCall().getMethodId();
+}
+
+// Returns 0 for importedCap, 1 for promisedAnswer.
+uint32_t cpp_rpc_get_call_target_kind() {
+  if (!rpc_reader) return 0;
+  auto t = rpc_reader->getRoot<capnp::rpc::Message>().getCall().getTarget();
+  switch (t.which()) {
+    case capnp::rpc::MessageTarget::IMPORTED_CAP:    return 0;
+    case capnp::rpc::MessageTarget::PROMISED_ANSWER: return 1;
+  }
+  return 0;
+}
+
+uint32_t cpp_rpc_get_call_target_id() {
+  if (!rpc_reader) return 0;
+  auto t = rpc_reader->getRoot<capnp::rpc::Message>().getCall().getTarget();
+  if (t.isImportedCap()) return t.getImportedCap();
+  if (t.isPromisedAnswer()) return t.getPromisedAnswer().getQuestionId();
+  return 0;
+}
+
+// Copy the call's params payload (as framed bytes) into cpp_out so JS can
+// re-parse with the application-level typed reader.
+uint32_t cpp_rpc_get_call_params() {
+  if (!rpc_reader) return 0;
+  auto params = rpc_reader->getRoot<capnp::rpc::Message>().getCall().getParams();
+  capnp::MallocMessageBuilder tmp;
+  tmp.initRoot<capnp::AnyPointer>().set(params.getContent());
+  auto words = capnp::messageToFlatArray(tmp);
+  auto bytes = words.asBytes();
+  if (bytes.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, bytes.begin(), bytes.size());
+  return static_cast<uint32_t>(bytes.size());
+}
+
+// Return accessors
+uint32_t cpp_rpc_get_return_answer_id() {
+  if (!rpc_reader) return 0;
+  return rpc_reader->getRoot<capnp::rpc::Message>().getReturn().getAnswerId();
+}
+
+// 0 = results, 1 = exception, 2 = canceled, 3 = other
+uint32_t cpp_rpc_get_return_kind() {
+  if (!rpc_reader) return 3;
+  auto ret = rpc_reader->getRoot<capnp::rpc::Message>().getReturn();
+  if (ret.isResults())   return 0;
+  if (ret.isException()) return 1;
+  if (ret.isCanceled())  return 2;
+  return 3;
+}
+
+uint32_t cpp_rpc_get_return_results() {
+  if (!rpc_reader) return 0;
+  auto ret = rpc_reader->getRoot<capnp::rpc::Message>().getReturn();
+  if (!ret.isResults()) return 0;
+  capnp::MallocMessageBuilder tmp;
+  tmp.initRoot<capnp::AnyPointer>().set(ret.getResults().getContent());
+  auto words = capnp::messageToFlatArray(tmp);
+  auto bytes = words.asBytes();
+  if (bytes.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, bytes.begin(), bytes.size());
+  return static_cast<uint32_t>(bytes.size());
+}
+
+uint32_t cpp_rpc_get_return_exception() {
+  if (!rpc_reader) return 0;
+  auto ret = rpc_reader->getRoot<capnp::rpc::Message>().getReturn();
+  if (!ret.isException()) return 0;
+  auto reason = ret.getException().getReason();
+  if (reason.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, reason.cStr(), reason.size());
+  return static_cast<uint32_t>(reason.size());
+}
+
+uint32_t cpp_rpc_get_finish_question_id() {
+  if (!rpc_reader) return 0;
+  return rpc_reader->getRoot<capnp::rpc::Message>().getFinish().getQuestionId();
+}
+
+// Release accessors. The peer is dropping `referenceCount` references to
+// the cap at export id `id`. JS uses this to remove entries from its local
+// cap table once refcount reaches zero.
+uint32_t cpp_rpc_get_release_id() {
+  if (!rpc_reader) return 0;
+  return rpc_reader->getRoot<capnp::rpc::Message>().getRelease().getId();
+}
+
+uint32_t cpp_rpc_get_release_refcount() {
+  if (!rpc_reader) return 0;
+  return rpc_reader->getRoot<capnp::rpc::Message>().getRelease().getReferenceCount();
+}
+
+// ---- Capability passing -------------------------------------------------
+//
+// The RPC layer in JS keeps the local-cap and import tables; the C++ side
+// just encodes/decodes the wire bits of Payload.capTable. We support only
+// senderHosted descriptors here — the most common case — which lets a peer
+// say "this cap in my reply lives in my local export table at id N." When
+// a richer descriptor variant arrives (promise/answer/thirdParty), the JS
+// layer can fall back to ignoring it.
+
+// Build a Return whose Payload.capTable carries `cap_count` senderHosted
+// descriptors. The export ids are pre-staged in cpp_in as a packed array
+// of uint32_t (little-endian). The Payload's content is left null —
+// callers that want both struct content and caps would need a richer
+// builder that's not in this minimal MVP.
+uint32_t cpp_rpc_build_return_with_caps(
+    uint32_t answer_id,
+    uint32_t cap_count) {
+  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
+  rpc_builder = new capnp::MallocMessageBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto ret = msg.initReturn();
+  ret.setAnswerId(answer_id);
+  auto payload = ret.initResults();
+  auto caps = payload.initCapTable(cap_count);
+  for (uint32_t i = 0; i < cap_count; i++) {
+    uint32_t exportId;
+    std::memcpy(&exportId, cpp_in + i * 4, 4);
+    caps[i].setSenderHosted(exportId);
+  }
+  // Content stays as default null AnyPointer; client knows from cap_count
+  // > 0 to look at the capTable.
+  return finalizeRpcBuilder();
+}
+
+// Read the capTable on a Return — number of descriptors and per-index
+// kind/id. Only senderHosted (kind=1) carries an export id; other kinds
+// are surfaced so JS can ignore them and report the unsupported variant.
+uint32_t cpp_rpc_get_return_cap_count() {
+  if (!rpc_reader) return 0;
+  auto ret = rpc_reader->getRoot<capnp::rpc::Message>().getReturn();
+  if (!ret.isResults()) return 0;
+  return ret.getResults().getCapTable().size();
+}
+
+// 0 = none, 1 = senderHosted, 2 = senderPromise,
+// 3 = receiverHosted, 4 = receiverAnswer, 5 = thirdPartyHosted.
+uint32_t cpp_rpc_get_return_cap_kind(uint32_t i) {
+  if (!rpc_reader) return 0;
+  auto ret = rpc_reader->getRoot<capnp::rpc::Message>().getReturn();
+  if (!ret.isResults()) return 0;
+  auto caps = ret.getResults().getCapTable();
+  if (i >= caps.size()) return 0;
+  switch (caps[i].which()) {
+    case capnp::rpc::CapDescriptor::NONE:               return 0;
+    case capnp::rpc::CapDescriptor::SENDER_HOSTED:      return 1;
+    case capnp::rpc::CapDescriptor::SENDER_PROMISE:     return 2;
+    case capnp::rpc::CapDescriptor::RECEIVER_HOSTED:    return 3;
+    case capnp::rpc::CapDescriptor::RECEIVER_ANSWER:    return 4;
+    case capnp::rpc::CapDescriptor::THIRD_PARTY_HOSTED: return 5;
+  }
+  return 0;
+}
+
+// For senderHosted/senderPromise this returns the peer's export id; for
+// receiverHosted, the import id. Other kinds return 0.
+uint32_t cpp_rpc_get_return_cap_id(uint32_t i) {
+  if (!rpc_reader) return 0;
+  auto ret = rpc_reader->getRoot<capnp::rpc::Message>().getReturn();
+  if (!ret.isResults()) return 0;
+  auto caps = ret.getResults().getCapTable();
+  if (i >= caps.size()) return 0;
+  auto desc = caps[i];
+  if (desc.isSenderHosted())   return desc.getSenderHosted();
+  if (desc.isSenderPromise())  return desc.getSenderPromise();
+  if (desc.isReceiverHosted()) return desc.getReceiverHosted();
+  return 0;
+}
+
+// ---- Zero-copy build/read paths -----------------------------------------
+//
+// The earlier cpp_rpc_build_call / cpp_rpc_get_call_params pair deep-copies
+// the application's params bytes into / out of the RPC MessageBuilder via
+// setAs<AnyPointer>. That destroys Cap'n Proto's zero-copy guarantee for
+// the RPC wrap.
+//
+// These zero-copy entry points let the application's Builder write its
+// params directly into Call.params.content's arena (and the application's
+// Reader read directly out of inbound Call.params.content's arena). The
+// only memory the params data ever lives in is the rpc_builder/rpc_reader
+// itself — no intermediate buffer, no copy.
+
+// Begin a Call: initialize rpc_builder with the Call header AND point
+// any_builder_root at Call.params.content as an AnyStruct of the requested
+// shape. The application's Builder JS code then calls cpp_any_builder_set_*
+// as usual; those writes land directly in the rpc_builder's arena.
+uint32_t cpp_rpc_begin_call(
+    uint32_t question_id,
+    uint8_t  target_kind,
+    uint64_t target_id,
+    uint64_t interface_id,
+    uint16_t method_id,
+    uint32_t data_words,
+    uint32_t ptr_words) {
+  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
+  rpc_builder = new capnp::MallocMessageBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto call = msg.initCall();
+  call.setQuestionId(question_id);
+  if (target_kind == 0) {
+    call.initTarget().setImportedCap(static_cast<uint32_t>(target_id));
+  } else {
+    auto pa = call.initTarget().initPromisedAnswer();
+    pa.setQuestionId(static_cast<uint32_t>(target_id));
+  }
+  call.setInterfaceId(interface_id);
+  call.setMethodId(method_id);
+  auto payload = call.initParams();
+  // Tear down any prior any_builder_root and re-root it inside Call.params.content.
+  if (any_builder_root) { any_builder_root->~Builder(); any_builder_root = nullptr; }
+  if (any_builder)      { delete any_builder; any_builder = nullptr; }
+  auto contentAnyStruct = payload.getContent().initAsAnyStruct(data_words, ptr_words);
+  static_assert(sizeof(capnp::AnyStruct::Builder) <= sizeof(any_builder_root_storage),
+                "any_builder_root_storage too small");
+  any_builder_root = new (any_builder_root_storage) capnp::AnyStruct::Builder(kj::mv(contentAnyStruct));
+  return 1;
+}
+
+// Begin a Return with results: set up rpc_builder + Return header, point
+// any_builder_root at Results.content. Mirror of cpp_rpc_begin_call.
+uint32_t cpp_rpc_begin_return(
+    uint32_t answer_id,
+    uint32_t data_words,
+    uint32_t ptr_words) {
+  if (rpc_builder) { delete rpc_builder; rpc_builder = nullptr; }
+  rpc_builder = new capnp::MallocMessageBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto ret = msg.initReturn();
+  ret.setAnswerId(answer_id);
+  auto payload = ret.initResults();
+  if (any_builder_root) { any_builder_root->~Builder(); any_builder_root = nullptr; }
+  if (any_builder)      { delete any_builder; any_builder = nullptr; }
+  auto contentAnyStruct = payload.getContent().initAsAnyStruct(data_words, ptr_words);
+  any_builder_root = new (any_builder_root_storage) capnp::AnyStruct::Builder(kj::mv(contentAnyStruct));
+  return 1;
+}
+
+// All cpp_rpc_build_* and cpp_rpc_begin_*/finalize variants emit
+// transport-framed bytes (length prefix + Cap'n Proto) at cpp_out via
+// finalizeRpcBuilder. This single export wraps it so the JS-side
+// callBuilder.send() path can flatten the in-progress rpc_builder.
+uint32_t cpp_rpc_finalize() {
+  if (!rpc_builder) return 0;
+  return finalizeRpcBuilder();
+}
+
+// Open the inbound Call's params.content as an AnyStruct on the reader
+// stack so the application's typed Reader can pull fields directly out
+// of the rpc_reader's memory — no intermediate flat-array materialization.
+uint32_t cpp_rpc_open_call_params() {
+  if (!rpc_reader) return 0;
+  auto params = rpc_reader->getRoot<capnp::rpc::Message>().getCall().getParams();
+  any_stack[0] = params.getContent().getAs<capnp::AnyStruct>();
+  any_stack_top = 0;
+  return 1;
+}
+
+// Open the inbound Return's results.content as an AnyStruct on the reader
+// stack. Used on the client side after a Call's promise resolves.
+uint32_t cpp_rpc_open_return_results() {
+  if (!rpc_reader) return 0;
+  auto ret = rpc_reader->getRoot<capnp::rpc::Message>().getReturn();
+  if (!ret.isResults()) return 0;
+  any_stack[0] = ret.getResults().getContent().getAs<capnp::AnyStruct>();
+  any_stack_top = 0;
+  return 1;
 }
 
 // ---------------------------------------------------------------------------

@@ -39,19 +39,26 @@ function __base64ToBytes(b64) {
   return out;
 }
 
-let __cached = null;
-
-/** Load the inlined capnwasm runtime. Resolves to a CapnCpp instance. */
+// Each load() returns a fresh WebAssembly instance with its own linear
+// memory. The earlier singleton-cache was wrong: any code that holds two
+// CapnCpp instances (e.g., RPC client + server in the same process) needs
+// independent scratch buffers, builders, and readers. Sharing a single
+// instance silently broke as soon as two operations interleaved across an
+// await boundary.
 export async function load() {
-  if (__cached) return __cached;
-  __cached = await CapnCpp.load(__base64ToBytes(__WASM_B64));
-  return __cached;
+  return await CapnCpp.load(__base64ToBytes(__WASM_B64));
 }
 `;
 
+// `--slim` writes dist/inlined.slim.mjs (the size-optimized opt-in build).
+// Default is dist/inlined.mjs (the full-featured bundle every test imports
+// and every existing `import "capnwasm"` user gets).
+const isSlim = process.argv.includes("--slim");
+const outName = isSlim ? "inlined.slim.mjs" : "inlined.mjs";
+
 await mkdir(resolve(ROOT, "dist"), { recursive: true });
-await writeFile(resolve(ROOT, "dist", "inlined.mjs"), bundle);
+await writeFile(resolve(ROOT, "dist", outName), bundle);
 
 const raw = Buffer.byteLength(bundle, "utf8");
 const gz = gzipSync(bundle, { level: 9 }).length;
-console.log(`dist/inlined.mjs:  raw=${raw}  gzip=${gz}`);
+console.log(`dist/${outName}:  raw=${raw}  gzip=${gz}`);

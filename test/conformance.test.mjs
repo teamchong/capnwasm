@@ -55,13 +55,9 @@ function buildPrimitives(v) {
 }
 
 function roundTrip(v) {
-  const bytes = buildPrimitives(v);
-  const u8After = cpp._u8;
-  // Move the bytes into cpp_in for the reader.
-  u8After.set(bytes, cpp._exports.cpp_in_ptr());
-  cpp._exports.cpp_any_open(bytes.length);
-  // openPrimitives uses cpp_any_open under the hood, so re-call with same bytes.
-  return openPrimitives(cpp, bytes);
+  // openPrimitives copies the bytes into cpp_in and calls cpp_any_open
+  // itself, so we don't need to stage the buffer here.
+  return openPrimitives(cpp, buildPrimitives(v));
 }
 
 const baseline = {

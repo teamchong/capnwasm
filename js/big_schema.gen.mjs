@@ -1,6 +1,7 @@
 // Generated from big_schema.capnp by capnwasm-gen — do not edit by hand.
 
 const SHARED_TEXT_DECODER = new TextDecoder();
+const SHARED_ENCODER = new TextEncoder();
 function decodeAscii(bytes) {
   let asciiOk = true;
   for (let i = 0; i < bytes.length; i++) if (bytes[i] >= 0x80) { asciiOk = false; break; }
@@ -2169,8 +2170,1847 @@ export class BigUserReader {
     return _capnwasmPick(cpp, BigUserReader._FIELDS, names);
   }
 
+  get access() {
+    if (!this._plan) {
+      this._plan = [];
+      const recorded = this._plan;
+      const fields = BigUserReader._FIELDS;
+      this._access = new Proxy(Object.create(null), {
+        get(_, name) {
+          if (typeof name === "string" && (name in fields)) recorded.push(name);
+          return undefined;
+        }
+      });
+    }
+    return this._access;
+  }
+
+  apply() {
+    if (!this._plan || this._plan.length === 0) return {};
+    const result = BigUserReader._pickImpl(this._cpp, this._plan);
+    this._plan = null;
+    this._access = null;
+    return result;
+  }
+
   toObject() {
     return BigUserReader._pickImpl(this._cpp, Object.keys(BigUserReader._FIELDS));
+  }
+}
+
+export class BigUserBuilder {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 256;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    if (!opts || !opts.preinitialized) {
+      if (cpp._exports.cpp_any_builder_init(0, 256) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = cpp._exports.cpp_any_builder_data_ptr();
+  }
+
+  set field0(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(0, written);
+  }
+  set field1(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(1, written);
+  }
+  set field2(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(2, written);
+  }
+  set field3(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(3, written);
+  }
+  set field4(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(4, written);
+  }
+  set field5(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(5, written);
+  }
+  set field6(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(6, written);
+  }
+  set field7(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(7, written);
+  }
+  set field8(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(8, written);
+  }
+  set field9(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(9, written);
+  }
+  set field10(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(10, written);
+  }
+  set field11(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(11, written);
+  }
+  set field12(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(12, written);
+  }
+  set field13(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(13, written);
+  }
+  set field14(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(14, written);
+  }
+  set field15(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(15, written);
+  }
+  set field16(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(16, written);
+  }
+  set field17(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(17, written);
+  }
+  set field18(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(18, written);
+  }
+  set field19(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(19, written);
+  }
+  set field20(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(20, written);
+  }
+  set field21(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(21, written);
+  }
+  set field22(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(22, written);
+  }
+  set field23(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(23, written);
+  }
+  set field24(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(24, written);
+  }
+  set field25(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(25, written);
+  }
+  set field26(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(26, written);
+  }
+  set field27(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(27, written);
+  }
+  set field28(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(28, written);
+  }
+  set field29(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(29, written);
+  }
+  set field30(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(30, written);
+  }
+  set field31(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(31, written);
+  }
+  set field32(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(32, written);
+  }
+  set field33(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(33, written);
+  }
+  set field34(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(34, written);
+  }
+  set field35(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(35, written);
+  }
+  set field36(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(36, written);
+  }
+  set field37(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(37, written);
+  }
+  set field38(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(38, written);
+  }
+  set field39(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(39, written);
+  }
+  set field40(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(40, written);
+  }
+  set field41(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(41, written);
+  }
+  set field42(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(42, written);
+  }
+  set field43(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(43, written);
+  }
+  set field44(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(44, written);
+  }
+  set field45(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(45, written);
+  }
+  set field46(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(46, written);
+  }
+  set field47(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(47, written);
+  }
+  set field48(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(48, written);
+  }
+  set field49(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(49, written);
+  }
+  set field50(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(50, written);
+  }
+  set field51(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(51, written);
+  }
+  set field52(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(52, written);
+  }
+  set field53(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(53, written);
+  }
+  set field54(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(54, written);
+  }
+  set field55(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(55, written);
+  }
+  set field56(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(56, written);
+  }
+  set field57(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(57, written);
+  }
+  set field58(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(58, written);
+  }
+  set field59(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(59, written);
+  }
+  set field60(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(60, written);
+  }
+  set field61(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(61, written);
+  }
+  set field62(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(62, written);
+  }
+  set field63(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(63, written);
+  }
+  set field64(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(64, written);
+  }
+  set field65(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(65, written);
+  }
+  set field66(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(66, written);
+  }
+  set field67(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(67, written);
+  }
+  set field68(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(68, written);
+  }
+  set field69(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(69, written);
+  }
+  set field70(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(70, written);
+  }
+  set field71(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(71, written);
+  }
+  set field72(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(72, written);
+  }
+  set field73(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(73, written);
+  }
+  set field74(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(74, written);
+  }
+  set field75(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(75, written);
+  }
+  set field76(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(76, written);
+  }
+  set field77(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(77, written);
+  }
+  set field78(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(78, written);
+  }
+  set field79(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(79, written);
+  }
+  set field80(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(80, written);
+  }
+  set field81(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(81, written);
+  }
+  set field82(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(82, written);
+  }
+  set field83(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(83, written);
+  }
+  set field84(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(84, written);
+  }
+  set field85(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(85, written);
+  }
+  set field86(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(86, written);
+  }
+  set field87(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(87, written);
+  }
+  set field88(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(88, written);
+  }
+  set field89(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(89, written);
+  }
+  set field90(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(90, written);
+  }
+  set field91(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(91, written);
+  }
+  set field92(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(92, written);
+  }
+  set field93(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(93, written);
+  }
+  set field94(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(94, written);
+  }
+  set field95(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(95, written);
+  }
+  set field96(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(96, written);
+  }
+  set field97(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(97, written);
+  }
+  set field98(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(98, written);
+  }
+  set field99(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(99, written);
+  }
+  set field100(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(100, written);
+  }
+  set field101(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(101, written);
+  }
+  set field102(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(102, written);
+  }
+  set field103(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(103, written);
+  }
+  set field104(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(104, written);
+  }
+  set field105(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(105, written);
+  }
+  set field106(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(106, written);
+  }
+  set field107(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(107, written);
+  }
+  set field108(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(108, written);
+  }
+  set field109(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(109, written);
+  }
+  set field110(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(110, written);
+  }
+  set field111(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(111, written);
+  }
+  set field112(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(112, written);
+  }
+  set field113(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(113, written);
+  }
+  set field114(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(114, written);
+  }
+  set field115(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(115, written);
+  }
+  set field116(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(116, written);
+  }
+  set field117(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(117, written);
+  }
+  set field118(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(118, written);
+  }
+  set field119(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(119, written);
+  }
+  set field120(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(120, written);
+  }
+  set field121(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(121, written);
+  }
+  set field122(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(122, written);
+  }
+  set field123(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(123, written);
+  }
+  set field124(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(124, written);
+  }
+  set field125(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(125, written);
+  }
+  set field126(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(126, written);
+  }
+  set field127(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(127, written);
+  }
+  set field128(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(128, written);
+  }
+  set field129(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(129, written);
+  }
+  set field130(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(130, written);
+  }
+  set field131(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(131, written);
+  }
+  set field132(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(132, written);
+  }
+  set field133(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(133, written);
+  }
+  set field134(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(134, written);
+  }
+  set field135(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(135, written);
+  }
+  set field136(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(136, written);
+  }
+  set field137(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(137, written);
+  }
+  set field138(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(138, written);
+  }
+  set field139(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(139, written);
+  }
+  set field140(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(140, written);
+  }
+  set field141(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(141, written);
+  }
+  set field142(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(142, written);
+  }
+  set field143(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(143, written);
+  }
+  set field144(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(144, written);
+  }
+  set field145(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(145, written);
+  }
+  set field146(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(146, written);
+  }
+  set field147(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(147, written);
+  }
+  set field148(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(148, written);
+  }
+  set field149(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(149, written);
+  }
+  set field150(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(150, written);
+  }
+  set field151(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(151, written);
+  }
+  set field152(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(152, written);
+  }
+  set field153(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(153, written);
+  }
+  set field154(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(154, written);
+  }
+  set field155(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(155, written);
+  }
+  set field156(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(156, written);
+  }
+  set field157(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(157, written);
+  }
+  set field158(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(158, written);
+  }
+  set field159(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(159, written);
+  }
+  set field160(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(160, written);
+  }
+  set field161(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(161, written);
+  }
+  set field162(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(162, written);
+  }
+  set field163(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(163, written);
+  }
+  set field164(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(164, written);
+  }
+  set field165(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(165, written);
+  }
+  set field166(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(166, written);
+  }
+  set field167(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(167, written);
+  }
+  set field168(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(168, written);
+  }
+  set field169(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(169, written);
+  }
+  set field170(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(170, written);
+  }
+  set field171(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(171, written);
+  }
+  set field172(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(172, written);
+  }
+  set field173(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(173, written);
+  }
+  set field174(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(174, written);
+  }
+  set field175(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(175, written);
+  }
+  set field176(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(176, written);
+  }
+  set field177(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(177, written);
+  }
+  set field178(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(178, written);
+  }
+  set field179(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(179, written);
+  }
+  set field180(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(180, written);
+  }
+  set field181(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(181, written);
+  }
+  set field182(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(182, written);
+  }
+  set field183(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(183, written);
+  }
+  set field184(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(184, written);
+  }
+  set field185(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(185, written);
+  }
+  set field186(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(186, written);
+  }
+  set field187(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(187, written);
+  }
+  set field188(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(188, written);
+  }
+  set field189(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(189, written);
+  }
+  set field190(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(190, written);
+  }
+  set field191(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(191, written);
+  }
+  set field192(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(192, written);
+  }
+  set field193(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(193, written);
+  }
+  set field194(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(194, written);
+  }
+  set field195(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(195, written);
+  }
+  set field196(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(196, written);
+  }
+  set field197(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(197, written);
+  }
+  set field198(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(198, written);
+  }
+  set field199(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(199, written);
+  }
+  set field200(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(200, written);
+  }
+  set field201(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(201, written);
+  }
+  set field202(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(202, written);
+  }
+  set field203(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(203, written);
+  }
+  set field204(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(204, written);
+  }
+  set field205(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(205, written);
+  }
+  set field206(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(206, written);
+  }
+  set field207(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(207, written);
+  }
+  set field208(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(208, written);
+  }
+  set field209(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(209, written);
+  }
+  set field210(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(210, written);
+  }
+  set field211(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(211, written);
+  }
+  set field212(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(212, written);
+  }
+  set field213(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(213, written);
+  }
+  set field214(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(214, written);
+  }
+  set field215(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(215, written);
+  }
+  set field216(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(216, written);
+  }
+  set field217(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(217, written);
+  }
+  set field218(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(218, written);
+  }
+  set field219(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(219, written);
+  }
+  set field220(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(220, written);
+  }
+  set field221(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(221, written);
+  }
+  set field222(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(222, written);
+  }
+  set field223(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(223, written);
+  }
+  set field224(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(224, written);
+  }
+  set field225(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(225, written);
+  }
+  set field226(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(226, written);
+  }
+  set field227(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(227, written);
+  }
+  set field228(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(228, written);
+  }
+  set field229(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(229, written);
+  }
+  set field230(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(230, written);
+  }
+  set field231(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(231, written);
+  }
+  set field232(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(232, written);
+  }
+  set field233(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(233, written);
+  }
+  set field234(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(234, written);
+  }
+  set field235(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(235, written);
+  }
+  set field236(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(236, written);
+  }
+  set field237(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(237, written);
+  }
+  set field238(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(238, written);
+  }
+  set field239(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(239, written);
+  }
+  set field240(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(240, written);
+  }
+  set field241(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(241, written);
+  }
+  set field242(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(242, written);
+  }
+  set field243(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(243, written);
+  }
+  set field244(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(244, written);
+  }
+  set field245(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(245, written);
+  }
+  set field246(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(246, written);
+  }
+  set field247(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(247, written);
+  }
+  set field248(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(248, written);
+  }
+  set field249(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(249, written);
+  }
+  set field250(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(250, written);
+  }
+  set field251(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(251, written);
+  }
+  set field252(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(252, written);
+  }
+  set field253(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(253, written);
+  }
+  set field254(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(254, written);
+  }
+  set field255(value) {
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(255, written);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._cpp._exports.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const u8 = this._cpp._u8;
+    const out = this._cpp._outPtr;
+    return u8.slice(out, out + len);
   }
 }
 
@@ -2182,4 +4022,9 @@ export function openBigUser(cpp, bytes) {
   cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
   if (cpp._exports.cpp_any_open(bytes.length) !== 1) throw new Error("cpp_any_open failed");
   return new BigUserReader(cpp);
+}
+
+/** Begin building a new BigUser message. Returns a BigUserBuilder. */
+export function buildBigUser(cpp) {
+  return new BigUserBuilder(cpp);
 }

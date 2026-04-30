@@ -1,6 +1,7 @@
 // Generated from conformance_schema.capnp by capnwasm-gen — do not edit by hand.
 
 const SHARED_TEXT_DECODER = new TextDecoder();
+const SHARED_ENCODER = new TextEncoder();
 function decodeAscii(bytes) {
   let asciiOk = true;
   for (let i = 0; i < bytes.length; i++) if (bytes[i] >= 0x80) { asciiOk = false; break; }
@@ -239,81 +240,102 @@ export class PrimitivesReader {
 }
 
 export class PrimitivesBuilder {
-  constructor(cpp) {
+  static _DATA_WORDS = 6;
+  static _PTR_WORDS = 4;
+  constructor(cpp, opts) {
     this._cpp = cpp;
-    if (cpp._exports.cpp_any_builder_init(6, 4) !== 1) {
-      throw new Error("cpp_any_builder_init failed");
+    if (!opts || !opts.preinitialized) {
+      if (cpp._exports.cpp_any_builder_init(6, 4) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
     }
+    this._dataPtr = cpp._exports.cpp_any_builder_data_ptr();
   }
 
   set u8(value) {
-    this._cpp._exports.cpp_any_builder_set_uint8(0, value & 0xff);
+    this._cpp._u8[this._dataPtr + 0] = value & 0xff;
   }
   set u16(value) {
-    this._cpp._exports.cpp_any_builder_set_uint16(2, value & 0xffff);
+    const u8 = this._cpp._u8;
+    const o = this._dataPtr + 2;
+    u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
   }
   set u32(value) {
-    this._cpp._exports.cpp_any_builder_set_uint32(4, value >>> 0);
+    const u8 = this._cpp._u8;
+    const o = this._dataPtr + 4;
+    u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
+    u8[o+2] = (value >>> 16) & 0xff; u8[o+3] = (value >>> 24) & 0xff;
   }
   set u64(value) {
-    let lo, hi;
+    const dv = new DataView(this._cpp._u8.buffer);
     if (typeof value === "bigint") {
-      lo = Number(value & 0xffffffffn) >>> 0;
-      hi = Number((value >> 32n) & 0xffffffffn) | 0;
-    } else if (value >= 0) {
-      lo = (value >>> 0); hi = ((value / 4294967296) >>> 0);
+      dv.setBigInt64(this._dataPtr + 8, value, true);
     } else {
-      const abs = -value; const aLo = (abs >>> 0); const aHi = ((abs / 4294967296) >>> 0);
-      lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0;
+      let lo, hi;
+      if (value >= 0) { lo = (value >>> 0); hi = ((value / 4294967296) >>> 0); }
+      else { const abs = -value; const aLo = (abs >>> 0); const aHi = ((abs / 4294967296) >>> 0);
+             lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0; }
+      dv.setUint32(this._dataPtr + 8, lo, true);
+      dv.setUint32(this._dataPtr + 12, hi, true);
     }
-    this._cpp._exports.cpp_any_builder_set_int64_lo_hi(8, lo, hi);
   }
   set i8(value) {
-    this._cpp._exports.cpp_any_builder_set_uint8(1, value & 0xff);
+    this._cpp._u8[this._dataPtr + 1] = value & 0xff;
   }
   set i16(value) {
-    this._cpp._exports.cpp_any_builder_set_uint16(16, value & 0xffff);
+    const u8 = this._cpp._u8;
+    const o = this._dataPtr + 16;
+    u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
   }
   set i32(value) {
-    this._cpp._exports.cpp_any_builder_set_uint32(20, value >>> 0);
+    const u8 = this._cpp._u8;
+    const o = this._dataPtr + 20;
+    u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
+    u8[o+2] = (value >>> 16) & 0xff; u8[o+3] = (value >>> 24) & 0xff;
   }
   set i64(value) {
-    let lo, hi;
+    const dv = new DataView(this._cpp._u8.buffer);
     if (typeof value === "bigint") {
-      lo = Number(value & 0xffffffffn) >>> 0;
-      hi = Number((value >> 32n) & 0xffffffffn) | 0;
-    } else if (value >= 0) {
-      lo = (value >>> 0); hi = ((value / 4294967296) >>> 0);
+      dv.setBigInt64(this._dataPtr + 24, value, true);
     } else {
-      const abs = -value; const aLo = (abs >>> 0); const aHi = ((abs / 4294967296) >>> 0);
-      lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0;
+      let lo, hi;
+      if (value >= 0) { lo = (value >>> 0); hi = ((value / 4294967296) >>> 0); }
+      else { const abs = -value; const aLo = (abs >>> 0); const aHi = ((abs / 4294967296) >>> 0);
+             lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0; }
+      dv.setUint32(this._dataPtr + 24, lo, true);
+      dv.setUint32(this._dataPtr + 28, hi, true);
     }
-    this._cpp._exports.cpp_any_builder_set_int64_lo_hi(24, lo, hi);
   }
   set f32(value) {
-    if (!this._fbuf) { this._fbuf = new ArrayBuffer(4); this._fu = new Uint32Array(this._fbuf); this._ff = new Float32Array(this._fbuf); }
-    this._ff[0] = value;
-    this._cpp._exports.cpp_any_builder_set_uint32(32, this._fu[0]);
+    new DataView(this._cpp._u8.buffer).setFloat32(this._dataPtr + 32, value, true);
   }
   set f64(value) {
-    if (!this._dbuf) { this._dbuf = new ArrayBuffer(8); this._du = new Uint32Array(this._dbuf); this._dd = new Float64Array(this._dbuf); }
-    this._dd[0] = value;
-    this._cpp._exports.cpp_any_builder_set_int64_lo_hi(40, this._du[0], this._du[1]);
+    new DataView(this._cpp._u8.buffer).setFloat64(this._dataPtr + 40, value, true);
   }
   set flag0(value) {
-    this._cpp._exports.cpp_any_builder_set_bool(144, value ? 1 : 0);
+    const u8 = this._cpp._u8;
+    const off = this._dataPtr + 18;
+    if (value) u8[off] |= 1;
+    else u8[off] &= 254;
   }
   set flag1(value) {
-    this._cpp._exports.cpp_any_builder_set_bool(145, value ? 1 : 0);
+    const u8 = this._cpp._u8;
+    const off = this._dataPtr + 18;
+    if (value) u8[off] |= 2;
+    else u8[off] &= 253;
   }
   set flag2(value) {
-    this._cpp._exports.cpp_any_builder_set_bool(146, value ? 1 : 0);
+    const u8 = this._cpp._u8;
+    const off = this._dataPtr + 18;
+    if (value) u8[off] |= 4;
+    else u8[off] &= 251;
   }
   set text(value) {
-    const enc = new TextEncoder().encode(value);
-    const u8 = this._cpp._u8;
-    u8.set(enc, this._cpp._exports.cpp_in_ptr());
-    this._cpp._exports.cpp_any_builder_set_text(0, enc.length);
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(0, written);
   }
   set data(value) {
     const u8 = this._cpp._u8;
@@ -321,10 +343,11 @@ export class PrimitivesBuilder {
     this._cpp._exports.cpp_any_builder_set_data(1, value.length);
   }
   set emptyText(value) {
-    const enc = new TextEncoder().encode(value);
-    const u8 = this._cpp._u8;
-    u8.set(enc, this._cpp._exports.cpp_in_ptr());
-    this._cpp._exports.cpp_any_builder_set_text(2, enc.length);
+    const inPtr = this._cpp._exports.cpp_in_ptr();
+    const inCap = this._cpp._exports.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._cpp._exports.cpp_any_builder_set_text(2, written);
   }
   set emptyData(value) {
     const u8 = this._cpp._u8;

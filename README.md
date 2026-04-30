@@ -1,201 +1,228 @@
 # capnwasm
 
-Compile the actual Cap'n Proto C++ library to WebAssembly via `zig cc`
-(statically linked, **no emscripten**), and benchmark the result against
-Cloudflare's [capnweb](https://github.com/cloudflare/capnweb).
+**One typed-client toolchain for any backend** — write or import a schema, get a fast typed client back.
 
-## Build
+- Cap'n Proto schemas → zero-copy typed reader/builder + RPC client/server
+- TypeScript interfaces with `@rest` directives → typed REST client
+- OpenAPI 3.x specs → typed REST client (works against Stripe, GitHub, anything that publishes a spec)
 
-```
-bash cpp/build.sh        # vendor sources + zig c++ -> wasm + wasm-opt -Oz
-node bench/runner.mjs    # Playwright bench in headless Chromium
-```
+Real upstream Cap'n Proto C++ is statically compiled to WebAssembly via `zig cc`. The schema *compiler* is also wasm — no `capnp` binary, no version skew, no `emscripten`.
 
-Requires:
-- `zig` 0.16+ (uses bundled clang 21 + libc++ for `wasm32-wasi-musl`)
-- `wasm-opt` (Binaryen)
-- `node` + `playwright`
-- A sibling clone of `capnweb` and `capnproto` at `../`
-
-## Build pipeline
-
-```
-upstream capnproto/c++/src/{kj,capnp}/      # latest from
-   │                                          github.com/capnproto/capnproto
-   │   capnp compile -oc++ schema.capnp     # generates schema.capnp.{c++,h}
-   ▼
-cpp/vendor/{kj,capnp}/                       # local patches for wasm32-wasi
-   │ + cpp/{schema.capnp,wrapper.cpp,eh_runtime.cpp}
-   │
-   │   zig c++ -target wasm32-wasi-musl -O3 -fexceptions -fno-rtti
-   │           -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_MMAN
-   │           ... (full flag list in cpp/build.sh)
-   ▼
-zig-out/capnp_cpp.wasm                       # 3.6 MB  raw output
-   │
-   │   wasm-opt -Oz --converge --strip-debug --strip-producers
-   ▼
-zig-out/capnp_cpp.opt.wasm                   #  92 KB  raw  (35 KB gzip)
+```bash
+npm install capnwasm
 ```
 
-The browser side wires in `js/cpp_wasi_shim.mjs` to satisfy the five WASI
-imports the wasm pulls in (`args_get`, `args_sizes_get`, `fd_write`,
-`proc_exit`, `fd_close`) — about 30 lines of JS.
+```js
+import { load } from "capnwasm";       // runtime (capnp wire + RPC)
+import { auth } from "capnwasm/rest";  // REST client runtime
+```
 
-## Patches to upstream capnproto
+---
 
-All in `cpp/vendor/`, marked with `__wasi__` / `__wasm__` guards:
+## Three quickstarts
 
-- **`kj/exception.c++`** — wrap `printStackTraceOnCrash`, `resetCrashHandlers`,
-  and the POSIX `crashHandler` so they no-op on wasm (no signals on the platform).
-- **`kj/exception.h`** — define `KJ_RETURN_ADDRESS()` to a null pointer on wasm
-  (LLVM doesn't implement `__builtin_return_address` for wasm).
-- **`kj/miniposix.h`** — skip `using ::pipe` on wasi (no `pipe()` syscall).
-- **`capnp/message.h`** — set `arenaSpacePadding = 19` for wasm (matches the
-  Emscripten case; `MutexGuarded<void*>` size differs from glibc).
+**1. Cap'n Proto schema → typed JS reader/builder**
 
-`cpp/eh_runtime.cpp` provides Itanium ABI exception entry points
-(`__cxa_allocate_exception`, `__cxa_throw`, `__cxa_rethrow`,
-`__cxa_begin_catch`, `__cxa_end_catch`) since Zig's libc++abi for
-`wasm32-wasi-musl` ships `cxa_noexception.o` instead of the throw-capable
-variant. Throws end up calling `std::terminate()` — the documented
-no-EH-runtime semantics. KJ throws only on malformed input, which terminates
-the wasm instance; the JS host catches `proc_exit` from the WASI shim.
+```bash
+npx capnwasm gen user.capnp -o user.gen.mjs
+```
+```js
+import { load } from "capnwasm";
+import { openUser, buildUser } from "./user.gen.mjs";
+const cpp = await load();
 
-## Honest bench result
+const b = buildUser(cpp);
+b.id = 42n; b.name = "Alice";
+const bytes = b.toBytes();
 
-| Fixture | cpp enc (µs) | cwb enc (µs) | cpp dec (µs) | cwb dec (µs) | cpp wire | cwb wire |
-|---|---|---|---|---|---|---|
-| small-call | 6.15 | 0.70 | 1.00 | 0.90 | 192 | 68 |
-| medium-payload | 9.60 | 3.85 | 11.70 | 2.20 | 3144 | 1720 |
-| wide-payload | 139.0 | 60.0 | 194.5 | 63.5 | 60744 | 28464 |
-| large-array | 81.0 | 25.5 | 91.0 | 43.0 | 50448 | 10934 |
-| **binary-blob** | 62.5 | 9.5 | **9.0** | 31.5 | 65616 | 87409 |
-| **deep-pipeline** | 4.45 | 0.95 | **1.15** | 1.45 | 576 | 241 |
-| pull | 3.45 | 0.05 | 0.20 | 0.15 | 40 | 12 |
-| release | 3.45 | 0.10 | 0.25 | 0.20 | 56 | 17 |
+const r = openUser(cpp, bytes);
+console.log(r.id, r.name);   // typed getters; V8-inlinable
+```
 
-Bundle size: capnp_cpp.opt.wasm is **35 KB gzip** vs capnweb's 21 KB —
-**1.68x larger** on the wire.
+**2. TypeScript interface → typed REST client (your own backend)**
 
-## Single import, one fetch
+```ts
+// my_api.ts
+interface User { id: number; name: string; }
+interface CreateUserParams { name: string; }
+
+// @rest baseUrl=https://api.myservice.com
+// @auth bearer
+interface MyAPI {
+  // @get /users/{id}
+  getUser(id: number): Promise<User>;
+
+  // @post /users
+  // @body body
+  createUser(body: CreateUserParams): Promise<User>;
+}
+```
+```bash
+npx capnwasm gen my_api.ts -o my_api.gen.mjs
+```
+```js
+import { createMyAPIClient } from "./my_api.gen.mjs";
+import { auth } from "capnwasm/rest";
+const api = createMyAPIClient({ auth: auth.bearer(token) });
+const u = await api.getUser(42);
+```
+
+**3. OpenAPI 3.x spec → typed REST client (any third-party API)**
+
+```bash
+npx capnwasm openapi stripe.yaml -o stripe.gen.mjs
+```
+```js
+import { createStripeClient } from "./stripe.gen.mjs";
+import { auth } from "capnwasm/rest";
+const stripe = createStripeClient({ auth: auth.bearer(STRIPE_KEY) });
+const charge = await stripe.retrieveCharge("ch_abc123");
+for await (const event of stripe.listEvents()) console.log(event.id);
+```
+
+---
+
+## What's in the box
+
+| | what | gzip |
+|---|---|---|
+| `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers | 71 KB |
+| `import "capnwasm/slim"` | production-only runtime (no test fixtures) | 64 KB |
+| `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | small |
+| `import "capnwasm/rpc"` | full RPC layer (sessions, caps, streaming) | small |
+| `import "capnwasm/codegen"` | wasm-built capnp schema compiler — runs in browser | 356 KB |
+| `import "capnwasm/stream"` | helper to stream `fetch` bytes straight into wasm | small |
+
+For comparison: capnweb is ~21 KB gzip. We're 3x larger because we ship a real Cap'n Proto wasm runtime; that buys us things capnweb structurally can't have (binary wire, zero-copy field access, true sparse-read perf).
+
+---
+
+## Why this exists / when to choose it
+
+Microsecond per-call differences vanish behind any real network. The cases where capnwasm matters at user-perceived scale:
+
+| workload | JSON | capnwasm | win |
+|---|---|---|---|
+| **Decode 1000 records, read 5 fields each** (sparse access) | 20.4 ms | 1.7 ms | **12x faster** |
+| **5 MB binary asset** over 10 Mbps link | 5.33 s | 4.00 s | **1.33 s saved per asset** (no base64 bloat) |
+| **10K-msg/s telemetry stream decode** | 1.0 M msgs/sec | 3.3 M msgs/sec | **3.2x throughput** |
+| Single tiny RPC call (latency) | 9 µs | 17 µs | (8 µs slower — invisible behind any network) |
+
+Choose capnwasm when:
+- You're moving binary data (images, audio, models, embeddings) and want raw bytes on the wire
+- You return more data than the client reads (sparse-access workloads)
+- You want one schema language and one codegen toolchain for *both* internal and third-party APIs
+- You want wire compatibility with non-JS Cap'n Proto peers (C++/Rust/Go services)
+
+Choose capnweb when:
+- Pure JS-to-JS, all-text payloads, and you want the smallest bundle possible
+- You don't need wire interop with non-JS peers
+
+---
+
+## RPC — full Cap'n Proto pillars
 
 ```js
 import { load } from "capnwasm";
+import { RpcSession, InterfaceRegistry, connectWebSocket, auth } from "capnwasm/rpc";
+
 const cpp = await load();
+// Connect to a server speaking standard Cap'n Proto rpc.capnp wire:
+const session = await connectWebSocket(cpp, "wss://api.example.com/rpc");
+const root = session.bootstrap();
 ```
 
-The wasm is inlined as base64 in the bundle. One network fetch, no
-separate `.wasm` asset to ship.
+What's there:
 
-Size (gzip): **49 KB single file** vs capnweb's **21 KB**. Most of the
-gap is the actual Cap'n Proto + KJ C++ runtime, statically linked.
+- **Zero-copy** — Builder writes directly into the RPC message's arena via `cap.callBuilder(IFC, METHOD, BuilderClass)`; Reader reads directly out of `rpc_reader` via the synchronous-extractor pattern. Single-digit-byte-per-call JS heap allocation regardless of payload size.
+- **Promise pipelining** — `r1.cap.call(...)` chains a follow-up onto an unresolved answer. Multiple Calls hit the wire before any Return. Tested at 3-level deep chains.
+- **Capability passing** — handler returns `{ caps: [target] }`; client receives a working `RpcCap` it can call methods on. Round-trip confirmed including `senderHosted` CapDescriptor encoding.
+- **Auto-release** — `RpcCap` GC fires `FinalizationRegistry`, sends `Release` to peer, server's `localCaps` shrinks. No leaks.
+- **Streaming** — `cap.callStream(...)` returns `AsyncIterable<Uint8Array>`; server registers an async generator handler. Custom STREAM_CHUNK frame extension — server-push, no per-chunk round-trip.
+- **Auto-batching** (opt-in) — `newBatchedRpcSession()` coalesces multiple calls in one tick into one `transport.send`. Capnweb's `newHttpBatchRpcSession` shape; default is one-frame-per-call for predictable wire timing.
+- **Nested groups, unions, lists of structs** — codegen emits typed accessors for all of them.
 
-The JS-glue alone (6 KB gzip) is smaller than capnweb. The wasm is the
-~33 KB bulk because it bundles the full Cap'n Proto + KJ runtime.
-Splitting wins for HTTP/2 parallel fetch and long-term caching of the
-wasm across app updates; inlining wins for setups that can't ship a
-separate `.wasm` asset.
+---
 
-## CLI: `npx capnwasm`
+## REST runtime details
 
-One package, one CLI, library import all share the name:
+The generated REST clients run on `js/rest_runtime.mjs`:
+
+- All HTTP methods, path/query/header parameters
+- Bodies: JSON, multipart, form-encoded, raw
+- Auth: `auth.bearer(token)`, `auth.apiKey(key, {in:"header"|"query", name})`, `auth.basic(u, p)`, `auth.custom(applyFn)`
+- Retries with configurable exponential/linear backoff + Retry-After honoring
+- Cancellation via AbortSignal (composes with timeout)
+- `RestError` typed exception with status, parsed body, response headers
+- Async iterable pagination (cursor- or page-based)
+- Request/response/error interceptors
+- Auto Content-Type + content negotiation
+
+---
+
+## Browser-side codegen
+
+The schema compiler ships as `dist/codegen.mjs` (one file, base64-embedded wasm). All standard schemas (`/capnp/c++.capnp`, `schema.capnp`, etc.) are baked into the wasm binary — zero host filesystem reads:
+
+```js
+import { CapnpCompiler } from "capnwasm/codegen";
+const cc = await CapnpCompiler.load();
+const model = await cc.compileToModel("user.capnp", schemaSource);
+```
+
+Verified end-to-end via headless Chromium tests.
+
+---
+
+## Build from source
 
 ```bash
-npx capnwasm gen user.capnp -o user.gen.mjs   # codegen from .capnp
-npx capnwasm gen user.ts    -o user.gen.mjs   # codegen from TS interfaces
-npx capnwasm user.capnp                        # shorthand for gen
-npx capnwasm build                             # rebuild the wasm
-npx capnwasm bench                             # run the Playwright bench
+bash cpp/build.sh             # builds runtime wasm + dist/inlined.mjs (full + slim)
+bash cpp/build_capnpc.sh      # builds compiler wasm
+node js/build_codegen_inlined.mjs   # builds dist/codegen.mjs (inlined compiler)
+npm test                      # 77 tests across runtime, RPC, REST, OpenAPI, browser
 ```
 
-The CLI accepts either format. Web devs who don't want to learn the
-`.capnp` grammar can just write TypeScript interfaces:
+Requires:
+- `zig` 0.16+ (provides clang 21 + libc++ for `wasm32-wasi-musl`)
+- `wasm-opt` (Binaryen)
+- `node` 22+ (for `--test`)
+- `playwright` (for the browser tests)
 
-```ts
-export interface User {
-  // @capnp UInt64
-  id: number;
-  // @capnp UInt32
-  age: number;
-  active: boolean;
-  name: string;
-  email: string;
-}
+For development against capnweb comparison benches, also needs sibling clones of `../capnweb` and `../capnproto`.
+
+---
+
+## Architecture
+
+```
+.capnp / .ts / OpenAPI yaml
+        │
+        ▼
+   bin/capnwasm.mjs (CLI)
+        │
+        ├─ .capnp ──→ dist/codegen.mjs (wasm-built capnp schema compiler)
+        │                   ↓
+        │              CodeGeneratorRequest (Cap'n Proto bytes)
+        │                   ↓
+        │              JS walker → struct model → emit typed Reader/Builder
+        │
+        ├─ .ts (capnp interfaces) ──→ JS parser → struct model → emit
+        │
+        ├─ .ts (REST interfaces) ──→ method+type model → emit fetch-based client
+        │
+        └─ OpenAPI yaml/json ──→ openapi parser → method+type model → same path
+                                                            ↓
+                                              dist/inlined.mjs (capnp runtime)
+                                              + js/rest_runtime.mjs
+                                              + js/rpc.mjs
+                                              + ...
 ```
 
-Default mapping: `string`→Text, `boolean`→Bool, `bigint`→Int64,
-`Uint8Array`→Data, `number`→Float64. Use `// @capnp Type` on the line
-above a field to override (typically for integer subtypes). Capitalised
-type names that match another `interface` in the same file are treated
-as struct references.
+All wasm modules are built from one vendored copy of Cap'n Proto's C++ source tree (`cpp/vendor/capnp/`). Runtime and compiler can never disagree about wire format.
 
-Anything outside this subset (methods, generics, mapped types) raises
-an explicit error — never silently produces a half-broken reader.
+---
 
-Library import from the same package:
-```js
-import { CapnCpp } from "capnwasm";
-```
+## License
 
-`gen` emits a typed reader class per struct. Field access is a normal JS
-property — V8-inlinable, no Proxy traps, no string lookup:
-
-```js
-import { CapnCpp } from "capnwasm";
-import { UserReader, openUser } from "./user.gen.mjs";
-
-const cpp = await CapnCpp.load("/capnp_cpp.opt.wasm");
-const reader = openUser(cpp, bytesFromServer);
-console.log(reader.id, reader.email);   // direct getter, integer-offset wasm call
-```
-
-The generated getters look like:
-```js
-get id()    { return this._cpp._exports.cpp_any_int64_at(0, 0n); }
-get email() { return decodeAscii(/* cpp_any_text_at(1) result */); }
-```
-
-Each getter knows its field's offset because the `.capnp` schema told the
-codegen at build time. Same wire format as any other Cap'n Proto language
-binding — server emits bytes, browser consumes them, schema is the source
-of truth.
-
-**Bench (typed schema, 32 named string fields):**
-
-| Workload | cpp wasm | capnweb | result |
-|---|---|---|---|
-| Encode | 21.6 µs | 13.7 µs | capnweb 1.6x |
-| **Decode + read 3 fields** | **1.35 µs** | 2.50 µs | **cpp 1.85x** |
-| Decode + read all 32 fields | 11.85 µs | 3.10 µs | capnweb 3.8x |
-
-The lazy-access workload — read few fields out of many — is where Cap'n Proto's
-wire format actually delivers, and it does. capnweb pays full `JSON.parse`
-either way; we pay parse-once + cheap field walks. The `reader.field0` API
-is identical between the two.
-
-## Honest conclusions
-
-The original hypothesis was: *real capnproto compiled to wasm should beat
-capnweb's pure JS on size and serialize/deserialize speed.* The data
-**refutes** this for typical RPC workloads:
-
-- **Size**: capnp_cpp is 1.68x larger than capnweb gzipped. Bundle wars
-  punish wasm because the Cap'n Proto + KJ runtime is ≥35 KB, while
-  capnweb's JSON wrapper is just 21 KB.
-- **Encode speed**: capnp_cpp loses on every fixture. The wasm boundary
-  (memory copy + tape walk in JS) plus capnp's general-purpose
-  MessageBuilder overhead exceed `JSON.stringify`'s native code path.
-- **Decode speed**: capnp_cpp loses on most fixtures. V8's `JSON.parse`
-  is exceptionally optimized for the "build a JS object tree" workload.
-- **Wins are real but narrow**: capnp_cpp's binary wire format **wins
-  on binary-blob decode (3.5x faster)** because it skips the
-  base64-roundtrip capnweb requires, and **on deep-pipeline decode
-  (1.26x faster)** because Cap'n Proto pointer chasing is cheaper than
-  recursive JSON parsing of nested arrays.
-
-Cap'n Proto's actual design strength is **lazy field access from binary
-wire format**. The bench's "decode + materialize the whole tree" workload
-is the worst case for it. A real-world Cap'n Proto consumer would access
-specific fields without paying full materialization — that benchmark is
-not yet implemented for the C++ build.
+MIT.

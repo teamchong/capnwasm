@@ -93,7 +93,11 @@ test("capnp: rejects unknown struct ref", () => {
     }
   `);
   assert.notEqual(r.code, 0);
-  assert.match(r.stderr, /BadType.*not a known/);
+  // Wasm-built capnp compiler reports this as "Not defined: BadType"; the
+  // legacy JS-only parser used "not a known type". Either is a clear,
+  // user-actionable message naming the missing type.
+  assert.match(r.stderr, /BadType/);
+  assert.match(r.stderr, /(not a known|Not defined)/);
 });
 
 test("capnp: parses simple struct", () => {

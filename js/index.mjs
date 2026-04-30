@@ -5,3 +5,13 @@
 
 export { load, CapnCpp } from "../dist/inlined.mjs";
 export { TapeWriter, TapeReader } from "./tape_codec.mjs";
+export { openFromStream } from "./stream.mjs";
+export {
+  RpcSession,
+  RpcCap,
+  InterfaceRegistry,
+  createMemoryTransportPair,
+  wsTransport,
+  connectWebSocket,
+  newBatchedRpcSession,
+} from "./rpc.mjs";

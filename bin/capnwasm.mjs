@@ -18,15 +18,23 @@ import { fileURLToPath } from "node:url";
 const PKG_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 
 function topUsage() {
-  console.error(`capnwasm — typed Cap'n Proto bindings for the browser
+  console.error(`capnwasm — typed clients from one schema, two wire formats
 
 Usage:
-  npx capnwasm gen <schema.capnp> [-o output.gen.mjs]
-  npx capnwasm build                # rebuild zig-out/capnp_cpp.opt.wasm
-  npx capnwasm bench                # run the Playwright bench
-  npx capnwasm <schema.capnp>       # shorthand for gen
+  npx capnwasm gen <schema.capnp|schema.ts> [-o output.gen.mjs]
+      Generate a Cap'n Proto reader/builder, or (when the .ts file declares
+      an @rest interface) a typed REST client.
 
-Library: import { CapnCpp } from "capnwasm";
+  npx capnwasm openapi <spec.yaml|spec.json> [-o output.gen.mjs]
+      Generate a typed REST client from an OpenAPI 3.x spec. Works against
+      any service that publishes one (Stripe, GitHub, Twilio, etc.).
+
+  npx capnwasm build                Rebuild zig-out/capnp_cpp.opt.wasm
+  npx capnwasm bench                Run the Playwright bench
+  npx capnwasm <file>               Shorthand: dispatches by extension.
+
+Library: import { CapnCpp } from "capnwasm";          (capnp runtime)
+         import { auth } from "capnwasm/rest";        (REST runtime)
 `);
   process.exit(1);
 }
@@ -96,62 +104,144 @@ const VALID_CAPNP_PRIMS = new Set([
   "Text", "Data", "Void",
 ]);
 
+// HTTP method directives recognised on REST interface methods. Each maps to
+// the wire HTTP verb. The path follows after one space.
+const REST_METHOD_DIRECTIVES = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
+
 async function parseTsInterfaces(text) {
   const lines = text.split(/\r?\n/);
   const structs = [];
-  let current = null;       // {name, fields, nextOrdinal} when inside an interface
-  let braceDepth = 0;       // # of unmatched { inside the current interface body
+  const restApis = [];
+  const typeInterfaces = [];
+  // Pre-scan: if the file declares any @rest interface, non-REST interfaces
+  // become pure TypeScript type definitions (we capture their bodies
+  // verbatim and re-emit in the .d.ts; we don't parse their fields as
+  // capnp wire types). This lets REST schemas use full TS syntax (arrays,
+  // nullable, unions) without bumping into capnp's stricter type model.
+  const hasRest = /^\s*\/\/\s*@rest\b/m.test(text);
+
+  let current = null;        // capnp-struct accumulator
+  let currentRest = null;    // rest-api accumulator
+  let currentType = null;    // pure TS type accumulator (only when hasRest)
+  let braceDepth = 0;
   let pendingDirectives = {};
+  let pendingMethodDirectives = {};
+  let pendingInterfaceDirectives = {};
 
   for (let lineNo = 0; lineNo < lines.length; lineNo++) {
     const raw = lines[lineNo];
     const stripped = raw.replace(/\/\*.*?\*\//g, "").trimEnd();
-    const lineCtx = `${lineNo + 1}: ${raw.trim()}`;
 
-    if (current === null) {
+    // ---- TOP LEVEL: looking for an interface header ----
+    if (current === null && currentRest === null && currentType === null) {
+      // Top-level directives (apply to next interface): @rest, @auth, @retries, @timeout
+      const idm = stripped.match(/^\s*\/\/\s*@(rest|auth|retries|timeout|baseUrl)\s*(.*)$/);
+      if (idm) {
+        pendingInterfaceDirectives[idm[1]] = idm[2].trim();
+        continue;
+      }
+
       const m = stripped.match(/^\s*(?:export\s+)?interface\s+([A-Z][A-Za-z0-9_]*)\s*{?\s*$/);
       if (m) {
-        current = { name: m[1], fields: [], nextOrdinal: 0 };
+        const name = m[1];
+        const isRest = "rest" in pendingInterfaceDirectives;
+        if (isRest) {
+          currentRest = {
+            name,
+            methods: [],
+            baseUrl: parseRestBaseUrl(pendingInterfaceDirectives.rest, pendingInterfaceDirectives.baseUrl),
+            defaults: parseRestDefaults(pendingInterfaceDirectives),
+          };
+        } else if (hasRest) {
+          // Pure TS type interface alongside a REST API — capture the
+          // body verbatim so we can re-emit it in the .d.ts.
+          currentType = { name, body: [] };
+        } else {
+          current = { name, fields: [], nextOrdinal: 0 };
+        }
         braceDepth = stripped.endsWith("{") ? 1 : 0;
         pendingDirectives = {};
+        pendingMethodDirectives = {};
+        pendingInterfaceDirectives = {};
       }
       continue;
     }
 
-    // We're inside an interface body. Track braces.
+    // ---- INSIDE A BODY: track braces ----
     for (const ch of stripped) {
       if (ch === "{") braceDepth++;
       else if (ch === "}") braceDepth--;
     }
-
-    // Empty / whitespace-only -> skip.
     if (!stripped.trim()) continue;
 
-    // Closing brace ends the interface.
     if (braceDepth === 0) {
-      structs.push({ name: current.name, fields: current.fields });
-      current = null;
+      if (current) { structs.push({ name: current.name, fields: current.fields }); current = null; }
+      else if (currentRest) { restApis.push(currentRest); currentRest = null; }
+      else if (currentType) { typeInterfaces.push(currentType); currentType = null; }
       pendingDirectives = {};
+      pendingMethodDirectives = {};
       continue;
     }
 
-    // Directive comment: `// @capnp X` or `// @ordinal N`.
+    // ---- TYPE-ONLY TS INTERFACE BODY (verbatim capture) ----
+    if (currentType) {
+      // Just collect the line so we can re-emit it. Skip whitespace-only
+      // lines from being collapsed; preserve original formatting.
+      currentType.body.push(stripped);
+      continue;
+    }
+
+    // ---- REST INTERFACE BODY ----
+    if (currentRest) {
+      // Directive comments for the next method: @get/@post/etc, @query, @body, @header, @paginated.
+      const md = stripped.match(/^\s*\/\/\s*@([a-zA-Z]+)\s*(.*)$/);
+      if (md) {
+        const dir = md[1].toLowerCase();
+        const arg = md[2].trim();
+        if (REST_METHOD_DIRECTIVES.has(dir)) {
+          pendingMethodDirectives.method = dir.toUpperCase();
+          pendingMethodDirectives.path = arg;
+        } else if (dir === "query" || dir === "header" || dir === "body" || dir === "paginated"
+                || dir === "decode" || dir === "bodyencoding") {
+          // These can repeat (multiple @query lines) — accumulate as arrays/maps.
+          if (dir === "query" || dir === "header") {
+            (pendingMethodDirectives[dir + "s"] ||= []).push(arg);
+          } else {
+            pendingMethodDirectives[dir] = arg;
+          }
+        } else {
+          throw new Error(`capnwasm: line ${lineNo + 1}: unknown REST directive '@${dir}'`);
+        }
+        continue;
+      }
+      if (/^\s*\/\//.test(stripped)) continue;  // plain comment
+
+      // Method declaration. Forms supported:
+      //   methodName(arg1: T1, arg2?: T2): Promise<R>;
+      //   methodName(arg1: T1): AsyncIterable<R>;
+      const sig = parseMethodSignature(stripped);
+      if (sig) {
+        if (!pendingMethodDirectives.method) {
+          throw new Error(`capnwasm: line ${lineNo + 1}: REST method '${sig.name}' has no @get/@post/etc. directive`);
+        }
+        currentRest.methods.push(buildRestMethod(sig, pendingMethodDirectives, lineNo + 1));
+        pendingMethodDirectives = {};
+        continue;
+      }
+      throw new Error(`capnwasm: line ${lineNo + 1}: cannot parse REST method '${raw.trim()}'`);
+    }
+
+    // ---- CAPNP STRUCT BODY (existing code) ----
     const dm = stripped.match(/^\s*\/\/\s*@(capnp|ordinal)\s+(\S+)\s*$/);
-    if (dm) {
-      pendingDirectives[dm[1]] = dm[2];
-      continue;
-    }
-
-    // Pure comment line -> skip.
+    if (dm) { pendingDirectives[dm[1]] = dm[2]; continue; }
     if (/^\s*\/\//.test(stripped)) continue;
 
-    // Field declaration.
     const fm = stripped.match(/^\s*([a-zA-Z_][a-zA-Z0-9_]*)\??\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*[;,]?\s*$/);
     if (fm) {
       const tsName = fm[1];
       const tsType = fm[2];
       let capnpType = pendingDirectives.capnp ?? TS_TO_CAPNP[tsType];
-      if (!capnpType && /^[A-Z]/.test(tsType)) capnpType = tsType;  // struct ref
+      if (!capnpType && /^[A-Z]/.test(tsType)) capnpType = tsType;
       if (!capnpType) {
         throw new Error(`capnwasm: line ${lineNo + 1}: unsupported TS type '${tsType}'. Add '// @capnp <Type>' directive.`);
       }
@@ -168,16 +258,170 @@ async function parseTsInterfaces(text) {
       continue;
     }
 
-    // Anything else -> reject loudly.
     throw new Error(`capnwasm: line ${lineNo + 1}: cannot parse '${raw.trim()}'. Supported: simple field declarations 'name: Type;'`);
   }
 
-  if (current !== null) {
+  if (current !== null || currentRest !== null || currentType !== null) {
     throw new Error("capnwasm: TS source ended inside an interface body (unbalanced braces).");
   }
   validateStructs(structs);
   computeOffsets(structs);
-  return structs;
+  return { structs, restApis, typeInterfaces };
+}
+
+/** Parse `@rest baseUrl=https://...` or just `@rest`, plus a separate `@baseUrl` line. */
+function parseRestBaseUrl(restArg, baseUrlArg) {
+  if (baseUrlArg) return baseUrlArg;
+  if (!restArg) return "";
+  const m = restArg.match(/baseUrl=(\S+)/);
+  if (m) return m[1];
+  // Allow positional form: `@rest https://...`
+  const tok = restArg.trim();
+  if (/^https?:\/\//.test(tok)) return tok;
+  return "";
+}
+
+/** Parse top-level @auth, @retries, @timeout into a defaults object. */
+function parseRestDefaults(dirs) {
+  const out = {};
+  if (dirs.auth) {
+    // Accept `@auth bearer`, `@auth apiKey header=X-API-Key`, `@auth basic`
+    const parts = dirs.auth.trim().split(/\s+/);
+    out.auth = { type: parts[0] };
+    for (let i = 1; i < parts.length; i++) {
+      const [k, v] = parts[i].split("=");
+      out.auth[k] = v;
+    }
+  }
+  if (dirs.retries) {
+    // `@retries count=3 backoff=exponential`
+    const obj = {};
+    for (const tok of dirs.retries.split(/\s+/)) {
+      const [k, v] = tok.split("=");
+      obj[k] = isNaN(+v) ? v : +v;
+    }
+    out.retries = obj;
+  }
+  if (dirs.timeout) out.timeout = +dirs.timeout;
+  return out;
+}
+
+/** Parse `methodName(a: T, b?: T2): Promise<R>;` into a structured signature. */
+function parseMethodSignature(line) {
+  const m = line.match(/^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\s*([^)]*)\s*\)\s*:\s*(Promise|AsyncIterable)\s*<\s*(.+?)\s*>\s*[;,]?\s*$/);
+  if (!m) return null;
+  const [, name, paramsStr, returnContainer, returnType] = m;
+  const params = [];
+  if (paramsStr.trim()) {
+    for (const p of splitParams(paramsStr)) {
+      const pm = p.match(/^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(\?)?\s*:\s*(.+?)\s*$/);
+      if (!pm) throw new Error(`cannot parse parameter '${p}'`);
+      params.push({ name: pm[1], optional: !!pm[2], type: pm[3].trim() });
+    }
+  }
+  return { name, params, returnContainer, returnType: returnType.trim() };
+}
+
+/** Split a parameter list on commas not inside angle brackets. */
+function splitParams(s) {
+  const out = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of s) {
+    if (ch === "<" || ch === "(") depth++;
+    else if (ch === ">" || ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  if (cur.trim()) out.push(cur);
+  return out;
+}
+
+/** Combine a parsed signature with the surrounding directives into a full method model. */
+function buildRestMethod(sig, dirs, lineNo) {
+  const { method, path } = dirs;
+  // Determine which params are path params (referenced in the template),
+  // which are query params (declared via @query), header params (@header),
+  // and which is the body param (@body or sole non-path POST/PUT/PATCH arg).
+  const pathParamNames = new Set([...(path.matchAll(/{([^}]+)}/g))].map(m => m[1]));
+
+  // @query directives: each line is `@query paramName` (paramName matches a
+  // method parameter; query key is the same as paramName by convention).
+  const queryParamNames = new Set();
+  for (const q of dirs.querys ?? []) queryParamNames.add(q.split(/\s+/)[0]);
+
+  // @header directives: support `@header paramName` (header name = paramName)
+  // OR `@header WireName paramName` (explicit mapping). Useful when the wire
+  // header has chars that aren't valid TS identifiers (e.g. X-Trace-Id).
+  const headerMap = new Map();   // paramName -> wireHeaderName
+  for (const h of dirs.headers ?? []) {
+    const tokens = h.split(/\s+/);
+    if (tokens.length === 1) headerMap.set(tokens[0], tokens[0]);
+    else if (tokens.length >= 2) headerMap.set(tokens[1], tokens[0]);
+  }
+
+  // @body paramName — explicit body param. If just `@body` (no name), the
+  // body is auto-assigned (see below).
+  let explicitBody = null;
+  if (dirs.body) {
+    const tok = dirs.body.split(/\s+/)[0];
+    if (tok) explicitBody = tok;
+  }
+
+  const paramRoles = sig.params.map(p => {
+    if (pathParamNames.has(p.name)) return { ...p, role: "path" };
+    if (queryParamNames.has(p.name)) return { ...p, role: "query" };
+    if (headerMap.has(p.name)) return { ...p, role: "header", wireName: headerMap.get(p.name) };
+    if (explicitBody === p.name) return { ...p, role: "body" };
+    return { ...p, role: null };
+  });
+
+  // Auto-assign body for POST/PUT/PATCH if none specified and exactly one
+  // unassigned non-scalar-looking param remains.
+  if (!explicitBody && (method === "POST" || method === "PUT" || method === "PATCH")) {
+    const unassigned = paramRoles.filter(p => p.role === null);
+    if (unassigned.length === 1) unassigned[0].role = "body";
+  }
+
+  // Anything still unassigned: treat as query parameter (the most permissive
+  // default — it shows up as a ?key=value pair on the URL).
+  for (const p of paramRoles) if (p.role === null) p.role = "query";
+
+  // Validate all path-template names are bound.
+  for (const required of pathParamNames) {
+    if (!paramRoles.find(p => p.role === "path" && p.name === required)) {
+      throw new Error(`capnwasm: line ${lineNo}: path template '${path}' references {${required}} but no parameter with that name`);
+    }
+  }
+
+  return {
+    name: sig.name,
+    method, path,
+    params: paramRoles,
+    returnType: sig.returnType,
+    isAsyncIterable: sig.returnContainer === "AsyncIterable",
+    decode: dirs.decode || null,
+    bodyEncoding: dirs.bodyencoding || null,
+    paginated: dirs.paginated ? parsePaginated(dirs.paginated) : null,
+  };
+}
+
+/** Parse `@paginated cursor=starting_after items=data next=next_cursor`. */
+function parsePaginated(arg) {
+  const out = { style: "cursor" };
+  const tokens = arg.split(/\s+/).filter(Boolean);
+  for (const tok of tokens) {
+    if (tok === "cursor" || tok === "page") { out.style = tok; continue; }
+    const [k, v] = tok.split("=");
+    if (!v) continue;
+    if (k === "cursor")          out.cursorRequestParam = v;
+    else if (k === "next")       out.cursorResponseField = v;
+    else if (k === "items")      out.itemsField = v;
+    else if (k === "page")       out.pageRequestParam = v;
+    else if (k === "total")      out.totalField = v;
+    else if (k === "startPage")  out.startPage = +v;
+  }
+  return out;
 }
 
 /**
@@ -191,6 +435,13 @@ function validateStructs(structs) {
     for (const f of s.fields) {
       if (VALID_CAPNP_PRIMS.has(f.type)) continue;
       if (declared.has(f.type)) continue;
+      // List(X) is valid if X is a known type. Recurse via inner-type extract.
+      const listMatch = /^List\(([^)]+)\)$/.exec(f.type);
+      if (listMatch) {
+        const inner = listMatch[1];
+        if (VALID_CAPNP_PRIMS.has(inner) || declared.has(inner)) continue;
+        if (/^List\(/.test(inner)) continue;  // nested list — assume well-formed; validated by upstream compiler
+      }
       throw new Error(
         `capnwasm: ${s.name}.${f.name}: type '${f.type}' is not a known ` +
         `Cap'n Proto primitive nor a struct declared in this file.`
@@ -199,120 +450,35 @@ function validateStructs(structs) {
   }
 }
 
-/**
- * Parse a .capnp file directly in JS — no external binary required, so
- * `npx capnwasm gen schema.capnp` works on every platform out of the box.
- *
- * Supported subset (covers ~95% of schemas in practice):
- *   - file id (@0x...;) and top-level struct definitions
- *   - field declarations: `name @N :Type [= default];`
- *   - types: Bool, Int8/16/32/64, UInt8/16/32/64, Float32/64, Text, Data,
- *            other struct names, AnyPointer
- *   - line + block comments
- *
- * Not yet supported (parser will warn and skip):
- *   - groups, unions, generics, interfaces (RPC), enums, constants,
- *     nested struct definitions, imports, annotations
- *
- * For full grammar coverage, set CAPNP_BIN to point at the upstream `capnp`
- * tool — the parser will defer to it via `capnp compile -ocapnp` and walk
- * the canonical text output. Both paths feed the same struct model.
- */
+// .capnp files are compiled via our wasm-built capnp schema compiler
+// (zig-out/capnpc.opt.wasm), so the same vendored sources produce both
+// runtime and compiler — no version skew, no external binary required.
+//
+// Cached compiler instance — wasm load is one-time and the compiler is
+// heavyweight. Reused across all .capnp parses in a single CLI invocation.
+let _capnpCompiler = null;
+async function getCapnpCompiler() {
+  if (_capnpCompiler) return _capnpCompiler;
+  const { CapnpCompiler } = await import("../js/capnpc_loader.mjs");
+  _capnpCompiler = await CapnpCompiler.load();
+  return _capnpCompiler;
+}
+
 async function parseSchema(schemaPath) {
   const abs = resolve(schemaPath);
   const text = await import("node:fs/promises").then((m) => m.readFile(abs, "utf8"));
   if (abs.endsWith(".ts") || abs.endsWith(".tsx")) {
     return parseTsInterfaces(text);
   }
-  if (process.env.CAPNP_BIN) {
-    return parseSchemaViaUpstream(abs, process.env.CAPNP_BIN);
-  }
-  return parseRawCapnp(text);
-}
-
-function parseSchemaViaUpstream(abs, capnpBin) {
-  const pluginDir = dirname(capnpBin);
-  const env = { ...process.env, PATH: `${pluginDir}:${process.env.PATH ?? ""}` };
-  const r = spawnSync(capnpBin, ["compile", "-ocapnp", basename(abs)], {
-    encoding: "utf8",
-    cwd: dirname(abs),
-    env,
-  });
-  if (r.status !== 0) {
-    console.error("capnp compile failed:", r.stderr);
-    process.exit(1);
-  }
-  return parseCanonicalCapnp(r.stdout);
-}
-
-/** Strip line + block comments. */
-function stripComments(src) {
-  let out = "";
-  let i = 0;
-  while (i < src.length) {
-    if (src[i] === "#") {
-      while (i < src.length && src[i] !== "\n") i++;
-    } else if (src[i] === "/" && src[i + 1] === "*") {
-      i += 2;
-      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-      i += 2;
-    } else {
-      out += src[i++];
-    }
-  }
-  return out;
-}
-
-/** Parse raw .capnp source directly. */
-function parseRawCapnp(srcRaw) {
-  const src = stripComments(srcRaw);
-  const structs = [];
-  // Find each `struct Name [@0xId] { ... }` taking nesting into account so
-  // we don't trip over braces inside groups/unions.
-  let i = 0;
-  while (i < src.length) {
-    const m = src.slice(i).match(/struct\s+([A-Z][A-Za-z0-9_]*)\s*(?:@0x[0-9a-fA-F]+\s*)?{/);
-    if (!m) break;
-    const start = i + m.index + m[0].length;
-    let depth = 1;
-    let j = start;
-    while (j < src.length && depth > 0) {
-      if (src[j] === "{") depth++;
-      else if (src[j] === "}") depth--;
-      j++;
-    }
-    const body = src.slice(start, j - 1);
-    structs.push({ name: m[1], fields: parseStructBody(body) });
-    i = j;
-  }
+  // .capnp paths — compile via our bundled wasm-built capnp compiler. No
+  // external binary, no version skew with the runtime. The same vendor/
+  // sources produce both compiler and runtime, guaranteed compatible.
+  const compiler = await getCapnpCompiler();
+  const structs = await compiler.compileToModel(basename(abs), text);
   validateStructs(structs);
-  computeOffsets(structs);
-  return structs;
+  return { structs, restApis: [], typeInterfaces: [] };
 }
 
-/**
- * Parse a single struct's body into ordered field definitions.
- * Body is the text between `struct Name { ... }`.
- */
-function parseStructBody(body) {
-  const fields = [];
-  // Match: name @N :Type;  or  name @N :List(Type);  or  name @N :Text;
-  const re = /([a-zA-Z_][a-zA-Z0-9_]*)\s*@(\d+)\s*:([A-Za-z0-9_(),. ]+?)\s*(?:=\s*[^;]+?)?\s*;/g;
-  let m;
-  while ((m = re.exec(body)) !== null) {
-    const [_, name, ordinal, type] = m;
-    fields.push({ name, ordinal: +ordinal, type: type.trim() });
-  }
-  return fields;
-}
-
-/**
- * Walk canonical .capnp text (output of upstream `capnp -ocapnp`).
- * Same shape as parseRawCapnp but starts from already-normalized text.
- */
-function parseCanonicalCapnp(text) {
-  return parseRawCapnp(text);
-}
 
 /**
  * Assign each field its wire-format offset following Cap'n Proto's actual
@@ -416,6 +582,7 @@ function generateJs(structs, schemaName) {
   lines.push(`// Generated from ${schemaName} by capnwasm-gen — do not edit by hand.`);
   lines.push("");
   lines.push(`const SHARED_TEXT_DECODER = new TextDecoder();`);
+  lines.push(`const SHARED_ENCODER = new TextEncoder();`);
   lines.push(`function decodeAscii(bytes) {`);
   lines.push(`  let asciiOk = true;`);
   lines.push(`  for (let i = 0; i < bytes.length; i++) if (bytes[i] >= 0x80) { asciiOk = false; break; }`);
@@ -529,11 +696,48 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push(`export class ${s.name}Reader {`);
     lines.push(`  constructor(cpp) { this._cpp = cpp; }`);
     lines.push("");
+    // Union accessor: when this struct holds a union, `which()` returns the
+    // discriminant value (0..N-1) and the codegen below adds `is<Foo>()`
+    // guards for each variant. The discriminant lives at a fixed byte
+    // offset in the data section, written as a u16.
+    if (s.discriminantCount && s.discriminantOffsetBits !== undefined) {
+      const byteOff = s.discriminantOffsetBits >> 3;
+      lines.push(`  /** Returns the discriminant of this struct's union (0..${s.discriminantCount - 1}). */`);
+      lines.push(`  which() {`);
+      lines.push(`    return this._cpp._exports.cpp_any_uint16_at(${byteOff}, 0);`);
+      lines.push(`  }`);
+      lines.push("");
+      // Constants for each union variant, named after the field with
+      // discriminantValue. Lets users write `if (r.which() === MyStruct.Which.foo)`.
+      const variants = s.fields.filter(f => f.discriminantValue !== undefined);
+      if (variants.length > 0) {
+        lines.push(`  static Which = Object.freeze({`);
+        for (const v of variants) {
+          lines.push(`    ${v.name}: ${v.discriminantValue},`);
+        }
+        lines.push(`  });`);
+        lines.push("");
+      }
+    }
     for (const f of s.fields) {
       const getter = generateGetter(f);
       lines.push(`  get ${f.name}() {`);
+      // If this field is a union variant (or lives inside a group that is),
+      // gate the getter on the discriminant matching. Returning undefined
+      // for non-active variants matches Cap'n Proto's "default value" model.
+      if (s.discriminantCount && s.discriminantOffsetBits !== undefined) {
+        const dv = f.discriminantValue ?? f.parentDiscriminantValue;
+        if (dv !== undefined) {
+          lines.push(`    if (this.which() !== ${dv}) return undefined;`);
+        }
+      }
       for (const line of getter) lines.push(`    ${line}`);
       lines.push(`  }`);
+      // Also emit a typed `is<FieldName>()` guard for every union variant.
+      if (s.discriminantCount && f.discriminantValue !== undefined) {
+        const cap = f.name.charAt(0).toUpperCase() + f.name.slice(1);
+        lines.push(`  is${cap}() { return this.which() === ${f.discriminantValue}; }`);
+      }
     }
     // Per-class field descriptor table — fed to cpp_any_batch_read so one
     // wasm boundary crossing fetches all requested fields. Codegen knows
@@ -593,19 +797,76 @@ function _capnwasmPick(cpp, fields, names) {`);
 
   // Builder classes — counterpart to Readers. One Builder writes one
   // message at a time (the wasm-side AnyStruct::Builder is a global slot).
+  // The static _DATA_WORDS / _PTR_WORDS counts let the RPC layer call
+  // cpp_rpc_begin_call with the right shape so a Builder can write its
+  // bytes directly into Call.params.content's arena (zero-copy path).
+  // When opts.preinitialized is true, the constructor skips cpp_any_builder_init
+  // because the slot has already been set up by cpp_rpc_begin_call/begin_return.
   for (const s of structs) {
     lines.push(`export class ${s.name}Builder {`);
-    lines.push(`  constructor(cpp) {`);
+    lines.push(`  static _DATA_WORDS = ${s.dataWords};`);
+    lines.push(`  static _PTR_WORDS = ${s.ptrWords};`);
+    lines.push(`  constructor(cpp, opts) {`);
     lines.push(`    this._cpp = cpp;`);
-    lines.push(`    if (cpp._exports.cpp_any_builder_init(${s.dataWords}, ${s.ptrWords}) !== 1) {`);
-    lines.push(`      throw new Error("cpp_any_builder_init failed");`);
+    lines.push(`    if (!opts || !opts.preinitialized) {`);
+    lines.push(`      if (cpp._exports.cpp_any_builder_init(${s.dataWords}, ${s.ptrWords}) !== 1) {`);
+    lines.push(`        throw new Error("cpp_any_builder_init failed");`);
+    lines.push(`      }`);
     lines.push(`    }`);
+    // Cache the data section's address in linear memory so primitive
+    // setters can write straight to wasm memory — no per-setter wasm call.
+    // The address stays valid until any_builder_root is replaced (i.e. the
+    // next builder init), which happens after this Builder's lifetime.
+    lines.push(`    this._dataPtr = cpp._exports.cpp_any_builder_data_ptr();`);
     lines.push(`  }`);
     lines.push("");
+    // Union setters: when this struct holds a union, expose
+    //   `setWhich(variant)` to write the discriminant explicitly,
+    // and have each variant setter automatically write the discriminant
+    // before writing its value. Removes the need for users to ever poke
+    // raw `cpp_any_builder_set_uint16` calls.
+    if (s.discriminantCount && s.discriminantOffsetBits !== undefined) {
+      const discByteOff = s.discriminantOffsetBits >> 3;
+      lines.push(`  /** Write this struct's union discriminant directly. */`);
+      lines.push(`  setWhich(variant) {`);
+      lines.push(`    this._cpp._exports.cpp_any_builder_set_uint16(${discByteOff}, variant & 0xffff);`);
+      lines.push(`  }`);
+      lines.push("");
+      // Mirror the Reader's static Which constants for consistent API.
+      const variants = s.fields.filter(f => f.discriminantValue !== undefined);
+      if (variants.length > 0) {
+        lines.push(`  static Which = Object.freeze({`);
+        for (const v of variants) {
+          lines.push(`    ${v.name}: ${v.discriminantValue},`);
+        }
+        lines.push(`  });`);
+        lines.push("");
+      }
+    }
     for (const f of s.fields) {
+      // Group fields: emit a getter returning a sub-Builder writing into
+      // the parent's arena (groups share storage). If the group is itself
+      // a union variant, accessing it auto-sets the discriminant.
+      if (f.kind === "group") {
+        lines.push(`  get ${f.name}() {`);
+        if (s.discriminantCount && f.discriminantValue !== undefined && s.discriminantOffsetBits !== undefined) {
+          const discByteOff = s.discriminantOffsetBits >> 3;
+          lines.push(`    this._cpp._exports.cpp_any_builder_set_uint16(${discByteOff}, ${f.discriminantValue});`);
+        }
+        lines.push(`    return new ${f.groupStructName}Builder(this._cpp, { preinitialized: true });`);
+        lines.push(`  }`);
+        continue;
+      }
       const setter = generateSetter(f);
       if (!setter) continue;
       lines.push(`  set ${f.name}(value) {`);
+      // If this field is a union variant, auto-write the discriminant.
+      // Inline rather than calling setWhich so the data-section write is
+      // visible to V8's inliner.
+      if (s.discriminantCount && f.discriminantValue !== undefined && s.discriminantOffsetBits !== undefined) {
+        const discByteOff = s.discriminantOffsetBits >> 3;
+        lines.push(`    this._cpp._exports.cpp_any_builder_set_uint16(${discByteOff}, ${f.discriminantValue});`);
+      }
       for (const line of setter) lines.push(`    ${line}`);
       lines.push(`  }`);
     }
@@ -622,39 +883,55 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push("");
   }
 
-  // Open helper for the first struct (treated as the root by convention).
-  if (structs.length > 0) {
-    const root = structs[0];
+  // open<Name> + build<Name> helpers for every struct, so the user can pick
+  // any of them as the root (e.g. they receive a Post or a Tag depending
+  // on which endpoint they're talking to).
+  for (const s of structs) {
     lines.push(`/**`);
-    lines.push(` * Open framed Cap'n Proto bytes for typed access. Returns a ${root.name}Reader.`);
+    lines.push(` * Open framed Cap'n Proto bytes for typed access. Returns a ${s.name}Reader.`);
     lines.push(` */`);
-    lines.push(`export function open${root.name}(cpp, bytes) {`);
+    lines.push(`export function open${s.name}(cpp, bytes) {`);
     lines.push(`  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");`);
     lines.push(`  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());`);
     lines.push(`  if (cpp._exports.cpp_any_open(bytes.length) !== 1) throw new Error("cpp_any_open failed");`);
-    lines.push(`  return new ${root.name}Reader(cpp);`);
+    lines.push(`  return new ${s.name}Reader(cpp);`);
     lines.push(`}`);
     lines.push("");
-    lines.push(`/** Begin building a new ${root.name} message. Returns a ${root.name}Builder. */`);
-    lines.push(`export function build${root.name}(cpp) {`);
-    lines.push(`  return new ${root.name}Builder(cpp);`);
+    lines.push(`/** Begin building a new ${s.name} message. Returns a ${s.name}Builder. */`);
+    lines.push(`export function build${s.name}(cpp) {`);
+    lines.push(`  return new ${s.name}Builder(cpp);`);
     lines.push(`}`);
+    lines.push("");
   }
 
   return lines.join("\n") + "\n";
 }
 
 function generateSetter(field) {
+  // Group fields aren't assignable directly. The Builder exposes them as
+  // a getter that returns a sub-Builder you write into:
+  //   b.address.street = "...";
+  // We emit the getter outside generateSetter (in the Builder loop above)
+  // and skip setter generation here.
+  if (field.kind === "group") return null;
   if (field.kind === "pointer") {
     if (field.type === "Text") {
+      // encodeInto writes UTF-8 bytes directly into the destination Uint8Array
+      // — no intermediate JS allocation. The destination is a subarray view of
+      // wasm linear memory at cpp_in_ptr(), so the bytes land where the C++
+      // setter will read them in one step.
       return [
-        `const enc = new TextEncoder().encode(value);`,
-        `const u8 = this._cpp._u8;`,
-        `u8.set(enc, this._cpp._exports.cpp_in_ptr());`,
-        `this._cpp._exports.cpp_any_builder_set_text(${field.ptrIndex}, enc.length);`,
+        `const inPtr = this._cpp._exports.cpp_in_ptr();`,
+        `const inCap = this._cpp._exports.cpp_in_capacity();`,
+        `const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);`,
+        `const { written } = SHARED_ENCODER.encodeInto(value, dst);`,
+        `this._cpp._exports.cpp_any_builder_set_text(${field.ptrIndex}, written);`,
       ];
     }
     if (field.type === "Data") {
+      // Data already lives in a typed-array buffer. If it's a view into wasm
+      // memory, u8.set is a memmove (free-ish); if it's in JS heap, the copy
+      // into wasm is unavoidable without changing the caller's allocation site.
       return [
         `const u8 = this._cpp._u8;`,
         `u8.set(value, this._cpp._exports.cpp_in_ptr());`,
@@ -663,45 +940,67 @@ function generateSetter(field) {
     }
     return null;  // struct refs need nested builder support
   }
+  // Primitive setters write DIRECTLY into wasm linear memory at the data
+  // section's known offset. No wasm boundary crossing per setter — V8 just
+  // stores bytes through the typed-array view. The DataView is rebuilt from
+  // the (potentially refreshed) wasm memory on each call so we're safe
+  // across memory.grow events. Allocating a DataView is cheap; V8 inlines.
   const off = field.bitOffset >> 3;
   switch (field.type) {
-    case "Bool":
-      return [`this._cpp._exports.cpp_any_builder_set_bool(${field.bitOffset}, value ? 1 : 0);`];
+    case "Bool": {
+      const byte = field.bitOffset >> 3;
+      const bit = field.bitOffset & 7;
+      const mask = 1 << bit;
+      return [
+        `const u8 = this._cpp._u8;`,
+        `const off = this._dataPtr + ${byte};`,
+        `if (value) u8[off] |= ${mask};`,
+        `else u8[off] &= ${(~mask) & 0xff};`,
+      ];
+    }
     case "UInt8":
     case "Int8":
-      return [`this._cpp._exports.cpp_any_builder_set_uint8(${off}, value & 0xff);`];
+      return [`this._cpp._u8[this._dataPtr + ${off}] = value & 0xff;`];
     case "UInt16":
     case "Int16":
-      return [`this._cpp._exports.cpp_any_builder_set_uint16(${off}, value & 0xffff);`];
+      return [
+        `const u8 = this._cpp._u8;`,
+        `const o = this._dataPtr + ${off};`,
+        `u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;`,
+      ];
     case "UInt32":
     case "Int32":
-      return [`this._cpp._exports.cpp_any_builder_set_uint32(${off}, value >>> 0);`];
+      return [
+        `const u8 = this._cpp._u8;`,
+        `const o = this._dataPtr + ${off};`,
+        `u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;`,
+        `u8[o+2] = (value >>> 16) & 0xff; u8[o+3] = (value >>> 24) & 0xff;`,
+      ];
     case "UInt64":
     case "Int64":
+      // Use DataView for the 64-bit case — setBigInt64 handles BigInt
+      // directly. For normal-Number input, we still need the manual lo/hi
+      // dance to preserve precision.
       return [
-        `let lo, hi;`,
+        `const dv = new DataView(this._cpp._u8.buffer);`,
         `if (typeof value === "bigint") {`,
-        `  lo = Number(value & 0xffffffffn) >>> 0;`,
-        `  hi = Number((value >> 32n) & 0xffffffffn) | 0;`,
-        `} else if (value >= 0) {`,
-        `  lo = (value >>> 0); hi = ((value / 4294967296) >>> 0);`,
+        `  dv.setBigInt64(this._dataPtr + ${off}, value, true);`,
         `} else {`,
-        `  const abs = -value; const aLo = (abs >>> 0); const aHi = ((abs / 4294967296) >>> 0);`,
-        `  lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0;`,
+        `  let lo, hi;`,
+        `  if (value >= 0) { lo = (value >>> 0); hi = ((value / 4294967296) >>> 0); }`,
+        `  else { const abs = -value; const aLo = (abs >>> 0); const aHi = ((abs / 4294967296) >>> 0);`,
+        `         lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0; }`,
+        `  dv.setUint32(this._dataPtr + ${off}, lo, true);`,
+        `  dv.setUint32(this._dataPtr + ${off + 4}, hi, true);`,
         `}`,
-        `this._cpp._exports.cpp_any_builder_set_int64_lo_hi(${off}, lo, hi);`,
       ];
     case "Float32":
       return [
-        `if (!this._fbuf) { this._fbuf = new ArrayBuffer(4); this._fu = new Uint32Array(this._fbuf); this._ff = new Float32Array(this._fbuf); }`,
-        `this._ff[0] = value;`,
-        `this._cpp._exports.cpp_any_builder_set_uint32(${off}, this._fu[0]);`,
+        `new DataView(this._cpp._u8.buffer).setFloat32(this._dataPtr + ${off}, value, true);`,
       ];
     case "Float64":
       return [
-        `if (!this._dbuf) { this._dbuf = new ArrayBuffer(8); this._du = new Uint32Array(this._dbuf); this._dd = new Float64Array(this._dbuf); }`,
-        `this._dd[0] = value;`,
-        `this._cpp._exports.cpp_any_builder_set_int64_lo_hi(${off}, this._du[0], this._du[1]);`,
+        `new DataView(this._cpp._u8.buffer).setFloat64(this._dataPtr + ${off}, value, true);`,
       ];
     default:
       return null;
@@ -793,7 +1092,108 @@ function fieldDescriptor(f) {
   }
 }
 
+// Emit JS for a List<X> getter. Returns a list-view with .length, .at(i),
+// and Symbol.iterator. The element type drives at(i)'s return shape.
+//
+// For struct element lists, at(i) navigates the wasm reader stack and
+// constructs a typed Reader. The reader is "live" — it shares the wasm
+// any_stack[top] slot, so accessing fields on it after another at(i) call
+// would read the new element. Treat at(i) as "open one element at a time."
+function generateListGetter(ptrIndex, innerType) {
+  const lines = [];
+  // Open the list once, capture size, then return a wrapper.
+  lines.push(`const cpp = this._cpp;`);
+  lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
+  // The wrapper closes over `cpp` and `size`. Each .at(i) re-opens the
+  // list (since other readers may have changed any_list_reader state) and
+  // either reads a primitive or pushes the element struct on the stack
+  // and constructs a typed Reader.
+  if (PRIMITIVE_LIST_GETTERS[innerType]) {
+    const primFn = PRIMITIVE_LIST_GETTERS[innerType];
+    lines.push(`return {`);
+    lines.push(`  length: size,`);
+    lines.push(`  at(i) {`);
+    lines.push(`    if (i < 0 || i >= size) return undefined;`);
+    lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
+    lines.push(`    return ${primFn};`);
+    lines.push(`  },`);
+    lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);
+    lines.push(`};`);
+    return lines;
+  }
+  if (innerType === "Text") {
+    lines.push(`const decoder = SHARED_TEXT_DECODER;`);
+    lines.push(`return {`);
+    lines.push(`  length: size,`);
+    lines.push(`  at(i) {`);
+    lines.push(`    if (i < 0 || i >= size) return undefined;`);
+    lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
+    lines.push(`    const len = cpp._exports.cpp_any_list_get_text(i);`);
+    lines.push(`    if (len === 0) return "";`);
+    lines.push(`    const out = cpp._outPtr;`);
+    lines.push(`    return decodeAscii(cpp._u8.subarray(out, out + len));`);
+    lines.push(`  },`);
+    lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);
+    lines.push(`};`);
+    return lines;
+  }
+  if (innerType === "Data") {
+    lines.push(`return {`);
+    lines.push(`  length: size,`);
+    lines.push(`  at(i) {`);
+    lines.push(`    if (i < 0 || i >= size) return undefined;`);
+    lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
+    lines.push(`    const len = cpp._exports.cpp_any_list_get_data(i);`);
+    lines.push(`    const out = cpp._outPtr;`);
+    lines.push(`    return cpp._u8.slice(out, out + len);`);
+    lines.push(`  },`);
+    lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);
+    lines.push(`};`);
+    return lines;
+  }
+  // Struct element list: at(i) navigates into element i and constructs a
+  // typed Reader. The Reader shares any_stack — calling at again will move
+  // the stack pointer, so callers reading multiple elements should
+  // materialize before iterating further.
+  lines.push(`return {`);
+  lines.push(`  length: size,`);
+  lines.push(`  at(i) {`);
+  lines.push(`    if (i < 0 || i >= size) return undefined;`);
+  lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
+  lines.push(`    cpp._exports.cpp_any_enter_list_at(i);`);
+  lines.push(`    const r = new ${innerType}Reader(cpp);`);
+  lines.push(`    return r;`);
+  lines.push(`  },`);
+  lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);
+  lines.push(`};`);
+  return lines;
+}
+
+const PRIMITIVE_LIST_GETTERS = {
+  "Bool":   "cpp._exports.cpp_any_list_get_bool(i) === 1",
+  "UInt8":  "cpp._exports.cpp_any_list_get_uint8(i)",
+  "Int8":   "(cpp._exports.cpp_any_list_get_uint8(i) << 24) >> 24",
+  "UInt16": "cpp._exports.cpp_any_list_get_uint16(i)",
+  "Int16":  "(cpp._exports.cpp_any_list_get_uint16(i) << 16) >> 16",
+  "UInt32": "cpp._exports.cpp_any_list_get_uint32(i) >>> 0",
+  "Int32":  "cpp._exports.cpp_any_list_get_uint32(i) | 0",
+  "UInt64": "cpp._exports.cpp_any_list_get_uint64(i)",
+  "Int64":  "cpp._exports.cpp_any_list_get_uint64(i)",
+};
+
 function generateGetter(field) {
+  // Void: no storage, just a marker. Return null so callers can compare
+  // and `r.someVoidVariant === null` works in user code.
+  if (field.type === "Void") {
+    return [`return null;`];
+  }
+  // Group field: returns a typed sub-Reader sharing the parent's wire
+  // storage. The sub-Reader's getters use absolute offsets within the
+  // containing struct (capnp's group-layout rule), so reading
+  // `parent.group.field` is the same wasm cost as `parent.field` would be.
+  if (field.kind === "group") {
+    return [`return new ${field.groupStructName}Reader(this._cpp);`];
+  }
   if (field.kind === "pointer") {
     if (field.type === "Text") {
       return [
@@ -811,6 +1211,14 @@ function generateGetter(field) {
         `const out = this._cpp._outPtr;`,
         `return u8.slice(out, out + len);`,
       ];
+    }
+    // Lists: return a typed list-view object (length + at(i) + iterator).
+    // The element type drives whether at(i) returns a primitive, a string,
+    // a Uint8Array, or a typed Reader for nested struct elements.
+    const listMatch = /^List\(([^)]+)\)$/.exec(field.type);
+    if (listMatch) {
+      const inner = listMatch[1];
+      return generateListGetter(field.ptrIndex, inner);
     }
     return [`throw new Error("unsupported pointer type: ${field.type}");`];
   }
@@ -859,26 +1267,171 @@ function generateGetter(field) {
 
 async function cmdGen(argv) {
   const args = parseGenArgs(argv);
-  const structs = await parseSchema(args.schema);
-  if (structs.length === 0) {
-    console.error("No struct definitions found in schema.");
+  const { structs, restApis, typeInterfaces } = await parseSchema(args.schema);
+  if (structs.length === 0 && restApis.length === 0) {
+    console.error("No struct or REST interface definitions found in schema.");
     process.exit(1);
   }
-  const js = generateJs(structs, basename(args.schema));
-  await writeFile(args.output, js);
+
+  // Emit a single .mjs that contains both capnp-wire bindings and any
+  // REST clients defined via @rest interfaces.
+  const jsParts = [];
+  if (structs.length > 0) jsParts.push(generateJs(structs, basename(args.schema)));
+  for (const api of restApis) jsParts.push(generateRestClient(api, basename(args.schema), structs));
+  await writeFile(args.output, jsParts.join("\n\n"));
   console.log(`Wrote ${args.output}`);
 
-  // Emit a sibling .d.ts so TypeScript callers get type-checked field access.
-  // Same struct model as the .mjs — one source of truth for both.
+  const dtsParts = [];
+  if (structs.length > 0) dtsParts.push(generateDts(structs, basename(args.schema)));
+  for (const api of restApis) dtsParts.push(generateRestDts(api, basename(args.schema), structs, typeInterfaces));
   const dtsPath = args.output.replace(/\.mjs$/, ".d.ts");
-  const dts = generateDts(structs, basename(args.schema));
-  await writeFile(dtsPath, dts);
+  await writeFile(dtsPath, dtsParts.join("\n\n"));
   console.log(`Wrote ${dtsPath}`);
 
-  console.log(`  ${structs.length} struct(s):`);
-  for (const s of structs) {
-    console.log(`    ${s.name}  (${s.fields.length} fields)`);
+  if (structs.length > 0) {
+    console.log(`  ${structs.length} struct(s):`);
+    for (const s of structs) console.log(`    ${s.name}  (${s.fields.length} fields)`);
   }
+  if (restApis.length > 0) {
+    console.log(`  ${restApis.length} REST API(s):`);
+    for (const a of restApis) console.log(`    ${a.name}  (${a.methods.length} methods)`);
+  }
+  if (typeInterfaces && typeInterfaces.length > 0) {
+    console.log(`  ${typeInterfaces.length} type interface(s):`);
+    for (const t of typeInterfaces) console.log(`    ${t.name}`);
+  }
+}
+
+/** Emit the .mjs for a REST API: a `create<Name>Client(opts)` factory. */
+function generateRestClient(api, schemaName, structs) {
+  const lines = [];
+  lines.push(`// Generated from ${schemaName} by capnwasm-gen — do not edit by hand.`);
+  lines.push(`// REST client for "${api.name}".`);
+  lines.push(``);
+  lines.push(`import { _restCall, _restPaginate, _buildRestCfg } from "capnwasm/rest";`);
+  lines.push(`export { auth, RestError } from "capnwasm/rest";`);
+  lines.push(``);
+  // The defaults captured from interface-level directives.
+  const defaults = {
+    baseUrl: api.baseUrl,
+    ...api.defaults,
+  };
+  lines.push(`const _DEFAULTS = ${JSON.stringify(defaults, null, 2)};`);
+  lines.push(``);
+  lines.push(`export function create${api.name}Client(opts = {}) {`);
+  lines.push(`  const cfg = _buildRestCfg(_DEFAULTS, opts);`);
+  lines.push(`  return {`);
+  for (const m of api.methods) {
+    lines.push(...generateRestMethod(m).map(l => "    " + l));
+  }
+  lines.push(`  };`);
+  lines.push(`}`);
+  return lines.join("\n");
+}
+
+/** Emit the per-method dispatch entry on the client. */
+function generateRestMethod(m) {
+  const lines = [];
+  const paramList = m.params.map(p => p.name).concat(["callOpts"]).join(", ");
+  lines.push(`${m.name}(${paramList}) {`);
+
+  // Build the request descriptor inline.
+  lines.push(`  const _req = {`);
+  lines.push(`    method: ${JSON.stringify(m.method)},`);
+  lines.push(`    path: ${JSON.stringify(m.path)},`);
+
+  // Path params: gather into an object keyed by param name.
+  const pathParams = m.params.filter(p => p.role === "path");
+  if (pathParams.length > 0) {
+    const obj = pathParams.map(p => `${JSON.stringify(p.name)}: ${p.name}`).join(", ");
+    lines.push(`    pathParams: { ${obj} },`);
+  }
+
+  // Query params: include each if not undefined.
+  const queryParams = m.params.filter(p => p.role === "query");
+  if (queryParams.length > 0) {
+    const entries = queryParams.map(p => `${JSON.stringify(p.name)}: ${p.name}`).join(", ");
+    lines.push(`    query: { ${entries} },`);
+  }
+
+  // Header params — use wire header name (may differ from JS identifier).
+  const headerParams = m.params.filter(p => p.role === "header");
+  if (headerParams.length > 0) {
+    const entries = headerParams
+      .map(p => `${JSON.stringify((p.wireName ?? p.name).toLowerCase())}: ${p.name}`)
+      .join(", ");
+    lines.push(`    headers: { ${entries} },`);
+  }
+
+  // Body param (at most one).
+  const bodyParam = m.params.find(p => p.role === "body");
+  if (bodyParam) {
+    lines.push(`    body: ${bodyParam.name},`);
+  }
+
+  if (m.bodyEncoding) lines.push(`    bodyEncoding: ${JSON.stringify(m.bodyEncoding)},`);
+  if (m.decode)        lines.push(`    decode: ${JSON.stringify(m.decode)},`);
+
+  lines.push(`  };`);
+
+  if (m.paginated) {
+    lines.push(`  return _restPaginate(cfg, _req, callOpts, ${JSON.stringify(m.paginated)});`);
+  } else {
+    lines.push(`  return _restCall(cfg, _req, callOpts);`);
+  }
+  lines.push(`},`);
+  return lines;
+}
+
+/** Emit a .d.ts for the REST client matching the source TS interface. */
+function generateRestDts(api, schemaName, structs, typeInterfaces = []) {
+  const lines = [];
+  lines.push(`// Generated from ${schemaName} by capnwasm-gen — do not edit by hand.`);
+  lines.push(`// REST client types for "${api.name}".`);
+  lines.push(``);
+  lines.push(`import type { RestClientOpts, RestCallOpts, RestError } from "capnwasm/rest";`);
+  lines.push(`export { auth, RestError } from "capnwasm/rest";`);
+  lines.push(``);
+  // Re-emit any data-type interfaces declared in the same file. Two sources:
+  //   1. capnp-style structs (parsed strictly into our struct model)
+  //   2. pure TS type interfaces captured verbatim (when @rest is present
+  //      in the file, non-REST interfaces use full TS syntax)
+  const declared = new Set(structs.map(s => s.name));
+  for (const s of structs) {
+    lines.push(`export interface ${s.name} {`);
+    for (const f of s.fields) {
+      lines.push(`  ${f.name}: ${capnpToTs(f.type, declared)};`);
+    }
+    lines.push(`}`);
+    lines.push(``);
+  }
+  for (const t of typeInterfaces) {
+    lines.push(`export interface ${t.name} {`);
+    for (const line of t.body) {
+      // re-emit line as-is, with any leading whitespace stripped to a single
+      // 2-space indent for consistency.
+      const trimmed = line.replace(/^\s+/, "");
+      if (trimmed) lines.push(`  ${trimmed}`);
+    }
+    lines.push(`}`);
+    lines.push(``);
+  }
+  // Client interface.
+  lines.push(`export interface ${api.name}Client {`);
+  for (const m of api.methods) {
+    const params = m.params
+      .map(p => `${p.name}${p.optional ? "?" : ""}: ${p.type}`)
+      .concat([`callOpts?: RestCallOpts`])
+      .join(", ");
+    const ret = m.isAsyncIterable
+      ? `AsyncIterable<${m.returnType}>`
+      : `Promise<${m.returnType}>`;
+    lines.push(`  ${m.name}(${params}): ${ret};`);
+  }
+  lines.push(`}`);
+  lines.push(``);
+  lines.push(`export function create${api.name}Client(opts?: RestClientOpts): ${api.name}Client;`);
+  return lines.join("\n");
 }
 
 function cmdBuild(extra = []) {
@@ -914,6 +1467,46 @@ function cmdBench() {
   process.exit(r.status ?? 1);
 }
 
+async function cmdOpenapi(argv) {
+  const args = parseGenArgs(argv);
+  const text = await import("node:fs/promises").then(m => m.readFile(args.schema, "utf8"));
+  let spec;
+  if (args.schema.endsWith(".json")) {
+    spec = JSON.parse(text);
+  } else {
+    // YAML — try the optional `yaml` package. If unavailable, give the
+    // user a clear install command. Most published OpenAPI specs are also
+    // available as JSON (Stripe, GitHub, etc.).
+    try {
+      const yaml = await import("yaml");
+      spec = yaml.parse(text);
+    } catch {
+      console.error(`To parse YAML OpenAPI specs install the optional 'yaml' package:`);
+      console.error(`  npm install yaml`);
+      console.error(`Or convert your spec to JSON first.`);
+      process.exit(1);
+    }
+  }
+
+  const { parseOpenApi } = await import("../js/openapi_parser.mjs");
+  const { restApis, typeInterfaces, structs } = parseOpenApi(spec);
+
+  const jsParts = [];
+  for (const api of restApis) jsParts.push(generateRestClient(api, basename(args.schema), structs));
+  await writeFile(args.output, jsParts.join("\n\n"));
+  console.log(`Wrote ${args.output}`);
+
+  const dtsParts = [];
+  for (const api of restApis) dtsParts.push(generateRestDts(api, basename(args.schema), structs, typeInterfaces));
+  const dtsPath = args.output.replace(/\.mjs$/, ".d.ts");
+  await writeFile(dtsPath, dtsParts.join("\n\n"));
+  console.log(`Wrote ${dtsPath}`);
+
+  console.log(`  ${restApis.length} REST API(s):`);
+  for (const a of restApis) console.log(`    ${a.name}  (${a.methods.length} methods)`);
+  if (typeInterfaces.length > 0) console.log(`  ${typeInterfaces.length} type interface(s)`);
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   if (argv.length === 0) topUsage();
@@ -921,6 +1514,7 @@ async function main() {
   const cmd = argv[0];
   switch (cmd) {
     case "gen":     await cmdGen(argv.slice(1)); return;
+    case "openapi": await cmdOpenapi(argv.slice(1)); return;
     case "build":   cmdBuild(); return;
     case "bench":   cmdBench(); return;
     case "-h": case "--help": case "help": topUsage(); return;
@@ -928,6 +1522,11 @@ async function main() {
   // Shorthand: `npx capnwasm path/to/schema.capnp` runs the generator.
   if (cmd.endsWith(".capnp") && existsSync(cmd)) {
     await cmdGen(argv);
+    return;
+  }
+  // Shorthand: `npx capnwasm path/to/spec.yaml` runs openapi.
+  if ((cmd.endsWith(".yaml") || cmd.endsWith(".yml") || cmd.endsWith(".json")) && existsSync(cmd)) {
+    await cmdOpenapi(argv);
     return;
   }
   console.error(`unknown command: ${cmd}`);
