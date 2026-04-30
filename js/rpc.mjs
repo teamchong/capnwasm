@@ -278,7 +278,7 @@ export class RpcSession {
    * `target` is `{ kind: "import"|"promise", id: number }`.
    * `paramsBytes` is the framed Cap'n Proto bytes of the params struct.
    */
-  call(target, interfaceId, methodId, paramsBytes) {
+  call(target, interfaceId, methodId, paramsBytes, opts) {
     if (this.#closed) throw new Error("RpcSession closed");
     const questionId = this.#allocQuestionId();
     const targetKind = target.kind === "promise" ? TARGET_PROMISED_ANSWER : TARGET_IMPORTED_CAP;
@@ -295,12 +295,39 @@ export class RpcSession {
     const d = deferred();
     this.#questions.set(questionId, makeQ(d, "call", undefined, undefined, undefined));
     this.#sendFromOut(len);
+    if (opts?.signal) this.#wireAbort(opts.signal, questionId, d, "question");
     // The pipeline cap lets the caller chain follow-up calls onto this
     // answer before it returns — those Calls go on the wire immediately,
     // with target=promisedAnswer(questionId). The peer holds them until
     // it resolves the original answer locally.
     const pipelineCap = new RpcCap(this, { kind: "promise", id: questionId }, this.#registry);
     return { questionId, promise: d.promise, cap: pipelineCap };
+  }
+
+  // Tie an AbortSignal to either a question (resolve via deferred reject) or
+  // a stream (end the iterator with the abort reason). Best-effort sends a
+  // Finish so the peer can drop server-side state. The listener self-removes
+  // — both branches check that the in-flight entry still exists, so spurious
+  // late aborts after a natural Return are a no-op.
+  #wireAbort(signal, questionId, dOrStream, kind) {
+    const abortNow = () => {
+      const reason = signal.reason ?? new Error("aborted");
+      if (kind === "question") {
+        if (this.#questions.has(questionId)) {
+          this.#questions.delete(questionId);
+          dOrStream.reject(reason);
+          if (!this.#closed) this.finish(questionId);
+        }
+      } else {
+        if (this.#streamQuestions.has(questionId)) {
+          this.#streamQuestions.delete(questionId);
+          dOrStream.end(reason);
+          if (!this.#closed) this.finish(questionId);
+        }
+      }
+    };
+    if (signal.aborted) { abortNow(); return; }
+    signal.addEventListener("abort", abortNow, { once: true });
   }
 
   /**
@@ -345,6 +372,7 @@ export class RpcSession {
       );
       this.#questions.set(questionId, q);
       this.#sendFromOut(framedLen);
+      if (opts?.signal) this.#wireAbort(opts.signal, questionId, d, "question");
       // Pipeline cap is lazy: most callers never .cap.call(...). Allocate
       // RpcCap (and its FinalizationRegistry registration on access) only
       // if the caller actually reaches for it. Saves ~150 ns + GC pressure
@@ -408,11 +436,18 @@ export class RpcSession {
     // before close() could be dropped.
     this.#flush();
     this.#closed = true;
-    for (const q of this.#questions.values()) q.deferred.reject(new Error("session closed"));
+    const closeErr = new Error("session closed");
+    for (const q of this.#questions.values()) {
+      // Attach a no-op catch first: bootstrap's deferred is never directly
+      // awaited by the caller (it returns the cap synchronously, the deferred
+      // is internal book-keeping), so without this every close() would
+      // surface as an unhandledRejection.
+      q.deferred.promise.catch(() => {});
+      q.deferred.reject(closeErr);
+    }
     this.#questions.clear();
     // Same for in-flight streams: reject the iterator so for-await loops
     // unwind instead of hanging on a chunk that will never arrive.
-    const closeErr = new Error("session closed");
     for (const stream of this.#streamQuestions.values()) stream.end(closeErr);
     this.#streamQuestions.clear();
     this.#transport.close?.();
@@ -756,7 +791,7 @@ export class RpcSession {
    *   const stream = cap.callStream(IFC, METHOD, paramsBytes);
    *   for await (const chunk of stream.chunks) { ... }
    */
-  callStream(target, interfaceId, methodId, paramsBytes) {
+  callStream(target, interfaceId, methodId, paramsBytes, opts) {
     if (this.#closed) throw new Error("RpcSession closed");
     const questionId = this.#allocQuestionId();
     const targetKind = target.kind === "promise" ? TARGET_PROMISED_ANSWER : TARGET_IMPORTED_CAP;
@@ -798,6 +833,7 @@ export class RpcSession {
     };
     this.#streamQuestions.set(questionId, stream);
     this.#sendFromOut(len);
+    if (opts?.signal) this.#wireAbort(opts.signal, questionId, stream, "stream");
     return {
       questionId,
       chunks: { [Symbol.asyncIterator]: () => ({ next: () => stream.next() }) },
@@ -1003,16 +1039,20 @@ export class RpcCap {
     this.#registry = registry;
   }
   /** Low-level: send a raw Call. Returns { questionId, promise<resultsBytes> }. */
-  call(interfaceId, methodId, paramsBytes) {
-    return this.#session.call(this.#target, interfaceId, methodId, paramsBytes);
+  call(interfaceId, methodId, paramsBytes, opts) {
+    return this.#session.call(this.#target, interfaceId, methodId, paramsBytes, opts);
   }
   /**
    * Streaming call. Returns `{ questionId, chunks }` where chunks is an
    * AsyncIterable<Uint8Array>. Each yielded value is one server-pushed
    * chunk; iteration ends when the server signals stream-end.
+   *
+   * Pass `{ signal }` to abort the stream. On abort the iterator rejects
+   * with `signal.reason`, and a Finish frame is sent to the peer so
+   * server-side state can be released.
    */
-  callStream(interfaceId, methodId, paramsBytes) {
-    return this.#session.callStream(this.#target, interfaceId, methodId, paramsBytes);
+  callStream(interfaceId, methodId, paramsBytes, opts) {
+    return this.#session.callStream(this.#target, interfaceId, methodId, paramsBytes, opts);
   }
   /**
    * Zero-copy Call: returns `{ params, send }`. Fill `params` then call

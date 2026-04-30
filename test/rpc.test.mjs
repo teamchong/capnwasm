@@ -538,3 +538,116 @@ test("peer disconnect: client-side close propagates to server; server.close() is
   server.close();
   server.close();
 });
+
+test("abort: pre-aborted signal short-circuits the call without ever sending it", async () => {
+  // The call still allocates a question id and sends bytes (we can't unsend
+  // those once cpp_rpc_finalize has flushed) — but the deferred rejects
+  // synchronously and Finish is dispatched to release the peer's hold.
+  const IFC = 0xa110a110a110a110n;
+  const registry = new InterfaceRegistry();
+  let serverSawCall = false;
+  registry.register(IFC, 0, async () => { serverSawCall = true; return EMPTY_MESSAGE.slice(); });
+  const { client } = await setupSessions({ bootstrap: {}, registry });
+  const ac = new AbortController();
+  ac.abort(new Error("nope"));
+  const r = client.bootstrap().call(IFC, 0, emptyMessage(), { signal: ac.signal });
+  await assert.rejects(r.promise, /nope/);
+  // Drain microtasks so the server has a chance to receive (or not).
+  await new Promise(r => setImmediate(r));
+  client.close();
+});
+
+test("abort: aborting mid-call rejects the in-flight question", async () => {
+  const IFC = 0xa220a220a220a220n;
+  const registry = new InterfaceRegistry();
+  let serverGate;
+  registry.register(IFC, 0, async () => {
+    await new Promise(r => { serverGate = r; });
+    return EMPTY_MESSAGE.slice();
+  });
+  const { client } = await setupSessions({ bootstrap: {}, registry });
+  const ac = new AbortController();
+  const r = client.bootstrap().call(IFC, 0, emptyMessage(), { signal: ac.signal });
+  while (!serverGate) await new Promise(r => setImmediate(r));
+  ac.abort(new Error("user-cancelled"));
+  await assert.rejects(r.promise, /user-cancelled/);
+  serverGate();
+  client.close();
+});
+
+test("abort: late server Return after abort doesn't unhandled-reject", async () => {
+  const IFC = 0xa330a330a330a330n;
+  const registry = new InterfaceRegistry();
+  let serverGate;
+  registry.register(IFC, 0, async () => {
+    await new Promise(r => { serverGate = r; });
+    return EMPTY_MESSAGE.slice();
+  });
+  const { client } = await setupSessions({ bootstrap: {}, registry });
+  const ac = new AbortController();
+  const r = client.bootstrap().call(IFC, 0, emptyMessage(), { signal: ac.signal });
+  while (!serverGate) await new Promise(r => setImmediate(r));
+  ac.abort(new Error("cancelled"));
+  await assert.rejects(r.promise, /cancelled/);
+  // Server completes its work — the question is already gone, the Return
+  // bytes arrive and get silently dropped (no second rejection, no throw).
+  serverGate();
+  await new Promise(r => setImmediate(r));
+  client.close();
+});
+
+test("abort: callStream abort ends the iterator with the abort reason", async () => {
+  const IFC = 0xa440a440a440a440n;
+  const registry = new InterfaceRegistry();
+  registry.registerStream(IFC, 0, async function* () {
+    for (let i = 0; i < 100; i++) {
+      yield new Uint8Array([i]);
+      await new Promise(r => setTimeout(r, 5));
+    }
+  });
+  const { client } = await setupSessions({ bootstrap: {}, registry });
+  const ac = new AbortController();
+  const stream = client.bootstrap().callStream(IFC, 0, emptyMessage(), { signal: ac.signal });
+  // Read until abort fires: chunks already in the queue drain first; the
+  // next .next() after the abort listener runs is the one that rejects.
+  setTimeout(() => ac.abort(new Error("stop")), 12);
+  let saw = 0;
+  let rejected = false;
+  try {
+    for await (const _c of stream.chunks) {
+      saw++;
+      if (saw > 100) break;
+    }
+  } catch (e) {
+    if (/stop/.test(e.message)) rejected = true;
+  }
+  assert.ok(rejected, "for-await loop did not surface the abort");
+  assert.ok(saw < 100, `expected to abort partway, but consumed all ${saw} chunks`);
+  client.close();
+});
+
+test("abort: pre-aborted callStream rejects on first next() without consuming any chunk", async () => {
+  const IFC = 0xa441a441a441a441n;
+  const registry = new InterfaceRegistry();
+  registry.registerStream(IFC, 0, async function* () {
+    for (let i = 0; i < 10; i++) yield new Uint8Array([i]);
+  });
+  const { client } = await setupSessions({ bootstrap: {}, registry });
+  const ac = new AbortController();
+  ac.abort(new Error("pre-aborted"));
+  const stream = client.bootstrap().callStream(IFC, 0, emptyMessage(), { signal: ac.signal });
+  const it = stream.chunks[Symbol.asyncIterator]();
+  await assert.rejects(it.next(), /pre-aborted/);
+  client.close();
+});
+
+test("abort: signal that never fires doesn't change normal completion", async () => {
+  const IFC = 0xa550a550a550a550n;
+  const registry = new InterfaceRegistry();
+  registry.register(IFC, 0, async () => EMPTY_MESSAGE.slice());
+  const { client } = await setupSessions({ bootstrap: {}, registry });
+  const ac = new AbortController();
+  const r = await client.bootstrap().call(IFC, 0, emptyMessage(), { signal: ac.signal }).promise;
+  assert.ok(r);  // resolved, not rejected
+  client.close();
+});

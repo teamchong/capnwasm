@@ -92,8 +92,15 @@ Still on the list if anyone uses streams hard:
 - **Server-side break detection**: when the client breaks out of for-await
   early, the server keeps yielding (the test documents this). A return
   signal from client → server would let the handler stop.
-- **Abort signals**: `callStream` has no AbortSignal parameter. Adding one
-  would let callers tear down a stream cleanly.
+
+**Update (2026-04-30):** AbortSignal support landed for `call`,
+`callBuilder.send`, and `callStream`. Pass `{ signal }` and on abort the
+deferred/iterator rejects with `signal.reason` and a Finish frame is
+dispatched (best-effort). Six tests in `test/rpc.test.mjs` cover both the
+pre-aborted and mid-call paths. Same fix surfaced and patched a latent
+unhandled-rejection on session close: bootstrap's internal deferred is
+never directly awaited, so its rejection on close was leaking. Added a
+defensive no-op `catch` in `RpcSession.close()`.
 
 ## 6. Capability lifecycle under failure — partly addressed
 
