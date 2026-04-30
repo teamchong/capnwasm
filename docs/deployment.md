@@ -53,23 +53,25 @@ Less efficient — the token rides on every Call — but works behind transports
 
 ## Backpressure
 
-The streaming chunk queue (`cap.callStream`) is **unbounded** today. A fast server + slow client will eat memory until the connection drops or the process OOMs.
+The streaming chunk queue (`cap.callStream`) accepts a `maxQueueSize` cap. When the cap is exceeded the iterator rejects with `stream queue overflow` — a memory safety valve, not real flow control:
 
-Until per-stream flow control lands, design streaming methods around bounded result sets:
+```js
+const r = cap.callStream(IFC, METHOD, params, { maxQueueSize: 256 });
+try {
+  for await (const chunk of r.chunks) await handle(chunk);
+} catch (e) {
+  if (/stream queue overflow/.test(e.message)) {
+    // Slow consumer; consider paging instead of streaming for this method.
+  } else throw e;
+}
+```
+
+Pick `maxQueueSize` so worst-case memory (`maxQueueSize × max chunk size`) stays within budget. There is no protocol-level flow control yet — server-side keeps sending until it sees the resulting Finish, so chunks already in flight at overflow time will arrive after the iterator has rejected; they're silently dropped.
+
+Until per-stream credits land, design streaming methods around bounded result sets:
 
 - Page the result instead of streaming: a method that returns up to N records per call, plus a cursor for the next page.
 - For genuinely large server-driven streams, have the consumer signal progress on a return-channel cap; the producer waits for that before yielding the next batch.
-
-```js
-async function* boundedStream(stream) {
-  for await (const chunk of stream.chunks) {
-    await handle(chunk);
-    // Today: producer keeps pushing at full speed regardless of consumer
-    // pace. The library-level fix is per-stream credit/window flow control;
-    // tracked in docs/follow-ups.md (#5).
-  }
-}
-```
 
 ## Error handling
 

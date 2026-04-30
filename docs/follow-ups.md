@@ -84,15 +84,6 @@ for-await loop running when the session closed would hang forever. Fixed
 in `js/rpc.mjs`: close now drains `#streamQuestions` with `session closed`
 errors.
 
-Still on the list if anyone uses streams hard:
-
-- **Backpressure**: today the chunk queue is unbounded. A fast server +
-  slow client lets memory grow without limit. Needs a high-water mark on
-  the queue and a flow-control signal back to the server.
-- **Server-side break detection**: when the client breaks out of for-await
-  early, the server keeps yielding (the test documents this). A return
-  signal from client → server would let the handler stop.
-
 **Update (2026-04-30):** AbortSignal support landed for `call`,
 `callBuilder.send`, and `callStream`. Pass `{ signal }` and on abort the
 deferred/iterator rejects with `signal.reason` and a Finish frame is
@@ -101,6 +92,23 @@ pre-aborted and mid-call paths. Same fix surfaced and patched a latent
 unhandled-rejection on session close: bootstrap's internal deferred is
 never directly awaited, so its rejection on close was leaking. Added a
 defensive no-op `catch` in `RpcSession.close()`.
+
+**Update (2026-04-30, third pass):** added `{ maxQueueSize }` option to
+`callStream`. Default is unbounded for back-compat. When set, a queue
+that grows past the cap ends the iterator with `stream queue overflow`
+and clears buffered chunks — a memory safety valve for slow consumers.
+Surfaced and fixed a related bug: a natural late StreamEnd was clobbering
+an earlier failure (e.g., the overflow), so the iterator looked like it
+completed cleanly. `end()` is now idempotent — first call wins.
+
+Still on the list if anyone uses streams hard:
+
+- **True flow control**: per-stream credits/window so the server doesn't
+  send chunks the client can't keep up with. Needs a wire protocol
+  extension. The bounded queue above is a safety valve, not flow control.
+- **Server-side break detection**: when the client breaks out of for-await
+  early, the server keeps yielding (the test documents this). A return
+  signal from client → server would let the handler stop.
 
 ## 6. Capability lifecycle under failure — partly addressed
 

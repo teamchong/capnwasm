@@ -255,3 +255,48 @@ test("stream: chunks of varying sizes round-trip byte-perfectly", async () => {
   }
   client.close();
 });
+
+test("stream: maxQueueSize bounds memory; iterator rejects when exceeded", async () => {
+  const IFC = 0x9999999999999999n;
+  // Server tries to push 100 chunks as fast as it can. Client sets a
+  // maxQueueSize of 5 and never reads — the queue must reject before all
+  // 100 are buffered.
+  const { client, root } = await setup({
+    stream: {
+      ifc: IFC, method: 0,
+      handler: async function* () {
+        for (let i = 0; i < 100; i++) {
+          yield new Uint8Array([i & 0xff]);
+        }
+      },
+    },
+  });
+
+  const r = root.callStream(IFC, 0, EMPTY, { maxQueueSize: 5 });
+  // Yield to the event loop so the server can pump chunks; don't read.
+  await new Promise(r => setTimeout(r, 50));
+
+  await assert.rejects(
+    (async () => { for await (const _c of r.chunks) { /* never */ } })(),
+    /stream queue overflow/,
+  );
+  client.close();
+});
+
+test("stream: maxQueueSize doesn't fire when consumer keeps up", async () => {
+  const IFC = 0x9a9a9a9a9a9a9a9an;
+  const N = 50;
+  const { client, root } = await setup({
+    stream: {
+      ifc: IFC, method: 0,
+      handler: async function* () {
+        for (let i = 0; i < N; i++) yield new Uint8Array([i & 0xff]);
+      },
+    },
+  });
+  const r = root.callStream(IFC, 0, EMPTY, { maxQueueSize: 5 });
+  let count = 0;
+  for await (const _c of r.chunks) count++;
+  assert.equal(count, N, "consumer keeping up should drain every chunk");
+  client.close();
+});

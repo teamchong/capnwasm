@@ -826,13 +826,34 @@ export class RpcSession {
     const waiters = [];
     let done = false;
     let failure = null;
+    // maxQueueSize bounds the in-memory chunk buffer for slow consumers.
+    // Unbounded by default so existing call sites are unchanged. When set
+    // and exceeded, the iterator rejects with an overflow error rather
+    // than letting memory grow until the process OOMs. This is a safety
+    // valve, not real flow control — server-side keeps sending until it
+    // sees the resulting Finish, but at least the client side is bounded.
+    const maxQueueSize = opts?.maxQueueSize;
     const stream = {
       pushChunk(c) {
         if (done) return;
-        if (waiters.length) waiters.shift().resolve({ value: c, done: false });
-        else queue.push(c);
+        if (waiters.length) { waiters.shift().resolve({ value: c, done: false }); return; }
+        queue.push(c);
+        if (maxQueueSize !== undefined && queue.length > maxQueueSize) {
+          // Synthesize an end with an overflow error. The caller's iterator
+          // sees the overflow on the next .next(); subsequent chunks the
+          // server may still send are dropped because done=true.
+          done = true;
+          failure = new Error(`stream queue overflow (depth=${queue.length} > ${maxQueueSize})`);
+          // Drop the buffered chunks too so we don't keep the memory we
+          // were trying to bound.
+          queue.length = 0;
+        }
       },
       end(err) {
+        // If we already terminated with a failure (e.g., maxQueueSize
+        // overflow), keep that — a late natural StreamEnd shouldn't
+        // override it. Only the first end() call decides the outcome.
+        if (done) return;
         done = true;
         failure = err ?? null;
         while (waiters.length) {
