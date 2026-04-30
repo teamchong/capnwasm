@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>capnwasm &mdash; honest comparison</title>
+  <meta name="description" content="Where capnwasm wins, where it loses, where it's tied. With reproducible numbers, no marketing handwave." />
+  <link rel="stylesheet" href="./src/honest/style.css" />
+</head>
+<body>
+  <article id="app">
+    <header>
+      <h1><a href="./">capnwasm</a> <span class="dim">honest comparison</span></h1>
+      <p class="subtitle">
+        Where capnwasm wins vs capnweb vs REST/JSON, where it loses, where it&rsquo;s tied. Numbers are
+        from the in-process Node bench (<code>node bench/rpc_bench.mjs</code>) on Apple Silicon and the
+        in-browser playground (Chromium prod build, localhost). All claims reproducible.
+      </p>
+      <nav><a href="./">&larr; Landing</a> &middot; <a href="./playground.html">Playground</a></nav>
+    </header>
+
+    <section>
+      <h2>Where capnwasm wins</h2>
+      <table class="cmp">
+        <thead>
+          <tr><th>workload</th><th>capnwasm</th><th>capnweb</th><th>REST/JSON</th><th>win</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Burst 1000 calls (per-call)</td>
+            <td class="win">2.5 &mu;s</td>
+            <td>7.9 &mu;s</td>
+            <td>n/a</td>
+            <td class="note">3.2&times; faster than capnweb</td>
+          </tr>
+          <tr>
+            <td>64 KB text echo round-trip</td>
+            <td class="win">96 &mu;s</td>
+            <td>365 &mu;s</td>
+            <td>n/a</td>
+            <td class="note">3.8&times; faster</td>
+          </tr>
+          <tr>
+            <td>4 KB text echo</td>
+            <td class="win">17 &mu;s</td>
+            <td>26 &mu;s</td>
+            <td>n/a</td>
+            <td class="note">1.5&times; faster</td>
+          </tr>
+          <tr>
+            <td>Single tiny call</td>
+            <td class="win">8.5 &mu;s</td>
+            <td>14 &mu;s</td>
+            <td>n/a</td>
+            <td class="note">1.7&times; faster</td>
+          </tr>
+          <tr>
+            <td>Wire bytes for 4 KB binary blob (gzip)</td>
+            <td class="win">20.3 KB</td>
+            <td>48.5 KB</td>
+            <td>48.1 KB</td>
+            <td class="note">2.4&times; smaller than both</td>
+          </tr>
+          <tr>
+            <td>Sparse field access (read 3 of 32)</td>
+            <td>26 &mu;s</td>
+            <td>26 &mu;s</td>
+            <td>&mdash;</td>
+            <td class="note">tied</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>capnwasm consistently beats capnweb on:</p>
+      <ul>
+        <li><strong>Throughput.</strong> Once you batch calls (which most apps do), capnwasm pulls 3&times; ahead.</li>
+        <li><strong>Big payloads.</strong> Binary wire skips the base64-in-JSON tax entirely.</li>
+        <li><strong>Wire size.</strong> For binary data of any kind, capnwasm sends the bytes; capnweb base64-encodes.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Where capnwasm loses</h2>
+      <p>These are real, not handwave-able-away.</p>
+
+      <h3>1. Bundle size: 2.1&times; larger</h3>
+      <table class="cmp small">
+        <thead><tr><th></th><th>gzip</th><th>brotli</th></tr></thead>
+        <tbody>
+          <tr><td>capnweb</td><td class="win">21 KB</td><td>~19 KB</td></tr>
+          <tr><td>capnwasm/browser</td><td>44 KB</td><td>41 KB</td></tr>
+        </tbody>
+      </table>
+      <p>40 of those 44 KB is the wasm runtime &mdash; a real Cap&apos;n Proto C++ implementation. Hard to shrink further without dropping wire compatibility with non-JS peers.</p>
+      <p>If your bundle budget is tight and you don&apos;t need binary wire interop, <strong>capnweb is the smaller choice</strong>. There is no way for capnwasm to reach 21 KB without giving up the wasm runtime, which is what makes the rest of the wins possible.</p>
+
+      <h3>2. Cold start: ~15&times; slower in Node</h3>
+      <table class="cmp small">
+        <thead><tr><th></th><th>init</th><th>first call</th><th>total</th></tr></thead>
+        <tbody>
+          <tr><td>capnweb</td><td class="win">0.03 ms</td><td class="win">0.16 ms</td><td class="win">0.18 ms</td></tr>
+          <tr><td>capnwasm</td><td>2.37 ms</td><td>0.35 ms</td><td>2.72 ms</td></tr>
+        </tbody>
+      </table>
+      <p>In a browser the wasm compile is faster (streaming compile parses bytes during fetch) but it&apos;s still measurable on first page load &mdash; somewhere in the 5&ndash;50 ms range depending on CPU and whether the wasm is already cached.</p>
+
+      <h3>3. Schema friction</h3>
+      <p>capnwasm requires a Cap&apos;n Proto schema &mdash; even when generating a TypeScript-only client you go through <code>npx capnwasm gen</code>. capnweb works on arbitrary JS values: you call methods, JSON-shaped data goes over the wire, no schema step.</p>
+      <p>If you control both ends and never want to define a schema, <strong>capnweb is friction-free</strong>. If you want types, IDE completion, wire-format stability across versions, and interop with C++/Rust/Go peers, the schema is the price you pay for that.</p>
+
+      <h3>4. Cap-passing micro-overhead</h3>
+      <table class="cmp small">
+        <thead><tr><th></th><th>capnwasm</th><th>capnweb</th></tr></thead>
+        <tbody><tr><td><code>getChild &rarr; call</code> round-trip</td><td>13 &mu;s</td><td class="win">12 &mu;s</td></tr></tbody>
+      </table>
+      <p>Roughly tied &mdash; capnwasm is ~5% slower on the cap-passing fast path. Doesn&apos;t matter unless you&apos;re doing very deep cap chains; both are dominated by network RTT in any real deployment.</p>
+
+      <h3>5. Single-call latency over real network: invisible</h3>
+      <p>The 8.5 &mu;s vs 14 &mu;s gap on tiny calls only matters if the network adds &lt; 5 &mu;s of latency, which essentially never happens. Over a real WebSocket on the same continent (typically 5&ndash;50 ms RTT), you cannot tell capnwasm and capnweb apart on a single tiny call.</p>
+      <p>The win shows up in <strong>bursts</strong> (parallel calls) and <strong>payload size</strong> (decode/encode work).</p>
+    </section>
+
+    <section>
+      <h2>Where the in-browser playground says they&apos;re tied</h2>
+      <p>The <a href="./playground.html">live playground</a> on this site fetches N records as static assets and renders them. On localhost the three protocols come out within 0&ndash;3% of each other:</p>
+      <table class="cmp small">
+        <thead>
+          <tr><th>workload</th><th>REST</th><th>capnweb</th><th>capnwasm</th><th>capnp wire (gz)</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>200 records, 32 B avatars</td><td>107 ms</td><td>108 ms</td><td>110 ms</td><td>26.6 KB</td></tr>
+          <tr><td>50 records, 4 KB avatars</td><td>15 ms</td><td>15 ms</td><td>15 ms</td><td>205 KB (vs 272 KB JSON)</td></tr>
+        </tbody>
+      </table>
+      <p>The bytes-on-wire savings only translate into faster end-to-end times once the network has any meaningful latency. On localhost, fetch overhead dominates everything else &mdash; capnwasm&apos;s decoder is fast, but it can&apos;t pay back the wasm load + per-record boundary cost when network is essentially free. <strong>Add 50 ms of latency between you and your backend and the bytes savings start to compound.</strong></p>
+      <p>Where the playground <em>can&apos;t</em> show capnwasm winning yet: an RPC workload over WebSocket with bursts, capability passing, or 64 KB binary payloads. That&apos;s a follow-up bench page.</p>
+    </section>
+
+    <section>
+      <h2>Where REST/JSON loses to both</h2>
+      <p>For completeness &mdash; neither library is competing with raw <code>fetch()</code> on the protocol axis, but it&apos;s worth showing what JSON-without-RPC costs:</p>
+      <ul>
+        <li><strong>No type safety</strong> without runtime validation (zod/ajv etc).</li>
+        <li><strong>No bidirectional streaming</strong> without inventing your own protocol.</li>
+        <li><strong>No capability passing</strong> &mdash; every request needs an auth token.</li>
+        <li><strong>No promise pipelining</strong> &mdash; sequential awaits cost you N round-trips.</li>
+        <li><strong>Bytes</strong>: 64 KB binary becomes ~88 KB after base64 + JSON escaping.</li>
+      </ul>
+      <p>If your app fits inside &ldquo;fetch some data, render it, occasionally POST&rdquo; then plain REST is fine and probably what you should use. Both capnweb and capnwasm are for apps that need RPC semantics &mdash; capability-secure objects, pipelining, streaming, wire-compatible types.</p>
+    </section>
+
+    <section>
+      <h2>When to choose what</h2>
+      <p><strong>Choose REST/JSON when:</strong></p>
+      <ul>
+        <li>Your app is request/response only, no real-time state.</li>
+        <li>Your team knows REST and the docs/tooling matter more than the wire.</li>
+        <li>You&apos;re integrating with a third-party API that publishes OpenAPI/Swagger.</li>
+      </ul>
+      <p><strong>Choose capnweb when:</strong></p>
+      <ul>
+        <li>Pure JS-to-JS, all-text-shaped payloads.</li>
+        <li>You want the smallest possible bundle (21 KB gz).</li>
+        <li>You don&apos;t need wire interop with non-JS peers.</li>
+        <li>Schema friction is a deal-breaker.</li>
+      </ul>
+      <p><strong>Choose capnwasm when:</strong></p>
+      <ul>
+        <li>You&apos;re moving binary data (images, audio, ML models, embeddings).</li>
+        <li>You sustain many concurrent calls (capnwasm pulls 3&times; ahead under burst).</li>
+        <li>Payloads are routinely &gt; 1 KB (binary wire crushes JSON for any non-trivial size).</li>
+        <li>You want one schema language and one codegen toolchain for both internal and third-party APIs.</li>
+        <li>You need wire compatibility with C++/Rust/Go services.</li>
+        <li>You can absorb the 23 KB extra bundle and 5&ndash;50 ms first-load cost.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Methodology / reproducibility</h2>
+      <ul>
+        <li>In-process numbers: <code>node bench/rpc_bench.mjs</code> and <code>node bench/realistic.mjs</code>.</li>
+        <li>Both use a paired in-memory transport, same workload runner.</li>
+        <li>&ldquo;vs capnweb&rdquo; assumes capnweb is checked out at <code>../capnweb</code> (sibling repo).</li>
+        <li>All wins reported are median of multiple runs; outliers from GC pauses excluded.</li>
+        <li>Bundle sizes measured on <code>dist/inlined.mjs</code> (capnwasm) and <code>../capnweb/dist/index.js</code> (capnweb) post-gzip-9.</li>
+        <li>In-browser numbers: <code>cd web &amp;&amp; npm run build &amp;&amp; npm run preview</code>, then run the playground in Chromium.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <a href="https://github.com/teamchong/capnwasm">GitHub</a> &middot;
+      <a href="https://www.npmjs.com/package/capnwasm">npm</a> &middot;
+      <a href="./">capnwasm</a>
+    </footer>
+  </article>
+</body>
+</html>

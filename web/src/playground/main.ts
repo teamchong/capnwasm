@@ -280,7 +280,7 @@ async function runBench() {
     { name: "capnwasm",  t: totals.capnp, b: capnp.bytes },
   ].sort((a, b) => a.t - b.t);
   const winner = sorted[0];
-  const honestLink = `<a href="https://github.com/anthropics/capnwasm/blob/main/docs/honest-comparison.md" style="color:inherit;text-decoration:underline">honest comparison doc</a>`;
+  const honestLink = `<a href="./honest.html" style="color:inherit;text-decoration:underline">honest comparison page</a>`;
 
   if (winner.name === "capnwasm") {
     summary.className = "win";
