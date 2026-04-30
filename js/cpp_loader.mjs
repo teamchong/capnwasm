@@ -6,7 +6,7 @@
 // as free functions; bundles that don't use it (e.g. RPC-only browser clients)
 // drop tape_codec entirely.
 
-import { buildWasiImports } from "./cpp_wasi_shim.mjs";
+import { buildRuntimeWasiImports } from "./cpp_wasi_runtime.mjs";
 
 export class CapnCpp {
   /** @type {WebAssembly.Instance} */
@@ -19,7 +19,7 @@ export class CapnCpp {
   #cap = 0;
 
   static async load(wasmSource) {
-    const wasi = buildWasiImports();
+    const wasi = buildRuntimeWasiImports();
     const importObj = { wasi_snapshot_preview1: wasi.imports };
 
     // Streaming compile when the source is a URL/Request/Response — the

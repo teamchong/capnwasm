@@ -86,9 +86,9 @@ for await (const event of stripe.listEvents()) console.log(event.id);
 
 | | what | gzip | brotli |
 |---|---|---|---|
-| `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, base64-inlined wasm) | 69 KB | 64 KB |
-| `import "capnwasm/slim"` | production-only inlined runtime (no test fixtures) | 61 KB | 58 KB |
-| `import "capnwasm/browser"` | **browser-optimized: tiny JS shim + wasm fetched as a separate asset (streaming compile)** | **45 KB** | **42 KB** |
+| `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, base64-inlined wasm) | 68 KB | 63 KB |
+| `import "capnwasm/slim"` | production-only inlined runtime (no test fixtures) | 60 KB | 57 KB |
+| `import "capnwasm/browser"` | **browser-optimized: tiny JS shim + wasm fetched as a separate asset (streaming compile)** | **44 KB** | **41 KB** |
 | `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | small | small |
 | `import "capnwasm/rpc"` | full RPC layer (sessions, caps, streaming) | small | small |
 | `import "capnwasm/tape"` | optional capnweb-shape `serialize`/`deserialize` helpers | small | small |

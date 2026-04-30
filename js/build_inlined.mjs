@@ -17,7 +17,7 @@ import { gzipSync } from "node:zlib";
 const ROOT = resolve(new URL("..", import.meta.url).pathname);
 
 const wasm        = await readFile(resolve(ROOT, "zig-out", "capnp_cpp.opt.wasm"));
-const wasiShim    = await readFile(resolve(ROOT, "js", "cpp_wasi_shim.mjs"), "utf8");
+const wasiShim    = await readFile(resolve(ROOT, "js", "cpp_wasi_runtime.mjs"), "utf8");
 const cppLoader   = await readFile(resolve(ROOT, "js", "cpp_loader.mjs"), "utf8");
 
 // Strip relative imports — we're inlining all the dependencies.
