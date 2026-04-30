@@ -1102,11 +1102,13 @@ function makeEnd() {
     _cb: null,
     onMessage(cb) { this._cb = cb; },
     send(bytes) {
-      // Defer delivery so handlers run on a clean stack frame, matching how
-      // a real socket would surface incoming data.
+      // Defer delivery so handlers run on a clean stack frame, matching
+      // how a real socket would surface incoming data. The bytes coming
+      // in are already JS-owned (RpcSession#sendFromOut slices from wasm
+      // memory before calling us), so no defensive copy is needed —
+      // saves a 64KB memcpy on every big round-trip.
       const peer = this.peer;
-      const copy = bytes.slice();
-      queueMicrotask(() => peer._cb?.(copy));
+      queueMicrotask(() => peer._cb?.(bytes));
     },
     close() { this._cb = null; },
   };
