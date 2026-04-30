@@ -108,76 +108,79 @@ function _capnwasmPick(cpp, fields, names) {
 }
 
 export class PrimitivesReader {
-  constructor(cpp) { this._cpp = cpp; }
+  constructor(cpp) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+  }
 
   get u8() {
-    return this._cpp._exports.cpp_any_uint8_at(0, 0);
+    return this._exp.cpp_any_uint8_at(0, 0);
   }
   get u16() {
-    return this._cpp._exports.cpp_any_uint16_at(2, 0);
+    return this._exp.cpp_any_uint16_at(2, 0);
   }
   get u32() {
-    return this._cpp._exports.cpp_any_uint32_at(4, 0);
+    return this._exp.cpp_any_uint32_at(4, 0);
   }
   get u64() {
-    return this._cpp._exports.cpp_any_int64_at(8, 0n);
+    return this._exp.cpp_any_int64_at(8, 0n);
   }
   get i8() {
-    return (this._cpp._exports.cpp_any_uint8_at(1, 0) << 24) >> 24;
+    return (this._exp.cpp_any_uint8_at(1, 0) << 24) >> 24;
   }
   get i16() {
-    return (this._cpp._exports.cpp_any_uint16_at(16, 0) << 16) >> 16;
+    return (this._exp.cpp_any_uint16_at(16, 0) << 16) >> 16;
   }
   get i32() {
-    return this._cpp._exports.cpp_any_uint32_at(20, 0) | 0;
+    return this._exp.cpp_any_uint32_at(20, 0) | 0;
   }
   get i64() {
-    return this._cpp._exports.cpp_any_int64_at(24, 0n);
+    return this._exp.cpp_any_int64_at(24, 0n);
   }
   get f32() {
-    const u = this._cpp._exports.cpp_any_uint32_at(32, 0) >>> 0;
+    const u = this._exp.cpp_any_uint32_at(32, 0) >>> 0;
     if (!this._f32buf) { this._f32buf = new ArrayBuffer(4); this._f32u32 = new Uint32Array(this._f32buf); this._f32f32 = new Float32Array(this._f32buf); }
     this._f32u32[0] = u;
     return this._f32f32[0];
   }
   get f64() {
-    const lo = this._cpp._exports.cpp_any_uint32_at(40, 0) >>> 0;
-    const hi = this._cpp._exports.cpp_any_uint32_at(44, 0) >>> 0;
+    const lo = this._exp.cpp_any_uint32_at(40, 0) >>> 0;
+    const hi = this._exp.cpp_any_uint32_at(44, 0) >>> 0;
     if (!this._f64buf) { this._f64buf = new ArrayBuffer(8); this._f64u32 = new Uint32Array(this._f64buf); this._f64f64 = new Float64Array(this._f64buf); }
     this._f64u32[0] = lo; this._f64u32[1] = hi;
     return this._f64f64[0];
   }
   get flag0() {
-    return this._cpp._exports.cpp_any_bool_at(144, 0) === 1;
+    return this._exp.cpp_any_bool_at(144, 0) === 1;
   }
   get flag1() {
-    return this._cpp._exports.cpp_any_bool_at(145, 0) === 1;
+    return this._exp.cpp_any_bool_at(145, 0) === 1;
   }
   get flag2() {
-    return this._cpp._exports.cpp_any_bool_at(146, 0) === 1;
+    return this._exp.cpp_any_bool_at(146, 0) === 1;
   }
   get text() {
-    const len = this._cpp._exports.cpp_any_text_at(0);
+    const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
     const out = this._cpp._outPtr;
     return decodeAscii(u8.subarray(out, out + len));
   }
   get data() {
-    const len = this._cpp._exports.cpp_any_data_at(1);
+    const len = this._exp.cpp_any_data_at(1);
     const u8 = this._cpp._u8;
     const out = this._cpp._outPtr;
     return u8.slice(out, out + len);
   }
   get emptyText() {
-    const len = this._cpp._exports.cpp_any_text_at(2);
+    const len = this._exp.cpp_any_text_at(2);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
     const out = this._cpp._outPtr;
     return decodeAscii(u8.subarray(out, out + len));
   }
   get emptyData() {
-    const len = this._cpp._exports.cpp_any_data_at(3);
+    const len = this._exp.cpp_any_data_at(3);
     const u8 = this._cpp._u8;
     const out = this._cpp._outPtr;
     return u8.slice(out, out + len);
@@ -244,30 +247,32 @@ export class PrimitivesBuilder {
   static _PTR_WORDS = 4;
   constructor(cpp, opts) {
     this._cpp = cpp;
+    this._exp = cpp._exports;
     if (!opts || !opts.preinitialized) {
-      if (cpp._exports.cpp_any_builder_init(6, 4) !== 1) {
+      if (this._exp.cpp_any_builder_init(6, 4) !== 1) {
         throw new Error("cpp_any_builder_init failed");
       }
     }
-    this._dataPtr = cpp._exports.cpp_any_builder_data_ptr();
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
   }
 
   set u8(value) {
-    this._cpp._u8[this._dataPtr + 0] = value & 0xff;
+    this._u8[this._dataPtr + 0] = value & 0xff;
   }
   set u16(value) {
-    const u8 = this._cpp._u8;
+    const u8 = this._u8;
     const o = this._dataPtr + 2;
     u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
   }
   set u32(value) {
-    const u8 = this._cpp._u8;
+    const u8 = this._u8;
     const o = this._dataPtr + 4;
     u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
     u8[o+2] = (value >>> 16) & 0xff; u8[o+3] = (value >>> 24) & 0xff;
   }
   set u64(value) {
-    const dv = new DataView(this._cpp._u8.buffer);
+    const dv = new DataView(this._u8.buffer);
     if (typeof value === "bigint") {
       dv.setBigInt64(this._dataPtr + 8, value, true);
     } else {
@@ -280,21 +285,21 @@ export class PrimitivesBuilder {
     }
   }
   set i8(value) {
-    this._cpp._u8[this._dataPtr + 1] = value & 0xff;
+    this._u8[this._dataPtr + 1] = value & 0xff;
   }
   set i16(value) {
-    const u8 = this._cpp._u8;
+    const u8 = this._u8;
     const o = this._dataPtr + 16;
     u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
   }
   set i32(value) {
-    const u8 = this._cpp._u8;
+    const u8 = this._u8;
     const o = this._dataPtr + 20;
     u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
     u8[o+2] = (value >>> 16) & 0xff; u8[o+3] = (value >>> 24) & 0xff;
   }
   set i64(value) {
-    const dv = new DataView(this._cpp._u8.buffer);
+    const dv = new DataView(this._u8.buffer);
     if (typeof value === "bigint") {
       dv.setBigInt64(this._dataPtr + 24, value, true);
     } else {
@@ -307,61 +312,64 @@ export class PrimitivesBuilder {
     }
   }
   set f32(value) {
-    new DataView(this._cpp._u8.buffer).setFloat32(this._dataPtr + 32, value, true);
+    new DataView(this._u8.buffer).setFloat32(this._dataPtr + 32, value, true);
   }
   set f64(value) {
-    new DataView(this._cpp._u8.buffer).setFloat64(this._dataPtr + 40, value, true);
+    new DataView(this._u8.buffer).setFloat64(this._dataPtr + 40, value, true);
   }
   set flag0(value) {
-    const u8 = this._cpp._u8;
+    const u8 = this._u8;
     const off = this._dataPtr + 18;
     if (value) u8[off] |= 1;
     else u8[off] &= 254;
   }
   set flag1(value) {
-    const u8 = this._cpp._u8;
+    const u8 = this._u8;
     const off = this._dataPtr + 18;
     if (value) u8[off] |= 2;
     else u8[off] &= 253;
   }
   set flag2(value) {
-    const u8 = this._cpp._u8;
+    const u8 = this._u8;
     const off = this._dataPtr + 18;
     if (value) u8[off] |= 4;
     else u8[off] &= 251;
   }
   set text(value) {
-    const inPtr = this._cpp._exports.cpp_in_ptr();
-    const inCap = this._cpp._exports.cpp_in_capacity();
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
     const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
-    this._cpp._exports.cpp_any_builder_set_text(0, written);
+    this._exp.cpp_any_builder_set_text(0, written);
+    this._u8 = this._cpp._u8;
   }
   set data(value) {
     const u8 = this._cpp._u8;
-    u8.set(value, this._cpp._exports.cpp_in_ptr());
-    this._cpp._exports.cpp_any_builder_set_data(1, value.length);
+    u8.set(value, this._exp.cpp_in_ptr());
+    this._exp.cpp_any_builder_set_data(1, value.length);
+    this._u8 = this._cpp._u8;
   }
   set emptyText(value) {
-    const inPtr = this._cpp._exports.cpp_in_ptr();
-    const inCap = this._cpp._exports.cpp_in_capacity();
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
     const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
-    this._cpp._exports.cpp_any_builder_set_text(2, written);
+    this._exp.cpp_any_builder_set_text(2, written);
+    this._u8 = this._cpp._u8;
   }
   set emptyData(value) {
     const u8 = this._cpp._u8;
-    u8.set(value, this._cpp._exports.cpp_in_ptr());
-    this._cpp._exports.cpp_any_builder_set_data(3, value.length);
+    u8.set(value, this._exp.cpp_in_ptr());
+    this._exp.cpp_any_builder_set_data(3, value.length);
+    this._u8 = this._cpp._u8;
   }
 
   /** Serialize the message to framed Cap'n Proto bytes. */
   toBytes() {
-    const len = this._cpp._exports.cpp_any_builder_finalize();
+    const len = this._exp.cpp_any_builder_finalize();
     if (!len) throw new Error("cpp_any_builder_finalize failed");
-    const u8 = this._cpp._u8;
     const out = this._cpp._outPtr;
-    return u8.slice(out, out + len);
+    return this._cpp._u8.slice(out, out + len);
   }
 }
 
@@ -379,3 +387,4 @@ export function openPrimitives(cpp, bytes) {
 export function buildPrimitives(cpp) {
   return new PrimitivesBuilder(cpp);
 }
+

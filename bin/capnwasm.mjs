@@ -694,7 +694,15 @@ function _capnwasmPick(cpp, fields, names) {`);
 
   for (const s of structs) {
     lines.push(`export class ${s.name}Reader {`);
-    lines.push(`  constructor(cpp) { this._cpp = cpp; }`);
+    // Cache cpp._exports so per-field getters do `this._exp.cpp_*()`
+    // — one hidden-class lookup instead of walking two property chains.
+    // Don't cache a Uint8Array view here: text/data getters fetch a
+    // fresh one via this._cpp._u8 because the wasm calls inside them
+    // can grow memory (and detach a pre-existing view).
+    lines.push(`  constructor(cpp) {`);
+    lines.push(`    this._cpp = cpp;`);
+    lines.push(`    this._exp = cpp._exports;`);
+    lines.push(`  }`);
     lines.push("");
     // Union accessor: when this struct holds a union, `which()` returns the
     // discriminant value (0..N-1) and the codegen below adds `is<Foo>()`
@@ -704,7 +712,7 @@ function _capnwasmPick(cpp, fields, names) {`);
       const byteOff = s.discriminantOffsetBits >> 3;
       lines.push(`  /** Returns the discriminant of this struct's union (0..${s.discriminantCount - 1}). */`);
       lines.push(`  which() {`);
-      lines.push(`    return this._cpp._exports.cpp_any_uint16_at(${byteOff}, 0);`);
+      lines.push(`    return this._exp.cpp_any_uint16_at(${byteOff}, 0);`);
       lines.push(`  }`);
       lines.push("");
       // Constants for each union variant, named after the field with
@@ -808,16 +816,22 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push(`  static _PTR_WORDS = ${s.ptrWords};`);
     lines.push(`  constructor(cpp, opts) {`);
     lines.push(`    this._cpp = cpp;`);
+    lines.push(`    this._exp = cpp._exports;`);
     lines.push(`    if (!opts || !opts.preinitialized) {`);
-    lines.push(`      if (cpp._exports.cpp_any_builder_init(${s.dataWords}, ${s.ptrWords}) !== 1) {`);
+    lines.push(`      if (this._exp.cpp_any_builder_init(${s.dataWords}, ${s.ptrWords}) !== 1) {`);
     lines.push(`        throw new Error("cpp_any_builder_init failed");`);
     lines.push(`      }`);
     lines.push(`    }`);
-    // Cache the data section's address in linear memory so primitive
-    // setters can write straight to wasm memory — no per-setter wasm call.
-    // The address stays valid until any_builder_root is replaced (i.e. the
-    // next builder init), which happens after this Builder's lifetime.
-    lines.push(`    this._dataPtr = cpp._exports.cpp_any_builder_data_ptr();`);
+    // Cache the data section's address and the Uint8Array view AFTER
+    // any_builder_init, since init can grow wasm memory which detaches
+    // a view captured beforehand. The address stays valid until
+    // any_builder_root is replaced (i.e. the next builder init), which
+    // happens after this Builder's lifetime. Caching _u8 cuts per-
+    // setter allocation: every `b.field = v` would otherwise do
+    // `new Uint8Array(cpp.memory.buffer)` — modern V8 spends more GC
+    // time than wasm-call time on a write-heavy struct.
+    lines.push(`    this._dataPtr = this._exp.cpp_any_builder_data_ptr();`);
+    lines.push(`    this._u8 = cpp._u8;`);
     lines.push(`  }`);
     lines.push("");
     // Union setters: when this struct holds a union, expose
@@ -829,7 +843,7 @@ function _capnwasmPick(cpp, fields, names) {`);
       const discByteOff = s.discriminantOffsetBits >> 3;
       lines.push(`  /** Write this struct's union discriminant directly. */`);
       lines.push(`  setWhich(variant) {`);
-      lines.push(`    this._cpp._exports.cpp_any_builder_set_uint16(${discByteOff}, variant & 0xffff);`);
+      lines.push(`    this._exp.cpp_any_builder_set_uint16(${discByteOff}, variant & 0xffff);`);
       lines.push(`  }`);
       lines.push("");
       // Mirror the Reader's static Which constants for consistent API.
@@ -851,7 +865,7 @@ function _capnwasmPick(cpp, fields, names) {`);
         lines.push(`  get ${f.name}() {`);
         if (s.discriminantCount && f.discriminantValue !== undefined && s.discriminantOffsetBits !== undefined) {
           const discByteOff = s.discriminantOffsetBits >> 3;
-          lines.push(`    this._cpp._exports.cpp_any_builder_set_uint16(${discByteOff}, ${f.discriminantValue});`);
+          lines.push(`    this._exp.cpp_any_builder_set_uint16(${discByteOff}, ${f.discriminantValue});`);
         }
         lines.push(`    return new ${f.groupStructName}Builder(this._cpp, { preinitialized: true });`);
         lines.push(`  }`);
@@ -865,7 +879,7 @@ function _capnwasmPick(cpp, fields, names) {`);
       // visible to V8's inliner.
       if (s.discriminantCount && f.discriminantValue !== undefined && s.discriminantOffsetBits !== undefined) {
         const discByteOff = s.discriminantOffsetBits >> 3;
-        lines.push(`    this._cpp._exports.cpp_any_builder_set_uint16(${discByteOff}, ${f.discriminantValue});`);
+        lines.push(`    this._exp.cpp_any_builder_set_uint16(${discByteOff}, ${f.discriminantValue});`);
       }
       for (const line of setter) lines.push(`    ${line}`);
       lines.push(`  }`);
@@ -873,11 +887,13 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push("");
     lines.push(`  /** Serialize the message to framed Cap'n Proto bytes. */`);
     lines.push(`  toBytes() {`);
-    lines.push(`    const len = this._cpp._exports.cpp_any_builder_finalize();`);
+    lines.push(`    const len = this._exp.cpp_any_builder_finalize();`);
     lines.push(`    if (!len) throw new Error("cpp_any_builder_finalize failed");`);
-    lines.push(`    const u8 = this._cpp._u8;`);
+    // Re-fetch the Uint8Array view after finalize — it can grow wasm
+    // memory while it's collecting segments, which detaches a
+    // pre-existing typed-array view over the old buffer.
     lines.push(`    const out = this._cpp._outPtr;`);
-    lines.push(`    return u8.slice(out, out + len);`);
+    lines.push(`    return this._cpp._u8.slice(out, out + len);`);
     lines.push(`  }`);
     lines.push(`}`);
     lines.push("");
@@ -919,23 +935,29 @@ function generateSetter(field) {
       // encodeInto writes UTF-8 bytes directly into the destination Uint8Array
       // — no intermediate JS allocation. The destination is a subarray view of
       // wasm linear memory at cpp_in_ptr(), so the bytes land where the C++
-      // setter will read them in one step.
+      // setter will read them in one step. Re-fetch the view via cpp._u8
+      // because cpp_any_builder_set_text can grow wasm memory (large texts
+      // trigger MallocMessageBuilder segment allocation), which detaches
+      // any pre-existing typed-array view. After the wasm call, refresh the
+      // constructor-cached _u8 so subsequent primitive setters see a live
+      // buffer.
       return [
-        `const inPtr = this._cpp._exports.cpp_in_ptr();`,
-        `const inCap = this._cpp._exports.cpp_in_capacity();`,
+        `const inPtr = this._exp.cpp_in_ptr();`,
+        `const inCap = this._exp.cpp_in_capacity();`,
         `const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);`,
         `const { written } = SHARED_ENCODER.encodeInto(value, dst);`,
-        `this._cpp._exports.cpp_any_builder_set_text(${field.ptrIndex}, written);`,
+        `this._exp.cpp_any_builder_set_text(${field.ptrIndex}, written);`,
+        `this._u8 = this._cpp._u8;`,
       ];
     }
     if (field.type === "Data") {
-      // Data already lives in a typed-array buffer. If it's a view into wasm
-      // memory, u8.set is a memmove (free-ish); if it's in JS heap, the copy
-      // into wasm is unavoidable without changing the caller's allocation site.
+      // Same memory.grow caveat as Text — fetch the view, do the write, then
+      // refresh the constructor-cached _u8 for any setters that follow.
       return [
         `const u8 = this._cpp._u8;`,
-        `u8.set(value, this._cpp._exports.cpp_in_ptr());`,
-        `this._cpp._exports.cpp_any_builder_set_data(${field.ptrIndex}, value.length);`,
+        `u8.set(value, this._exp.cpp_in_ptr());`,
+        `this._exp.cpp_any_builder_set_data(${field.ptrIndex}, value.length);`,
+        `this._u8 = this._cpp._u8;`,
       ];
     }
     return null;  // struct refs need nested builder support
@@ -952,7 +974,7 @@ function generateSetter(field) {
       const bit = field.bitOffset & 7;
       const mask = 1 << bit;
       return [
-        `const u8 = this._cpp._u8;`,
+        `const u8 = this._u8;`,
         `const off = this._dataPtr + ${byte};`,
         `if (value) u8[off] |= ${mask};`,
         `else u8[off] &= ${(~mask) & 0xff};`,
@@ -960,18 +982,18 @@ function generateSetter(field) {
     }
     case "UInt8":
     case "Int8":
-      return [`this._cpp._u8[this._dataPtr + ${off}] = value & 0xff;`];
+      return [`this._u8[this._dataPtr + ${off}] = value & 0xff;`];
     case "UInt16":
     case "Int16":
       return [
-        `const u8 = this._cpp._u8;`,
+        `const u8 = this._u8;`,
         `const o = this._dataPtr + ${off};`,
         `u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;`,
       ];
     case "UInt32":
     case "Int32":
       return [
-        `const u8 = this._cpp._u8;`,
+        `const u8 = this._u8;`,
         `const o = this._dataPtr + ${off};`,
         `u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;`,
         `u8[o+2] = (value >>> 16) & 0xff; u8[o+3] = (value >>> 24) & 0xff;`,
@@ -982,7 +1004,7 @@ function generateSetter(field) {
       // directly. For normal-Number input, we still need the manual lo/hi
       // dance to preserve precision.
       return [
-        `const dv = new DataView(this._cpp._u8.buffer);`,
+        `const dv = new DataView(this._u8.buffer);`,
         `if (typeof value === "bigint") {`,
         `  dv.setBigInt64(this._dataPtr + ${off}, value, true);`,
         `} else {`,
@@ -996,11 +1018,11 @@ function generateSetter(field) {
       ];
     case "Float32":
       return [
-        `new DataView(this._cpp._u8.buffer).setFloat32(this._dataPtr + ${off}, value, true);`,
+        `new DataView(this._u8.buffer).setFloat32(this._dataPtr + ${off}, value, true);`,
       ];
     case "Float64":
       return [
-        `new DataView(this._cpp._u8.buffer).setFloat64(this._dataPtr + ${off}, value, true);`,
+        `new DataView(this._u8.buffer).setFloat64(this._dataPtr + ${off}, value, true);`,
       ];
     default:
       return null;
@@ -1196,8 +1218,11 @@ function generateGetter(field) {
   }
   if (field.kind === "pointer") {
     if (field.type === "Text") {
+      // Re-fetch the view via cpp._u8 — cpp_any_text_at may have grown
+      // wasm memory while copying the text into cpp_out, detaching the
+      // constructor-cached _u8.
       return [
-        `const len = this._cpp._exports.cpp_any_text_at(${field.ptrIndex});`,
+        `const len = this._exp.cpp_any_text_at(${field.ptrIndex});`,
         `if (len === 0) return "";`,
         `const u8 = this._cpp._u8;`,
         `const out = this._cpp._outPtr;`,
@@ -1206,7 +1231,7 @@ function generateGetter(field) {
     }
     if (field.type === "Data") {
       return [
-        `const len = this._cpp._exports.cpp_any_data_at(${field.ptrIndex});`,
+        `const len = this._exp.cpp_any_data_at(${field.ptrIndex});`,
         `const u8 = this._cpp._u8;`,
         `const out = this._cpp._outPtr;`,
         `return u8.slice(out, out + len);`,
@@ -1226,36 +1251,36 @@ function generateGetter(field) {
   const off = field.bitOffset >> 3;
   switch (field.type) {
     case "Bool":
-      return [`return this._cpp._exports.cpp_any_bool_at(${field.bitOffset}, 0) === 1;`];
+      return [`return this._exp.cpp_any_bool_at(${field.bitOffset}, 0) === 1;`];
     case "UInt8":
-      return [`return this._cpp._exports.cpp_any_uint8_at(${off}, 0);`];
+      return [`return this._exp.cpp_any_uint8_at(${off}, 0);`];
     case "Int8":
       // sign-extend 8 -> 32 via <<24 >>24
-      return [`return (this._cpp._exports.cpp_any_uint8_at(${off}, 0) << 24) >> 24;`];
+      return [`return (this._exp.cpp_any_uint8_at(${off}, 0) << 24) >> 24;`];
     case "UInt16":
-      return [`return this._cpp._exports.cpp_any_uint16_at(${off}, 0);`];
+      return [`return this._exp.cpp_any_uint16_at(${off}, 0);`];
     case "Int16":
-      return [`return (this._cpp._exports.cpp_any_uint16_at(${off}, 0) << 16) >> 16;`];
+      return [`return (this._exp.cpp_any_uint16_at(${off}, 0) << 16) >> 16;`];
     case "UInt32":
-      return [`return this._cpp._exports.cpp_any_uint32_at(${off}, 0);`];
+      return [`return this._exp.cpp_any_uint32_at(${off}, 0);`];
     case "Int32":
-      return [`return this._cpp._exports.cpp_any_uint32_at(${off}, 0) | 0;`];
+      return [`return this._exp.cpp_any_uint32_at(${off}, 0) | 0;`];
     case "UInt64":
-      return [`return this._cpp._exports.cpp_any_int64_at(${off}, 0n);`];
+      return [`return this._exp.cpp_any_int64_at(${off}, 0n);`];
     case "Int64":
-      return [`return this._cpp._exports.cpp_any_int64_at(${off}, 0n);`];
+      return [`return this._exp.cpp_any_int64_at(${off}, 0n);`];
     case "Float32":
       // Reinterpret u32 bits as f32 via a stack-allocated typed-array view.
       return [
-        `const u = this._cpp._exports.cpp_any_uint32_at(${off}, 0) >>> 0;`,
+        `const u = this._exp.cpp_any_uint32_at(${off}, 0) >>> 0;`,
         `if (!this._f32buf) { this._f32buf = new ArrayBuffer(4); this._f32u32 = new Uint32Array(this._f32buf); this._f32f32 = new Float32Array(this._f32buf); }`,
         `this._f32u32[0] = u;`,
         `return this._f32f32[0];`,
       ];
     case "Float64":
       return [
-        `const lo = this._cpp._exports.cpp_any_uint32_at(${off}, 0) >>> 0;`,
-        `const hi = this._cpp._exports.cpp_any_uint32_at(${off + 4}, 0) >>> 0;`,
+        `const lo = this._exp.cpp_any_uint32_at(${off}, 0) >>> 0;`,
+        `const hi = this._exp.cpp_any_uint32_at(${off + 4}, 0) >>> 0;`,
         `if (!this._f64buf) { this._f64buf = new ArrayBuffer(8); this._f64u32 = new Uint32Array(this._f64buf); this._f64f64 = new Float64Array(this._f64buf); }`,
         `this._f64u32[0] = lo; this._f64u32[1] = hi;`,
         `return this._f64f64[0];`,
