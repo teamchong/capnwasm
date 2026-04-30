@@ -156,6 +156,20 @@ async function runAll() {
   summary.textContent = "";
   const iters = parseInt(itersSel.value, 10);
 
+  // Set every metric cell to a pulsing "running…" so the page makes
+  // it obvious that a bench is in flight, not stuck on stale data.
+  for (const id of [
+    "burst-capnp", "burst-cwb", "burst-capnp-x", "burst-cwb-x",
+    "pipe-capnp",  "pipe-cwb",  "pipe-capnp-x",  "pipe-cwb-x",
+    "blob-capnp",  "blob-cwb",  "blob-capnp-bytes", "blob-cwb-bytes",
+  ]) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.textContent = "running…";
+      el.className = "running";
+    }
+  }
+
   status.textContent = "Connecting…";
   await ensureCapnwasm();
   await ensureCapnweb();

@@ -220,6 +220,21 @@ async function runBench() {
   const count = parseInt(countSel.value, 10);
   const iters = parseInt(itersSel.value, 10);
 
+  // Replace stale "—" cells (or numbers from a previous run) with a
+  // visible "running…" so the page doesn't sit looking broken while
+  // the warmup pass takes a few hundred ms on slow machines.
+  const PHASES = ["fetch", "decode", "render", "total", "bytes", "egress"];
+  const PROTO  = ["rest", "cwb", "capnp"];
+  for (const p of PROTO) {
+    for (const ph of PHASES) {
+      const el = document.getElementById(`${p}-${ph}`);
+      if (el) {
+        el.textContent = "running…";
+        el.className = "running";
+      }
+    }
+  }
+
   // One warmup round so neither side pays HTTP-cache or wasm-init cost
   // in the measured iterations.
   await fetchJson(workload, count);

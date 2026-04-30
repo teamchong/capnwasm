@@ -125,3 +125,14 @@
 .workload-card .metrics td.win {
   color: #66bb6a;
 }
+
+.workload-card .metrics td.running {
+  color: #4fc3f7;
+  font-style: italic;
+  animation: cell-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes cell-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 0.85; }
+}
