@@ -95,14 +95,28 @@ Still on the list if anyone uses streams hard:
 - **Abort signals**: `callStream` has no AbortSignal parameter. Adding one
   would let callers tear down a stream cleanly.
 
-## 6. Capability lifecycle under failure
+## 6. Capability lifecycle under failure — partly addressed
 
-`FinalizationRegistry`-driven `Release` messages are best-effort. If a peer
-disconnects mid-conversation, the surviving side leaks its import table.
-Production-grade RPC has a session-teardown sweep that releases everything.
+**Update (2026-04-30):** the immediate hang is fixed. Transport gained an
+optional `onClose(cb)` hook; `wsTransport` wires it to ws close + error
+events, and `createMemoryTransportPair` propagates close across the pair.
+`RpcSession` subscribes and triggers its own `close()`, which now drains
+both `#questions` (existing) and `#streamQuestions` (added in #5). Pending
+calls and stream iterators reject with `session closed` instead of hanging.
 
-Cost: ~1 day. Matters for long-lived connections; nobody using this for
-short-lived browser sessions will notice.
+What's still on the list:
+
+- **Explicit `#imports` / `#answers` / `#localCaps` cleanup on close.**
+  Today these are left for GC. Memory cost is small but a long-lived
+  process that opens and tears down many sessions accumulates the
+  per-session FinalizationRegistry registrations until the next major GC.
+- **Session-teardown sweep that explicitly fires Release for every still-
+  imported cap.** Currently relies on JS GC eventually firing the
+  FinalizationRegistry; immediate close-time release would be cleaner.
+- **Half-close detection on a slow peer.** `wsTransport` reacts to the
+  WebSocket's close/error events; it does not detect a peer that's stopped
+  reading our sends but isn't yet closed. A heartbeat / write-stalled
+  watchdog would catch that case.
 
 ## 7. Documentation gaps
 

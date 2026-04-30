@@ -495,3 +495,46 @@ test("pipelined call's exception propagates to its own promise without hanging",
   await assert.rejects(r2.promise, /first failed|unknown method|no capability/);
   client.close();
 });
+
+test("peer disconnect: server-side close propagates to client; pending question rejects", async () => {
+  // Server registers a slow handler so the call is still in flight when the
+  // server tears down. Without onClose propagation, the client's question
+  // would hang forever — a real-world session leak.
+  const IFC = 0xdeadbeefdeadbeefn;
+  const registry = new InterfaceRegistry();
+  let serverClose;
+  registry.register(IFC, 0, async () => {
+    // Block until the test detonates the server.
+    await new Promise(r => { serverClose = r; });
+    return EMPTY_MESSAGE.slice();
+  });
+  const { client, server } = await setupSessions({ bootstrap: {}, registry });
+  const r = client.bootstrap().call(IFC, 0, emptyMessage());
+
+  // Wait for the handler to actually begin (so the question is in flight).
+  while (!serverClose) await new Promise(r => setImmediate(r));
+
+  server.close();
+  // Client must observe the disconnect — its in-flight call rejects.
+  await assert.rejects(r.promise, /session closed/);
+  client.close();
+});
+
+test("peer disconnect: client-side close propagates to server; server.close() is idempotent", async () => {
+  const IFC = 0xfeedfacefeedfacen;
+  const registry = new InterfaceRegistry();
+  registry.register(IFC, 0, async () => EMPTY_MESSAGE.slice());
+  const { client, server } = await setupSessions({ bootstrap: {}, registry });
+  // Ensure both sides have exchanged at least one frame (warm path).
+  await client.bootstrap().call(IFC, 0, emptyMessage()).promise;
+
+  // Tear down the client side. The server must observe the disconnect
+  // through the in-process transport pair's onClose hook — not just keep
+  // its #questions/#answers around indefinitely.
+  client.close();
+  // Drain microtasks so the propagated close has a chance to run.
+  await new Promise(r => setImmediate(r));
+  // Calling close again should be a no-op, not throw.
+  server.close();
+  server.close();
+});

@@ -229,6 +229,11 @@ export class RpcSession {
     });
     this.#flushBound = () => this.#flush();
     transport.onMessage((bytes) => this.#onBytes(bytes));
+    // Peer disconnect → session close. The transport calls this once the
+    // underlying connection is gone (ws close/error, or the paired in-process
+    // peer closed). Without this, pending questions and streams would hang
+    // forever waiting for a Return that will never arrive.
+    transport.onClose?.(() => this.close());
   }
 
   // Returns a Uint8Array over wasm memory. Re-fetches the view if memory
@@ -1098,12 +1103,19 @@ function u64(x) { return BigInt.asUintN(64, BigInt(x)); }
 export function wsTransport(ws) {
   ws.binaryType = "arraybuffer";
   let cb = null;
+  let closeCb = null;
   ws.addEventListener("message", (ev) => {
     if (!cb) return;
     if (ev.data instanceof ArrayBuffer) cb(new Uint8Array(ev.data));
     else if (ev.data instanceof Blob) ev.data.arrayBuffer().then(b => cb(new Uint8Array(b)));
     else if (typeof ev.data === "string") cb(new TextEncoder().encode(ev.data));
   });
+  // Either a normal close or an error tears down the session. Fires once —
+  // the session's close() is idempotent so repeats are harmless, but we
+  // null out the callback to avoid retaining the closure after teardown.
+  const fire = () => { const c = closeCb; closeCb = null; if (c) c(); };
+  ws.addEventListener("close", fire);
+  ws.addEventListener("error", fire);
   return {
     send(bytes) {
       // ws.send copies the bytes into its own send queue, so handing it a
@@ -1112,6 +1124,7 @@ export function wsTransport(ws) {
       ws.send(bytes);
     },
     onMessage(handler) { cb = handler; },
+    onClose(handler) { closeCb = handler; },
     close() { ws.close(); cb = null; },
   };
 }
@@ -1164,7 +1177,9 @@ function makeEnd() {
   return {
     peer: null,
     _cb: null,
+    _closeCb: null,
     onMessage(cb) { this._cb = cb; },
+    onClose(cb) { this._closeCb = cb; },
     send(bytes) {
       // Defer delivery so handlers run on a clean stack frame, matching
       // how a real socket would surface incoming data. The bytes coming
@@ -1174,7 +1189,18 @@ function makeEnd() {
       const peer = this.peer;
       queueMicrotask(() => peer._cb?.(bytes));
     },
-    close() { this._cb = null; },
+    close() {
+      this._cb = null;
+      // Notify the peer side asynchronously so this side's close() returns
+      // before the peer's session.close() runs — matches WebSocket semantics
+      // where a remote close arrives after a microtask boundary.
+      const peer = this.peer;
+      queueMicrotask(() => {
+        const cb = peer._closeCb;
+        peer._closeCb = null;
+        if (cb) cb();
+      });
+    },
   };
 }
 
