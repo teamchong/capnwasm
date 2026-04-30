@@ -415,6 +415,7 @@ export class WideUserDataBuilder {
     }
     this._dataPtr = this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
+    this._dv = new DataView(cpp._u8.buffer);
   }
 
   set field0(value) {
@@ -424,6 +425,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(0, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field1(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -432,6 +434,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(1, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field2(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -440,6 +443,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(2, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field3(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -448,6 +452,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(3, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field4(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -456,6 +461,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(4, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field5(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -464,6 +470,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(5, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field6(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -472,6 +479,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(6, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field7(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -480,6 +488,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(7, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field8(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -488,6 +497,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(8, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field9(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -496,6 +506,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(9, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field10(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -504,6 +515,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(10, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field11(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -512,6 +524,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(11, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field12(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -520,6 +533,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(12, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field13(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -528,6 +542,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(13, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field14(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -536,6 +551,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(14, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field15(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -544,6 +560,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(15, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field16(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -552,6 +569,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(16, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field17(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -560,6 +578,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(17, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field18(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -568,6 +587,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(18, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field19(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -576,6 +596,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(19, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field20(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -584,6 +605,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(20, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field21(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -592,6 +614,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(21, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field22(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -600,6 +623,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(22, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field23(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -608,6 +632,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(23, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field24(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -616,6 +641,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(24, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field25(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -624,6 +650,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(25, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field26(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -632,6 +659,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(26, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field27(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -640,6 +668,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(27, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field28(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -648,6 +677,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(28, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field29(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -656,6 +686,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(29, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field30(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -664,6 +695,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(30, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set field31(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -672,6 +704,7 @@ export class WideUserDataBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(31, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
 
   /** Serialize the message to framed Cap'n Proto bytes. */

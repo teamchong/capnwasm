@@ -31,6 +31,7 @@
 // reads the same bytes a codegen reader for the same schema would.
 
 const SHARED_DECODER = new TextDecoder();
+const SHARED_ENCODER = new TextEncoder();
 
 const _F32_BUF = new ArrayBuffer(4);
 const _F32_U32 = new Uint32Array(_F32_BUF);
@@ -204,6 +205,13 @@ export class DynamicBuilder {
     this._schema = schema;
     this._dataPtr = cpp._exports.cpp_any_builder_data_ptr();
     this._finalized = false;
+    // Cache one DataView for the wasm memory.buffer. The 8-byte and float
+    // setters all need a DataView, and `new DataView(buffer)` was the
+    // largest single per-call alloc on the bench (~15 ns each, ×4 hot
+    // setters = ~60 ns/build). Refresh the view if memory grows under us
+    // (text/data setters are the only paths that can trigger growth, and
+    // they're rare; we check via buffer-identity each set).
+    this._dv = new DataView(cpp._u8.buffer);
   }
 
   /** Write `value` into the field named `name`. Throws on unknown field. */
@@ -215,6 +223,10 @@ export class DynamicBuilder {
     const exp = cpp._exports;
     const u8 = cpp._u8;
     const dp = this._dataPtr;
+    // If wasm grew its memory between calls, our cached u8/buffer is
+    // stale. Refresh both before the switch dispatch.
+    if (this._dv.buffer !== u8.buffer) this._dv = new DataView(u8.buffer);
+    const dv = this._dv;
     switch (desc.type) {
       case "uint8":
       case "int8":
@@ -238,7 +250,6 @@ export class DynamicBuilder {
       }
       case "uint64":
       case "int64": {
-        const dv = new DataView(u8.buffer);
         if (typeof value === "bigint") {
           dv.setBigInt64(dp + desc.off, value, true);
         } else {
@@ -251,16 +262,12 @@ export class DynamicBuilder {
         }
         return;
       }
-      case "float32": {
-        const dv = new DataView(u8.buffer);
+      case "float32":
         dv.setFloat32(dp + desc.off, value, true);
         return;
-      }
-      case "float64": {
-        const dv = new DataView(u8.buffer);
+      case "float64":
         dv.setFloat64(dp + desc.off, value, true);
         return;
-      }
       case "bool": {
         // bitOffset is in bits within the data section. Value is truthy/falsy.
         const byte = dp + (desc.off >>> 3);
@@ -270,18 +277,22 @@ export class DynamicBuilder {
         return;
       }
       case "text": {
-        // Stage UTF-8 bytes in the wasm scratch buffer, then have the builder
-        // copy them into the right pointer slot's tail region.
-        const enc = new TextEncoder();
-        const bytes = typeof value === "string" ? enc.encode(value) : value;
+        // Encode UTF-8 directly into the wasm scratch buffer — encodeInto
+        // skips the intermediate Uint8Array that .encode() allocates,
+        // matching what the codegen builder does. Saves ~50-100 ns per
+        // text field on the bench.
         const inPtr = exp.cpp_in_ptr();
-        if (bytes.length > exp.cpp_in_capacity()) {
-          throw new Error("text value larger than scratch buffer");
+        const inCap = exp.cpp_in_capacity();
+        let written;
+        if (typeof value === "string") {
+          const dst = cpp._u8.subarray(inPtr, inPtr + inCap);
+          written = SHARED_ENCODER.encodeInto(value, dst).written;
+        } else {
+          if (value.length > inCap) throw new Error("text value larger than scratch buffer");
+          cpp._u8.set(value, inPtr);
+          written = value.length;
         }
-        cpp._u8.set(bytes, inPtr);
-        exp.cpp_any_builder_set_text(desc.off, bytes.length);
-        // The wasm side may have grown memory; refresh the cached u8 view.
-        this._cpp = cpp;
+        exp.cpp_any_builder_set_text(desc.off, written);
         return;
       }
       case "data": {

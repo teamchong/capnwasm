@@ -244,6 +244,7 @@ export class PrimitivesBuilder {
     }
     this._dataPtr = this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
+    this._dv = new DataView(cpp._u8.buffer);
   }
 
   set u8(value) {
@@ -261,7 +262,7 @@ export class PrimitivesBuilder {
     u8[o+2] = (value >>> 16) & 0xff; u8[o+3] = (value >>> 24) & 0xff;
   }
   set u64(value) {
-    const dv = new DataView(this._u8.buffer);
+    const dv = this._dv;
     if (typeof value === "bigint") {
       dv.setBigInt64(this._dataPtr + 8, value, true);
     } else {
@@ -288,7 +289,7 @@ export class PrimitivesBuilder {
     u8[o+2] = (value >>> 16) & 0xff; u8[o+3] = (value >>> 24) & 0xff;
   }
   set i64(value) {
-    const dv = new DataView(this._u8.buffer);
+    const dv = this._dv;
     if (typeof value === "bigint") {
       dv.setBigInt64(this._dataPtr + 24, value, true);
     } else {
@@ -301,10 +302,10 @@ export class PrimitivesBuilder {
     }
   }
   set f32(value) {
-    new DataView(this._u8.buffer).setFloat32(this._dataPtr + 32, value, true);
+    this._dv.setFloat32(this._dataPtr + 32, value, true);
   }
   set f64(value) {
-    new DataView(this._u8.buffer).setFloat64(this._dataPtr + 40, value, true);
+    this._dv.setFloat64(this._dataPtr + 40, value, true);
   }
   set flag0(value) {
     const u8 = this._u8;
@@ -331,12 +332,14 @@ export class PrimitivesBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(0, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set data(value) {
     const u8 = this._cpp._u8;
     u8.set(value, this._exp.cpp_in_ptr());
     this._exp.cpp_any_builder_set_data(1, value.length);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set emptyText(value) {
     const inPtr = this._exp.cpp_in_ptr();
@@ -345,12 +348,14 @@ export class PrimitivesBuilder {
     const { written } = SHARED_ENCODER.encodeInto(value, dst);
     this._exp.cpp_any_builder_set_text(2, written);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
   set emptyData(value) {
     const u8 = this._cpp._u8;
     u8.set(value, this._exp.cpp_in_ptr());
     this._exp.cpp_any_builder_set_data(3, value.length);
     this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
 
   /** Serialize the message to framed Cap'n Proto bytes. */

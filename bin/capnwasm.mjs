@@ -832,6 +832,12 @@ function _capnwasmPick(cpp, fields, names) {`);
     // time than wasm-call time on a write-heavy struct.
     lines.push(`    this._dataPtr = this._exp.cpp_any_builder_data_ptr();`);
     lines.push(`    this._u8 = cpp._u8;`);
+    // Cache one DataView for the wasm memory.buffer. The 64-bit and float
+    // setters all need a DataView; allocating one per setter call was
+    // ~15 ns of GC pressure each. The setters reference this._dv directly
+    // — only text/data setters need to refresh it, since they're the
+    // paths that can trigger wasm memory growth.
+    lines.push(`    this._dv = new DataView(cpp._u8.buffer);`);
     lines.push(`  }`);
     lines.push("");
     // Union setters: when this struct holds a union, expose
@@ -948,6 +954,9 @@ function generateSetter(field) {
         `const { written } = SHARED_ENCODER.encodeInto(value, dst);`,
         `this._exp.cpp_any_builder_set_text(${field.ptrIndex}, written);`,
         `this._u8 = this._cpp._u8;`,
+        // Refresh the cached DataView too — cpp_any_builder_set_text may
+        // have grown wasm memory and detached the view.
+        `if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`,
       ];
     }
     if (field.type === "Data") {
@@ -958,6 +967,7 @@ function generateSetter(field) {
         `u8.set(value, this._exp.cpp_in_ptr());`,
         `this._exp.cpp_any_builder_set_data(${field.ptrIndex}, value.length);`,
         `this._u8 = this._cpp._u8;`,
+        `if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`,
       ];
     }
     return null;  // struct refs need nested builder support
@@ -1000,11 +1010,12 @@ function generateSetter(field) {
       ];
     case "UInt64":
     case "Int64":
-      // Use DataView for the 64-bit case — setBigInt64 handles BigInt
-      // directly. For normal-Number input, we still need the manual lo/hi
-      // dance to preserve precision.
+      // Use the cached _dv (allocated once at constructor; text/data
+      // setters refresh it after any wasm memory growth). setBigInt64
+      // handles BigInt directly. For normal-Number input, we still need
+      // the manual lo/hi dance to preserve precision past 2^53.
       return [
-        `const dv = new DataView(this._u8.buffer);`,
+        `const dv = this._dv;`,
         `if (typeof value === "bigint") {`,
         `  dv.setBigInt64(this._dataPtr + ${off}, value, true);`,
         `} else {`,
@@ -1018,11 +1029,11 @@ function generateSetter(field) {
       ];
     case "Float32":
       return [
-        `new DataView(this._u8.buffer).setFloat32(this._dataPtr + ${off}, value, true);`,
+        `this._dv.setFloat32(this._dataPtr + ${off}, value, true);`,
       ];
     case "Float64":
       return [
-        `new DataView(this._u8.buffer).setFloat64(this._dataPtr + ${off}, value, true);`,
+        `this._dv.setFloat64(this._dataPtr + ${off}, value, true);`,
       ];
     default:
       return null;
