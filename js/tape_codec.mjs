@@ -1,6 +1,6 @@
-// JS-side tape codec. Walks a capnweb-shape JS value once, writing a compact
-// byte tape; and walks a tape once, reconstructing the JS value. The wasm
-// side translates between tape ↔ Cap'n Proto.
+// JS-side tape codec. Converts capnweb-shape JS values into the byte tape
+// consumed by cpp/wrapper.cpp, and back. The tape format is the contract
+// between JS and the C++ wasm — keep both in sync.
 
 const MSG_PUSH = 0;
 const MSG_PULL = 1;
@@ -28,13 +28,8 @@ const E_EXPORT = 0x21;
 const E_PIPELINE = 0x22;
 const E_ERROR = 0x23;
 
-const MSG_NAMES = ["push", "pull", "resolve", "reject", "release", "stream", "abort", "pipe"];
-
-/**
- * Walks a capnweb-shape JS value and writes a tape into the given Uint8Array.
- * Returns the number of bytes written.
- */
 const SHARED_ENCODER = new TextEncoder();
+const SHARED_DECODER = new TextDecoder();
 
 export class TapeWriter {
   constructor(buffer) {
@@ -46,20 +41,17 @@ export class TapeWriter {
   writeU8(v) { this.bytes[this.pos++] = v; }
   writeU32(v) { this.dv.setUint32(this.pos, v, true); this.pos += 4; }
 
-  /// Write an i64 without allocating a BigInt for safe integer inputs.
   writeI64(v) {
     if (typeof v === "bigint") {
       this.dv.setBigInt64(this.pos, v, true);
       this.pos += 8;
       return;
     }
-    // Number path: split into low/high 32-bit halves.
     let lo, hi;
     if (v >= 0) {
       lo = (v >>> 0);
       hi = ((v / 4294967296) >>> 0);
     } else {
-      // Two's complement of (-v) over 64 bits.
       const abs = -v;
       const aLo = (abs >>> 0);
       const aHi = ((abs / 4294967296) >>> 0);
@@ -74,8 +66,6 @@ export class TapeWriter {
   writeF64(v) { this.dv.setFloat64(this.pos, v, true); this.pos += 8; }
   writeBytes(b) { this.bytes.set(b, this.pos); this.pos += b.length; }
 
-  /// Encode `s` directly into the tape. ASCII strings of any length copy
-  /// charCodes inline; non-ASCII falls back to TextEncoder.encodeInto.
   writeText(s) {
     const lenPos = this.pos;
     this.pos += 4;
@@ -97,9 +87,6 @@ export class TapeWriter {
     this.dv.setUint32(lenPos, result.written, true);
   }
 
-  /**
-   * Encode a top-level capnweb message: ["push", expr], ["pull", id], etc.
-   */
   writeMessage(msg) {
     if (!Array.isArray(msg)) throw new TypeError("message must be an array");
     const tag = msg[0];
@@ -116,14 +103,6 @@ export class TapeWriter {
     }
   }
 
-  /**
-   * Encode any capnweb expression value.
-   * - JSON primitives (null/bool/number/string)
-   * - bigint, Uint8Array, Date
-   * - Plain arrays / objects
-   * - capnweb encoded forms: ["import", id], ["export", id], ["pipeline", src, path, args?], ["error", type, message], ["bytes", base64], ["date", ms], ["bigint", str], ["undefined"], ["inf"], ["-inf"], ["nan"]
-   * - Array literals via double-wrapping ([[...]])
-   */
   writeExpr(v) {
     if (v === null) { this.writeU8(E_NULL); return; }
     if (v === undefined) { this.writeU8(E_UNDEFINED); return; }
@@ -152,10 +131,7 @@ export class TapeWriter {
       this.writeU8(E_DATE); this.writeF64(v.getTime()); return;
     }
     if (Array.isArray(v)) {
-      // capnweb's array convention: an outer array starting with a string is a
-      // tagged form; a doubly-wrapped array `[[...]]` is a literal array.
       if (v.length === 1 && Array.isArray(v[0])) {
-        // Literal array.
         const inner = v[0];
         this.writeU8(E_ARRAY);
         this.writeU32(inner.length);
@@ -171,8 +147,6 @@ export class TapeWriter {
         case "bytes":
           this.writeU8(E_DATA);
           {
-            // Modern browsers provide Uint8Array.fromBase64 with native (often
-            // SIMD-accelerated) decode. Fall back to atob + charCodeAt loop.
             let arr;
             if (Uint8Array.fromBase64) {
               arr = Uint8Array.fromBase64(v[1]);
@@ -228,11 +202,6 @@ export class TapeWriter {
   }
 }
 
-/**
- * Reads a tape and reconstructs the capnweb-shape JS value.
- */
-const SHARED_DECODER = new TextDecoder();
-
 export class TapeReader {
   constructor(bytes) {
     this.bytes = bytes;
@@ -243,12 +212,10 @@ export class TapeReader {
   readU8() { return this.bytes[this.pos++]; }
   readU32() { const v = this.dv.getUint32(this.pos, true); this.pos += 4; return v; }
 
-  /// Decode an i64 to a JS number without going through BigInt for safe integer values.
   readI64() {
     const lo = this.dv.getUint32(this.pos, true);
     const hi = this.dv.getInt32(this.pos + 4, true);
     this.pos += 8;
-    // Fast path: hi fits within safe integer high bits (-2^21..2^21-1).
     if (hi >= -0x200000 && hi <= 0x1FFFFF) {
       return hi * 4294967296 + lo;
     }
@@ -261,7 +228,6 @@ export class TapeReader {
   readText() {
     const len = this.readU32();
     if (len < 64) {
-      // Short ASCII fast path.
       const start = this.pos;
       let asciiOk = true;
       for (let i = 0; i < len; i++) {
@@ -313,8 +279,6 @@ export class TapeReader {
       case E_DATA: {
         const len = this.readU32();
         const bytes = this.readBytes(len);
-        // Native base64 path is dramatically faster than String.fromCharCode + btoa.
-        // The Uint8Array view here aliases the tape buffer; toBase64 reads it directly.
         if (bytes.toBase64) return ["bytes", bytes.toBase64()];
         let bin = "";
         for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
@@ -357,5 +321,3 @@ export class TapeReader {
     }
   }
 }
-
-export const TapeOpcodes = { MSG_PUSH, MSG_PULL, MSG_RESOLVE, MSG_REJECT, MSG_RELEASE, MSG_STREAM, MSG_ABORT, MSG_PIPE };

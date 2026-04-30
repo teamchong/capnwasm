@@ -1,14 +1,10 @@
-// Runs in the browser. Loads both libraries, executes each fixture, and writes
-// results into the page (and posts them via window.__benchResults for Playwright
-// to read).
+// Runs in the browser. Loads the real capnproto C++ wasm and capnweb,
+// executes each fixture, writes results into the page and exposes them
+// via window.__benchResults for the Playwright runner to scrape.
 
-import { CapnWasm } from "/js/index.mjs";
 import { CapnCpp } from "/js/cpp_loader.mjs";
 import { fixtures } from "./fixtures.mjs";
 import * as capnweb from "/capnweb-vendor/index.js";
-import { encodeFromValue, decodeToValue } from "./codec-capnwasm.mjs";
-import * as tapeMod from "/js/tape.mjs";
-window.__capnwasmTape = tapeMod;
 
 const status = document.getElementById("status");
 const results = document.getElementById("results");
@@ -19,10 +15,8 @@ function setStatus(msg) {
 }
 
 async function run() {
-  setStatus("Loading wasm modules ...");
-  const wasm = await CapnWasm.load("/zig-out/capnwasm.opt.wasm", "/zig-out/gc_decode.wasm");
+  setStatus("Loading capnp_cpp.opt.wasm ...");
   const cpp = await CapnCpp.load("/zig-out/capnp_cpp.opt.wasm");
-  window.__cpp = cpp;
 
   const out = {
     sizes: await collectSizes(),
@@ -32,59 +26,31 @@ async function run() {
 
   setStatus("Running fixtures ...");
   for (const fx of fixtures) {
-    out.perf[fx.name] = perfFor(wasm, fx);
-    out.correctness[fx.name] = correctnessFor(wasm, fx);
+    out.perf[fx.name] = perfFor(cpp, fx);
+    out.correctness[fx.name] = correctnessFor(cpp, fx);
   }
 
   results.textContent = JSON.stringify(out, null, 2);
-  // Expose for Playwright.
   window.__benchResults = out;
   setStatus("Done.");
 }
 
 async function collectSizes() {
-  // Browser-side sizes: response bodies, gzipped on the fly.
-  const wasmBytes = await (await fetch("/zig-out/capnwasm.opt.wasm")).bytes();
-  const glueBytes = await (await fetch("/js/index.mjs")).bytes();
+  const wasmBytes = await (await fetch("/zig-out/capnp_cpp.opt.wasm")).bytes();
   const capnwebBytes = await (await fetch("/capnweb-vendor/index.js")).bytes();
-
   return {
-    capnwasm_wasm_raw: wasmBytes.length,
-    capnwasm_glue_raw: glueBytes.length,
-    capnwasm_total_raw: wasmBytes.length + glueBytes.length,
+    capnp_cpp_raw: wasmBytes.length,
     capnweb_raw: capnwebBytes.length,
-    note: "gzipped sizes are reported by the runner harness, not the browser",
   };
 }
 
-function perfFor(wasm, fx) {
+function perfFor(cpp, fx) {
   const iters = fx.name.includes("large") || fx.name.includes("blob") || fx.name.includes("wide") ? 200 : 2000;
   const v = fx.value;
-  const cpp = window.__cpp;
 
-  // Encode benchmark
-  const tCwEnc = bench(iters, () => encodeFromValue(wasm, v));
-  const cwBytes = encodeFromValue(wasm, v);
-  const tCwDec = bench(iters, () => decodeToValue(wasm, cwBytes));
-
-  // Real C++ capnproto via wasm
-  let tCppEnc = NaN, tCppDec = NaN, cppBytes = null;
-  try {
-    cppBytes = cpp.serialize(v);
-    tCppEnc = bench(iters, () => cpp.serialize(v));
-    tCppDec = bench(iters, () => cpp.deserialize(cppBytes));
-  } catch (e) {
-    console.warn("cpp path failed for", fx.name, e);
-  }
-
-  // Sub-step timings to attribute cost to JS-tape vs wasm-encode.
-  const tWriteTape = benchWriteTape(wasm, v, iters);
-  const tWasmEncode = benchWasmEncodeOnly(wasm, v, iters);
-  const tWasmDecode = benchWasmDecodeOnly(wasm, cwBytes, iters);
-  const tReadTape = benchReadTape(wasm, cwBytes, iters);
-  const tGcDecode = wasm.hasGc()
-    ? bench(iters, () => wasm.deserializeViaGc(cwBytes))
-    : { usPerOp: NaN };
+  const tCppEnc = bench(iters, () => cpp.serialize(v));
+  const cppBytes = cpp.serialize(v);
+  const tCppDec = bench(iters, () => cpp.deserialize(cppBytes));
 
   let tCwbEnc = NaN, tCwbDec = NaN, cwbBytes = null;
   try {
@@ -95,167 +61,35 @@ function perfFor(wasm, fx) {
     return { error: String(err) };
   }
 
-  // Lazy access bench: measure "decode + access K fields" for fixtures whose
-  // shape is amenable. Compares against capnweb's decode + property access.
-  const lazy3 = lazyAccessBench(wasm, fx, cwBytes, cwbBytes, iters);
-
   const cwbWireSize = typeof cwbBytes === "string"
     ? new TextEncoder().encode(cwbBytes).length
     : (cwbBytes?.length ?? 0);
 
   return {
     iters,
-    capnwasm_encode_us: tCwEnc.usPerOp,
-    capnwasm_decode_us: tCwDec.usPerOp,
-    capnwasm_writetape_us: tWriteTape.usPerOp,
-    capnwasm_wasmencode_us: tWasmEncode.usPerOp,
-    capnwasm_wasmdecode_us: tWasmDecode.usPerOp,
-    capnwasm_readtape_us: tReadTape.usPerOp,
-    capnwasm_gcdecode_us: tGcDecode.usPerOp,
-    capnwasm_lazy3_us: lazy3.cwUs,
-    capnwasm_batch3_us: lazy3.cwBatchUs,
-    capnwasm_cpp_encode_us: typeof tCppEnc === "object" ? tCppEnc.usPerOp : NaN,
-    capnwasm_cpp_decode_us: typeof tCppDec === "object" ? tCppDec.usPerOp : NaN,
-    capnwasm_cpp_bytes: cppBytes?.length ?? 0,
-    capnweb_lazy3_us: lazy3.cwbUs,
-    capnwasm_lazyall_us: lazy3.cwAllUs,
-    capnweb_fullread_us: lazy3.cwbAllUs,
-    lazy3_supported: lazy3.supported,
+    capnp_cpp_encode_us: tCppEnc.usPerOp,
+    capnp_cpp_decode_us: tCppDec.usPerOp,
     capnweb_encode_us: tCwbEnc.usPerOp,
     capnweb_decode_us: tCwbDec.usPerOp,
-    encode_speedup: tCwbEnc.usPerOp / tCwEnc.usPerOp,
-    decode_speedup: tCwbDec.usPerOp / tCwDec.usPerOp,
-    capnwasm_bytes: cwBytes.length,
+    encode_speedup: tCwbEnc.usPerOp / tCppEnc.usPerOp,
+    decode_speedup: tCwbDec.usPerOp / tCppDec.usPerOp,
+    capnp_cpp_bytes: cppBytes.length,
     capnweb_bytes: cwbWireSize,
   };
 }
 
-/**
- * Decode + access K=3 fields. Only meaningful for fixtures whose top-level
- * expression is an object with named fields (medium-payload). For others
- * this returns supported:false and we report N/A in the table.
- */
-function lazyAccessBench(wasm, fx, cwBytes, cwbBytes, iters) {
-  let fieldNames;
-  if (fx.name === "medium-payload") fieldNames = ["field0", "field5", "field31"];
-  else if (fx.name === "wide-payload") fieldNames = ["field0", "field256", "field511"];
-  else return { supported: false, cwUs: NaN, cwbUs: NaN };
-
-  const tCw = bench(iters, () => {
-    const r = wasm.openLazy(cwBytes);
-    let total = 0;
-    for (const f of fieldNames) {
-      const v = r.fieldText(f);
-      // Touch the value so the JIT can't dead-code it.
-      total += v.length;
-    }
-    return total;
-  });
-  const tCwBatch = bench(iters, () => {
-    const r = wasm.openLazy(cwBytes);
-    const vs = r.fieldsText(fieldNames);
-    return vs[0].length + vs[1].length + vs[2].length;
-  });
-  // Full-read via lazy: zero-copy parse + wasm-emit JSON + native JSON.parse.
-  // This routes through the lazy infrastructure (avoids the eager-decode memcpy)
-  // and uses V8's optimized parser for object construction.
-  const tCwAll = bench(iters, () => {
-    const r = wasm.openLazy(cwBytes);
-    const v = r.toValue();
-    const obj = v[1];
-    let total = 0;
-    for (const k in obj) total += obj[k].length;
-    return total;
-  });
-  // Full read in capnweb terms: full decode + iterate every value.
-  const tCwbAll = bench(iters, () => {
-    const v = capnweb.deserialize(cwbBytes);
-    const obj = v[1];
-    let total = 0;
-    for (const k in obj) total += obj[k].length;
-    return total;
-  });
-  const tCwb = bench(iters, () => {
-    const v = capnweb.deserialize(cwbBytes);
-    // v is ["push", {field0: "...", ...}]
-    const obj = v[1];
-    return obj[fieldNames[0]].length + obj[fieldNames[1]].length + obj[fieldNames[2]].length;
-  });
-  return {
-    supported: true,
-    cwUs: tCw.usPerOp,
-    cwBatchUs: tCwBatch.usPerOp,
-    cwbUs: tCwb.usPerOp,
-    cwAllUs: tCwAll.usPerOp,
-    cwbAllUs: tCwbAll.usPerOp,
-  };
-}
-
-function benchWasmDecodeOnly(wasm, bytes, iters) {
-  // Only the wasm cw_decode_to_tape call.
-  const u8 = new Uint8Array(wasm.memory.buffer);
-  const inPtr = wasm.exports.cw_in_ptr();
-  u8.set(bytes, inPtr);
-  return bench(iters, () => wasm.exports.cw_decode_to_tape(bytes.length));
-}
-
-function benchReadTape(wasm, bytes, iters) {
-  // Only the JS-side TapeReader walk over a pre-decoded tape.
-  const u8 = new Uint8Array(wasm.memory.buffer);
-  const inPtr = wasm.exports.cw_in_ptr();
-  u8.set(bytes, inPtr);
-  const tapeLen = wasm.exports.cw_decode_to_tape(bytes.length);
-  const outPtr = wasm.exports.cw_out_ptr();
-  const tape = new Uint8Array(wasm.memory.buffer, outPtr, tapeLen);
-  const { TapeReader } = window.__capnwasmTape;
-  return bench(iters, () => new TapeReader(tape).readMessage());
-}
-
-function benchWriteTape(wasm, v, iters) {
-  // Re-import TapeWriter via wasm module's export shape.
-  return bench(iters, () => {
-    const u8 = new Uint8Array(wasm.memory.buffer);
-    const region = u8.subarray(wasm.exports.cw_in_ptr(), wasm.exports.cw_in_ptr() + wasm.exports.cw_in_capacity());
-    const { TapeWriter } = window.__capnwasmTape;
-    const tw = new TapeWriter(region);
-    tw.writeMessage(v);
-  });
-}
-
-function benchWasmEncodeOnly(wasm, v, iters) {
-  // Pre-write the tape so we measure only the wasm encode call.
-  const u8 = new Uint8Array(wasm.memory.buffer);
-  const region = u8.subarray(wasm.exports.cw_in_ptr(), wasm.exports.cw_in_ptr() + wasm.exports.cw_in_capacity());
-  const { TapeWriter } = window.__capnwasmTape;
-  const tw = new TapeWriter(region);
-  tw.writeMessage(v);
-  const len = tw.pos;
-  return bench(iters, () => wasm.exports.cw_encode_tape(len));
-}
-
-function correctnessFor(wasm, fx) {
+function correctnessFor(cpp, fx) {
   try {
-    const encoded = encodeFromValue(wasm, fx.value);
-    const decoded = decodeToValue(wasm, encoded);
-    const ok = JSON.stringify(decoded) === JSON.stringify(fx.value)
-      || tagPreservedOnly(fx.value, decoded);
+    const encoded = cpp.serialize(fx.value);
+    const decoded = cpp.deserialize(encoded);
+    const ok = JSON.stringify(decoded) === JSON.stringify(fx.value);
     return { ok, decoded, expected: fx.value };
   } catch (e) {
     return { ok: false, error: String(e) };
   }
 }
 
-function tagPreservedOnly(expected, actual) {
-  // While the encoder is still text-tag-only, we accept "tag preserved" as
-  // a soft pass for non-text payloads.
-  if (Array.isArray(expected) && actual && typeof actual === "object") {
-    return expected[0] === actual.tag;
-  }
-  return false;
-}
-
 function bench(iters, fn) {
-  // Warm up.
   for (let i = 0; i < Math.min(50, iters); i++) fn();
   const start = performance.now();
   for (let i = 0; i < iters; i++) fn();

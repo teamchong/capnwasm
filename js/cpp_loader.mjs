@@ -6,7 +6,7 @@
 // wrapper at cpp/wrapper.cpp implements the same encoding rules using the
 // real capnproto MessageBuilder / MessageReader.
 
-import { TapeWriter, TapeReader } from "./tape.mjs";
+import { TapeWriter, TapeReader } from "./tape_codec.mjs";
 import { buildWasiImports } from "./cpp_wasi_shim.mjs";
 
 export class CapnCpp {

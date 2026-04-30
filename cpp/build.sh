@@ -96,3 +96,13 @@ zig c++ "${FLAGS[@]}" \
 
 echo "Built: $OUT"
 ls -la "$OUT"
+
+# Strip + size-optimize.
+OPT_OUT=zig-out/capnp_cpp.opt.wasm
+wasm-opt "$OUT" \
+  -Oz --converge \
+  --strip-debug --strip-producers --strip-target-features \
+  --enable-bulk-memory --enable-simd --enable-sign-ext --enable-nontrapping-float-to-int \
+  -o "$OPT_OUT"
+echo "Optimized: $OPT_OUT"
+ls -la "$OPT_OUT"
