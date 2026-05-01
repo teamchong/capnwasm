@@ -782,7 +782,7 @@ export class RpcSession {
     // handlers we await the promise as before.
     let handlerResult;
     try {
-      const r = handler(ctx);
+      const r = handler(cap.target, ctx);
       if (r && typeof r.then === "function") handlerResult = await r;
       else handlerResult = r;
     } catch (err) {
@@ -1442,9 +1442,10 @@ export class InterfaceRegistry {
   dispatch(targetObject, interfaceId, methodId) {
     const methods = this.#byInterface.get(u64(interfaceId));
     if (!methods) return null;
-    const fn = methods.get(methodId);
-    if (!fn) return null;
-    return (ctx) => fn(targetObject, ctx);
+    return methods.get(methodId) ?? null;
+    // Returns the bare handler. Caller invokes as `handler(target, ctx)`.
+    // Removed the per-call binding closure that wrapped fn — eliminates
+    // an alloc per inbound dispatch on the hot RPC loop.
   }
 }
 
