@@ -69,12 +69,12 @@ All sizes minified-then-gzipped (the `dist/` build that ships in npm).
 | scenario | capnweb | capnwasm | ratio |
 |---|---|---|---|
 | Whole library, RPC-ready | **21 KB** (everything in `dist/index.js`) | — | — |
-| Wasm runtime only (read capnp messages) | n/a | **38 KB** | — |
-| WebSocket RPC (transport + sessions + caps) | **21 KB** | **43 KB** | 2.0× |
-| Typed proxy + HTTP-batch transport (typical browser shape) | **21 KB** | **45 KB** | 2.1× |
-| All four transports + typed + dynamic | **21 KB** | **51 KB** | 2.4× |
+| Wasm runtime only (read capnp messages) | n/a | **34 KB** | — |
+| WebSocket RPC (transport + sessions + caps) | **21 KB** | **39 KB** | 1.9× |
+| Typed proxy + HTTP-batch transport (typical browser shape) | **21 KB** | **41 KB** | 2.0× |
+| All four transports + typed + dynamic | **21 KB** | **47 KB** | 2.2× |
 
-37 KB of every capnwasm scenario is the wasm runtime — a real Cap'n Proto C++ implementation. The JS code itself is small after minification (rpc.mjs is 5.4 KB gz, each transport is 0.6–1.5 KB gz, the typed proxy is 1 KB). The slim browser wasm dropped to 37 KB across multiple shrinkage passes: moving the tape codec out of production, stripping KJ assertion strings, auditing the export list against actual JS callers (10 dead RPC summary getters whose work `cpp_rpc_decode` now does inline), switching to WASI reactor mode, replacing default-constructed AnyStruct::Reader stack with a placement-new union, and turning `KJ_LOG`/`KJ_DBG` into no-ops in the strip header (they reach formatted-logging machinery our wasm has nowhere to send).
+33 KB of every capnwasm scenario is the wasm runtime — a real Cap'n Proto C++ implementation. The JS code itself is small after two-pass minification (esbuild → terser): rpc.mjs is 5.3 KB gz, each transport is 0.6–1.4 KB gz, the typed proxy is 0.9 KB. The slim browser wasm dropped from 39 → 33 KB across these compounding passes: moving the tape codec out of production, stripping KJ assertion strings (both condition text AND caller-supplied `__VA_ARGS__` messages, which alone shaved 3.9 KB gz), auditing the export list against actual JS callers (10 dead RPC summary getters whose work `cpp_rpc_decode` now does inline), switching to WASI reactor mode, replacing default-constructed AnyStruct::Reader stack with a placement-new union, and turning `KJ_LOG`/`KJ_DBG` into no-ops in the strip header (they reach formatted-logging machinery our wasm has nowhere to send).
 
 If your bundle budget is tight and you don't need binary wire interop, **capnweb is the smaller choice**. There is no way for capnwasm to reach 21 KB without giving up the wasm runtime, which is what makes the rest of the wins possible.
 
