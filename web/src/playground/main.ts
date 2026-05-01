@@ -345,7 +345,7 @@ async function runBench() {
     { name: "capnwasm",  t: totals.capnp, b: capnp.bytes },
   ].sort((a, b) => a.t - b.t);
   const winner = sorted[0];
-  const honestLink = `<a href="./honest.html" style="color:inherit;text-decoration:underline">honest comparison page</a>`;
+  const honestLink = `<a href="./vs-capnweb.html" style="color:inherit;text-decoration:underline">vs capnweb page</a>`;
 
   // Bandwidth savings extrapolated to a sustained 1k req/s workload —
   // 1000 req/s × 3600 s = 3.6 M requests/hour, so this is "GB transferred

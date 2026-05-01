@@ -1,6 +1,12 @@
 # capnwasm in Cloudflare Workers
 
-The default `capnwasm` package runs in Workers without any new entrypoint or build flag. The pattern is:
+The default `capnwasm` package runs in Workers without any new entrypoint or build flag. Three transport shapes work — pick by the request pattern:
+
+- **HTTP batch** (`capnwasm/http-batch`): stateless POST/response. Cheapest Worker billing, plays with HTTP/2 multiplexing, no upgrade dance. Use this when the browser is making request/response calls. See [transports.md](transports.md).
+- **HTTP stream** (`capnwasm/http-stream`): POST returns a streaming response body the server keeps writing into. Use this for subscriptions and capability streams.
+- **WebSocket** (the example below): full-duplex, long-lived. Use this when both ends need to initiate calls or you need long-lived caps across many round-trips.
+
+The WebSocket pattern (the most general):
 
 ```js
 // worker.js
@@ -126,7 +132,7 @@ That's **24% fewer bytes on the wire** for a single asset shape.
 
 ### Where the savings actually go
 
-A note on honest accounting: **Cloudflare R2 egress to the public internet is zero-rated** (and has been since R2's launch in 2022), so the wire-byte savings here do *not* translate into a smaller Cloudflare bill. What you do get on Cloudflare:
+A note on accounting: **Cloudflare R2 egress to the public internet is zero-rated** (and has been since R2's launch in 2022), so the wire-byte savings here do *not* translate into a smaller Cloudflare bill. What you do get on Cloudflare:
 
 - **Faster time-to-first-byte for the user** — 1.6 MB less data over a 10 Mbps mobile link is ~1.3 s of wall-clock time.
 - **Lower client-side CPU** — the browser doesn't run a base64 decode loop on a 5 MB string.

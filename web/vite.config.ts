@@ -32,7 +32,7 @@ export default defineConfig(({ command }) => ({
         playground: resolve(__dirname, "playground.html"),
         rpc: resolve(__dirname, "rpc.html"),
         chat: resolve(__dirname, "chat.html"),
-        honest: resolve(__dirname, "honest.html"),
+        vsCapnweb: resolve(__dirname, "vs-capnweb.html"),
         inspect: resolve(__dirname, "inspect.html"),
         notes: resolve(__dirname, "notes.html"),
       },

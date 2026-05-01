@@ -4,7 +4,7 @@ Vite-built docs site for capnwasm. Three pages:
 
 - `/` &mdash; landing with overview and headline numbers vs capnweb
 - `/playground.html` &mdash; live in-browser bench (REST + capnweb + capnwasm)
-- `/honest.html` &mdash; full comparison: where capnwasm wins, loses, and ties
+- `/vs-capnweb.html` &mdash; full comparison: where capnwasm wins, loses, and ties
 
 ## Run locally
 
@@ -54,13 +54,13 @@ the handlers in `vite-rpc-server.mjs` into your own deployment.
 - `vite-rpc-server.mjs` &mdash; the bench WebSocket server, attached to
   Vite&apos;s HTTP server in both dev and preview.
 
-## Honest about what this measures
+## What this measures
 
 The playground fetches static files from localhost. The numbers it reports
 end up within ~3% across all three protocols because network is essentially
 free in that setup. capnwasm consistently has the smallest wire bytes
 (2&times; smaller for binary blobs after gzip) but can&rsquo;t turn that into
-a faster end-to-end time when the network has zero RTT. See `/honest.html`
+a faster end-to-end time when the network has zero RTT. See `/vs-capnweb.html`
 for where each protocol actually wins under realistic conditions.
 
 A second playground page that runs RPC over WebSocket (where capnwasm&rsquo;s

@@ -234,4 +234,4 @@ Required one-time repo configuration before the workflows actually fire:
   who aren't already in the codebase.
 - The site at `web/` is the main public surface now — six pages, three
   benches, all reproducible. Any new feature should land with a
-  corresponding playground demo or honest comparison row.
+  corresponding playground demo or vs-capnweb comparison row.

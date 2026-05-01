@@ -14,7 +14,7 @@
   <meta name="twitter:description" content="Field report: 5 perf traps, 1 negative SIMD result, 5 wins." />
   <meta name="twitter:image" content="/og-image.svg" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <link rel="stylesheet" href="./src/honest/style.css" />
+  <link rel="stylesheet" href="./src/vs-capnweb/style.css" />
   <link rel="stylesheet" href="./src/inspect/style.css" />
 </head>
 <body>
@@ -30,7 +30,7 @@
         <a href="./">&larr; Landing</a> &middot;
         <a href="./playground.html">Fetch playground</a> &middot;
         <a href="./rpc.html">RPC bench</a> &middot;
-        <a href="./honest.html">Honest comparison</a>
+        <a href="./vs-capnweb.html">vs capnweb</a>
       </nav>
     </header>
 
@@ -202,7 +202,7 @@ function buildFinishFrame(questionId) {
           <tr><td>Schema requirement</td><td>yes</td><td class="win">no</td></tr>
         </tbody>
       </table>
-      <p>The honest frame: <strong>capnweb kept Cap&apos;n Proto&apos;s RPC semantics and dropped the wire format. capnwasm keeps both.</strong> For workloads where the wire matters &mdash; binary data, cross-language interop, sustained throughput &mdash; the original Cap&apos;n Proto wire wins by a lot. For workloads where the wire doesn&apos;t matter &mdash; small JSON-shaped payloads in a JS-only stack &mdash; capnweb&apos;s 21 KB bundle and 0.2 ms cold start are unbeatable.</p>
+      <p>The frame: <strong>capnweb kept Cap&apos;n Proto&apos;s RPC semantics and dropped the wire format. capnwasm keeps both.</strong> For workloads where the wire matters &mdash; binary data, cross-language interop, sustained throughput &mdash; the original Cap&apos;n Proto wire wins by a lot. For workloads where the wire doesn&apos;t matter &mdash; small JSON-shaped payloads in a JS-only stack &mdash; capnweb&apos;s 21 KB bundle and 0.2 ms cold start are unbeatable.</p>
       <p>Neither one is wrong. They&apos;re optimized for different things. The mistake the framing in capnweb&apos;s docs encourages is treating the two halves as equally optional, when in fact dropping the wire format gives away a measurable amount of perf on the workloads that look like 2026 traffic (binary, big, bursty).</p>
     </section>
 

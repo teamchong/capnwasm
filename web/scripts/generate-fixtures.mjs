@@ -4,7 +4,7 @@
 // encoding cost. The bench measures network transfer + client decode +
 // render only.
 //
-// Two workloads, picked to show the honest tradeoff:
+// Two workloads, picked to show the tradeoff:
 //   small/  — 200 user records with a 32 B avatar. JSON wins on decode
 //             time because each record is tiny and JSON.parse is V8-
 //             internal C++; the wasm boundary cost shows up here.

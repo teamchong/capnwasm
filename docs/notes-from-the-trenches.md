@@ -171,7 +171,7 @@ batched pick(3)       codegen ~494 ns   dynamic ~429 ns/call    (dynamic 1.15× 
 build with 13 fields  codegen ~835 ns   dynamic ~1343 ns/call   (codegen 1.61× faster)
 ```
 
-The honest result: codegen wins per-field reads (offset literals beat Map lookups), batched picks are a wash (one wasm boundary call regardless of access path), codegen wins writes by a wider margin. Dynamic is "fast enough for the cases it exists for" — sub-microsecond per field on a tenant-uploaded schema is fine.
+The result: codegen wins per-field reads (offset literals beat Map lookups), batched picks are a wash (one wasm boundary call regardless of access path), codegen wins writes by a wider margin. Dynamic is "fast enough for the cases it exists for" — sub-microsecond per field on a tenant-uploaded schema is fine.
 
 **Lesson 1**: a flattering benchmark is the most dangerous kind. If the result contradicts what the abstraction layer should cost (Map lookup + switch can't be free), check what the *other* side is doing wrong. The "fast" thing was actually the slow thing wearing makeup.
 
@@ -232,7 +232,7 @@ In-process bench, both peers in the same Node process via a memory transport pai
 | OpenAPI client codegen | yes | structurally no |
 | Schema requirement | yes | no |
 
-The honest frame: **capnweb kept Cap'n Proto's RPC semantics and dropped the wire format. capnwasm keeps both.** For workloads where the wire matters — binary data, cross-language interop, sustained throughput — the original Cap'n Proto wire wins by a lot. For workloads where the wire doesn't matter — small JSON-shaped payloads in a JS-only stack — capnweb's 21 KB bundle and 0.2 ms cold start are unbeatable.
+The frame: **capnweb kept Cap'n Proto's RPC semantics and dropped the wire format. capnwasm keeps both.** For workloads where the wire matters — binary data, cross-language interop, sustained throughput — the original Cap'n Proto wire wins by a lot. For workloads where the wire doesn't matter — small JSON-shaped payloads in a JS-only stack — capnweb's 21 KB bundle and 0.2 ms cold start are unbeatable.
 
 Neither one is wrong. They're optimized for different things. The mistake the framing in capnweb's docs encourages is treating the two halves as equally optional, when in fact dropping the wire format gives away a measurable amount of perf on the workloads that look like 2026 traffic (binary, big, bursty).
 

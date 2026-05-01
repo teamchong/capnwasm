@@ -1,4 +1,4 @@
-/* The inspect page reuses the honest page's typography + layout. This
+/* The inspect page reuses the vs-capnweb page's typography + layout. This
    file just adds <pre><code> styling that matches the rest of the site. */
 
 pre {

@@ -113,7 +113,7 @@ location /rpc {
 
 ## Cold start
 
-- **Node**: ~1 ms total time-to-first-result on a fresh process. See [`honest-comparison.md`](honest-comparison.md). No tuning needed.
+- **Node**: ~1 ms total time-to-first-result on a fresh process. See [`vs-capnweb.md`](vs-capnweb.md). No tuning needed.
 - **Cloudflare Workers**: the wasm Module is cached across requests in the same isolate. First request in an isolate pays ~5 ms; subsequent requests in that isolate skip wasm compile entirely.
 - **Browser fresh tab, empty cache**: ~20 ms to fetch + streaming compile 109 KB of wasm. Cache-Control + immutable URLs make warm reloads ~2–4 ms.
 
