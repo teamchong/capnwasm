@@ -162,8 +162,8 @@ Microsecond per-call differences vanish behind any real network. The cases where
 | **In-process RPC, 256 B text echo** | 8.05 µs | 4.84 µs | **1.66× faster** |
 | **In-process RPC, single tiny call** | 14.17 µs | 7.93 µs | **1.79× faster** |
 | **In-process RPC, burst 1000 calls (per-call)** | 7.47 µs | 2.67 µs | **2.80× faster** |
-| **HTTP batch, sequential single call** | 1310 µs | 44 µs | **30× faster** |
-| **HTTP batch, burst of 100 calls** | 20 µs | 18 µs | **1.13× faster** |
+| **HTTP batch, sequential single call** | 1187 µs | 43.8 µs | **27× faster** |
+| **HTTP batch, burst of 100 calls** | 19.5 µs | 13.2 µs | **1.48× faster** |
 
 Choose capnwasm when:
 - You're moving binary data (images, audio, models, embeddings) and want raw bytes on the wire

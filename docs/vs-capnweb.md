@@ -46,11 +46,15 @@ capnweb wins or ties on:
 
 ## Where capnwasm wins (HTTP batch transport)
 
+5-run medians.
+
 | workload | capnwasm | capnweb | win |
 |---|---|---|---|
-| Single sequential call (tiny) | **44 µs** | 1310 µs | **30× faster** |
-| 10 KB string echo (sequential) | **67 µs** | 1330 µs | **20× faster** |
-| Burst of 100 calls in 1 tick | **18 µs** | 20 µs | 1.13× faster |
+| Single sequential call (tiny) | **43.8 µs** | 1187 µs | **27× faster** |
+| 10 KB string echo (sequential) | **66 µs** | 1192 µs | **18× faster** |
+| Burst of 100 calls in 1 tick | **13.2 µs** | 19.5 µs | **1.48× faster** ↑↑ |
+
+Burst 100 picked up wins from two passes: (1) WebSocket-side boundary-call reductions (lower per-call wasm crossings, fewer JS allocations), and (2) a stateless mode flag that skips Finish/Release frame generation. Was tied at session start; now 1.48× faster than capnweb.
 
 The 29× sequential gap is structural, not implementation: capnweb's `BatchClientTransport` waits for a `setTimeout(0)` macrotask before sending so multiple in-tick calls coalesce into one POST. That gives every sequential `await` ~1 ms of macrotask delay before any bytes hit the wire. capnwasm uses `queueMicrotask`, so a single `await` round-trips fast. Burst workloads amortize the macrotask cost — that's the regime where capnweb catches up.
 
