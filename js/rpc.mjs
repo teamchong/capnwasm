@@ -111,6 +111,31 @@ const deferred = typeof Promise.withResolvers === "function"
       return { promise, resolve, reject };
     };
 
+// Per-call result object returned by callBuilder().send(). Using a class
+// instead of an object literal with a closure-captured getter lets V8
+// give every instance the same hidden class — better inline-cache hit
+// rates in tight RPC loops. Per-iteration allocation count: one
+// CallSentResult vs. one closure + one object literal previously.
+class CallSentResult {
+  constructor(session, registry, questionId, promise) {
+    this.questionId = questionId;
+    this.promise = promise;
+    this._session = session;
+    this._registry = registry;
+    this._cap = null;   // lazy — only allocated on .cap access
+  }
+  get cap() {
+    if (!this._cap) {
+      this._cap = new RpcCap(
+        this._session,
+        { kind: "promise", id: this.questionId },
+        this._registry,
+      );
+    }
+    return this._cap;
+  }
+}
+
 // Factory + freelist for question records. Keeps a single hidden class
 // (V8 monomorphic) AND reuses objects across calls so burst workloads
 // don't churn the GC. Profiling 1000-call bursts showed GC at 16% of
@@ -497,20 +522,10 @@ export class RpcSession {
       // Pipeline cap is lazy: most callers never .cap.call(...). Allocate
       // RpcCap (and its FinalizationRegistry registration on access) only
       // if the caller actually reaches for it. Saves ~150 ns + GC pressure
-      // per call on the common no-pipelining path.
-      const session = this;
-      const reg = this.#registry;
-      let pipelineCap = null;
-      return {
-        questionId,
-        promise: d.promise,
-        get cap() {
-          if (!pipelineCap) {
-            pipelineCap = new RpcCap(session, { kind: "promise", id: questionId }, reg);
-          }
-          return pipelineCap;
-        },
-      };
+      // per call on the common no-pipelining path. The class form gives
+      // every instance the same hidden class (vs object-literal+closure),
+      // helping V8's inline caches in tight RPC loops.
+      return new CallSentResult(this, this.#registry, questionId, d.promise);
     };
     return { params, send: sendFn };
   }
