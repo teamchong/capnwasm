@@ -35,8 +35,15 @@ const KIND_ABORT      = 8;
 // per-chunk Calls (round-trip per chunk) or capability-passing of a
 // stream cap (more state to track). The custom frame is the smallest
 // delta that gives us true server-push streaming with one round-trip.
-const STREAM_CHUNK_BYTE = 0xFF;
-const STREAM_END_BYTE   = 0xFE;
+const STREAM_CHUNK_BYTE  = 0xFF;
+const STREAM_END_BYTE    = 0xFE;
+// STREAM_WINDOW: client → server, grants `credits` more chunks.
+//   payload: 0xFD | u32 questionId | u32 credits
+// Backwards-compatible: a peer that never sends WINDOW gets unbounded credits
+// (same as before). When `windowSize` is set on callStream, the client opts
+// into credit-based flow control: server pauses its generator when credits
+// hit zero and resumes when more arrive.
+const STREAM_WINDOW_BYTE = 0xFD;
 
 // MessageTarget union discriminant (matches cpp_rpc_get_call_target_kind):
 //   0 = importedCap, 1 = promisedAnswer.
@@ -245,6 +252,9 @@ export class RpcSession {
   // Outbound streaming-call state: questionId -> { pushChunk, end, next }.
   // Populated by callStream; drained by #handleStreamChunk / End.
   #streamQuestions = new Map();
+  // Server-side per-stream credit state. Populated only when the client
+  // opts into flow control by sending a STREAM_WINDOW frame.
+  #streamCredits = new Map();
   // In-flight inbound handler count. #handleCall and #runStreamHandler are
   // async; their returned promises are tracked here so callers (the HTTP-
   // batch handler especially) can wait until all server-side work has
@@ -655,6 +665,10 @@ export class RpcSession {
       this.#handleStreamEnd(payload);
       return;
     }
+    if (payload.length > 0 && payload[0] === STREAM_WINDOW_BYTE) {
+      this.#handleStreamWindow(payload);
+      return;
+    }
     this.#stageIn(payload);
     const kind = this.#exp.cpp_rpc_decode(payload.length);
     switch (kind) {
@@ -1004,14 +1018,33 @@ export class RpcSession {
     // maxQueueSize bounds the in-memory chunk buffer for slow consumers.
     // Unbounded by default so existing call sites are unchanged. When set
     // and exceeded, the iterator rejects with an overflow error rather
-    // than letting memory grow until the process OOMs. This is a safety
-    // valve, not real flow control — server-side keeps sending until it
-    // sees the resulting Finish, but at least the client side is bounded.
+    // than letting memory grow until the process OOMs. Pair with windowSize
+    // for true credit-based flow control instead of a memory cap.
     const maxQueueSize = opts?.maxQueueSize;
+    // windowSize opts into per-stream credit flow control. The server pauses
+    // its generator when credits hit zero; refills happen as we consume.
+    const windowSize = opts?.windowSize;
+    let consumedSinceRefill = 0;
+    const refillThreshold = windowSize ? Math.max(1, windowSize >> 1) : 0;
+    const sendWindow = (n) => this.#sendStreamWindow(questionId, n);
+    // Refill credits: bumps the consumed counter and sends a WINDOW once
+    // enough chunks have been read. Called from both queue-drain and
+    // waiter-deliver paths so every consumed chunk counts.
+    const onChunkConsumed = windowSize ? () => {
+      consumedSinceRefill += 1;
+      if (consumedSinceRefill >= refillThreshold) {
+        sendWindow(consumedSinceRefill);
+        consumedSinceRefill = 0;
+      }
+    } : null;
     const stream = {
       pushChunk(c) {
         if (done) return;
-        if (waiters.length) { waiters.shift().resolve({ value: c, done: false }); return; }
+        if (waiters.length) {
+          waiters.shift().resolve({ value: c, done: false });
+          if (onChunkConsumed) onChunkConsumed();
+          return;
+        }
         queue.push(c);
         if (maxQueueSize !== undefined && queue.length > maxQueueSize) {
           // Synthesize an end with an overflow error. The caller's iterator
@@ -1038,7 +1071,11 @@ export class RpcSession {
         }
       },
       next() {
-        if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
+        if (queue.length) {
+          const value = queue.shift();
+          if (onChunkConsumed) onChunkConsumed();
+          return Promise.resolve({ value, done: false });
+        }
         if (done) {
           if (failure) return Promise.reject(failure);
           return Promise.resolve({ value: undefined, done: true });
@@ -1048,6 +1085,9 @@ export class RpcSession {
     };
     this.#streamQuestions.set(questionId, stream);
     this.#sendFromOut(len);
+    // Emit the initial window grant after the Call frame so the server has
+    // a question to attach credits to by the time the WINDOW arrives.
+    if (windowSize) sendWindow(windowSize);
     if (opts?.signal) this.#wireAbort(opts.signal, questionId, stream, "stream");
     return {
       questionId,
@@ -1064,12 +1104,24 @@ export class RpcSession {
         return this.#snapshotOut(len);
       },
     };
+    // Per-stream credit state — only constrains the generator if the client
+    // opts in by sending a STREAM_WINDOW frame. `enabled` flips on first
+    // window arrival; until then the loop runs at full speed (back-compat).
+    const credits = { enabled: false, available: 0, waiters: [] };
+    this.#streamCredits.set(answerId, credits);
+    const consumeCredit = () => {
+      if (!credits.enabled) return null;
+      if (credits.available > 0) { credits.available -= 1; return null; }
+      return new Promise(resolve => credits.waiters.push(resolve));
+    };
     try {
       const it = handler(ctx);
       for await (const chunk of it) {
         if (!(chunk instanceof Uint8Array)) {
           throw new Error("stream handler must yield Uint8Array chunks");
         }
+        const wait = consumeCredit();
+        if (wait) await wait;
         this.#sendStreamChunk(answerId, chunk);
       }
       this.#sendStreamEnd(answerId);
@@ -1079,10 +1131,35 @@ export class RpcSession {
       // streaming wire model is end-only.
       this.#sendStreamEnd(answerId, String(err?.message ?? err));
     } finally {
+      this.#streamCredits.delete(answerId);
       // Mirror the regular call cleanup: the server-side answer entry can
       // be dropped now that streaming is done.
       this.#answers.delete(answerId);
     }
+  }
+
+  #handleStreamWindow(payload) {
+    if (payload.length < 9) return;
+    const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    const qid = dv.getUint32(1, true);
+    const grant = dv.getUint32(5, true);
+    const credits = this.#streamCredits.get(qid);
+    if (!credits) return;
+    credits.enabled = true;
+    credits.available += grant;
+    while (credits.available > 0 && credits.waiters.length) {
+      credits.available -= 1;
+      credits.waiters.shift()();
+    }
+  }
+
+  #sendStreamWindow(questionId, credits) {
+    const out = new Uint8Array(1 + 4 + 4);
+    out[0] = STREAM_WINDOW_BYTE;
+    const dv = new DataView(out.buffer);
+    dv.setUint32(1, questionId, true);
+    dv.setUint32(5, credits, true);
+    this.#transport.send(this.#frameAround(out));
   }
 
   #sendStreamChunk(questionId, chunk) {
