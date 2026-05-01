@@ -13,6 +13,12 @@ const wasm        = await readFile(resolve(ROOT, "zig-out", "capnpc.opt.wasm"));
 const wasiRuntime = await readFile(resolve(ROOT, "js", "cpp_wasi_runtime.mjs"), "utf8");
 const wasiShim    = await readFile(resolve(ROOT, "js", "cpp_wasi_shim.mjs"), "utf8");
 
+// Pre-gzip the compiler wasm before base64-encoding — same trick as
+// inlined.mjs. Saves ~80 KB gz on the codegen bundle (the compiler wasm
+// is ~715 KB raw / ~254 KB gzipped, so the base64 of the gzipped form is
+// 4× shorter than base64 of raw).
+const wasmGz = gzipSync(wasm, { level: 9 });
+
 // Read the loader so we can inline the helper functions defined at module
 // scope (typeToName, TYPE_WIDTHS, translateField, translateStruct). We
 // only need the bottom half of the file — everything from the helpers
@@ -50,7 +56,7 @@ ${STRIP_NODE_IMPORTS(wasiRuntime)}
 
 ${STRIP_REEXPORTS(STRIP_NODE_IMPORTS(wasiShim), ["buildRuntimeWasiImports"])}
 
-const __CAPNPC_WASM_B64 = "${wasm.toString("base64")}";
+const __CAPNPC_WASM_GZ_B64 = "${wasmGz.toString("base64")}";
 
 function __base64ToBytes(b64) {
   if (typeof Buffer !== "undefined") return new Uint8Array(Buffer.from(b64, "base64"));
@@ -58,6 +64,14 @@ function __base64ToBytes(b64) {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+async function __gunzip(bytes) {
+  // DecompressionStream("gzip") is universal: Node 18+, Workers, all
+  // modern browsers (Chrome 80+, FF 113+, Safari 16.4+).
+  const ds = new DecompressionStream("gzip");
+  const stream = new Response(bytes).body.pipeThrough(ds);
+  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 const EMBEDDED_STANDARD_COUNT = 6;  // matches cpp/embed_standard_schemas.sh
@@ -71,7 +85,7 @@ export class CapnpCompiler {
   #addedThisCompile = 0;
 
   static async load() {
-    const bytes = __base64ToBytes(__CAPNPC_WASM_B64);
+    const bytes = await __gunzip(__base64ToBytes(__CAPNPC_WASM_GZ_B64));
     const wasi = buildWasiImports();
     const { instance } = await WebAssembly.instantiate(bytes, {
       wasi_snapshot_preview1: wasi.imports,
