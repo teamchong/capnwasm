@@ -139,8 +139,12 @@ wasm-opt "$OUT" \
 echo "Optimized: $OPT_OUT"
 ls -la "$OPT_OUT"
 
-# Copy to dist/ so the npm package ships with the compiler.
+# Ship the compiler in dist/ as gzipped bytes — capnpc_loader.mjs gunzips
+# on load. Saves ~460 KB unpacked vs the raw .wasm; gzip is universal,
+# and the CLI is the only consumer (load happens once per `gen` call).
 mkdir -p dist
-cp "$OPT_OUT" dist/capnpc.wasm
-echo "Copied to: dist/capnpc.wasm"
-ls -la dist/capnpc.wasm
+gzip -9c "$OPT_OUT" > dist/capnpc.wasm.gz
+echo "Compressed to: dist/capnpc.wasm.gz"
+ls -la dist/capnpc.wasm.gz
+# Remove any stale uncompressed file from earlier builds.
+rm -f dist/capnpc.wasm

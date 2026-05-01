@@ -37,15 +37,25 @@ export class CapnpCompiler {
   #addedThisCompile = 0;
 
   static async load(wasmPath) {
-    // Try dist/ first (shipped in the npm package), fall back to zig-out/
-    // (when running from a source checkout where the build wrote it there).
-    let path = wasmPath ?? resolve(PKG_ROOT, "dist", "capnpc.wasm");
+    // Three sources, in order of preference:
+    //   1. wasmPath argument (caller knows where the wasm lives)
+    //   2. dist/capnpc.wasm.gz (gzipped, shipped in npm — gunzip on load
+    //      saves 460 KB of unpacked package weight vs raw .wasm; sub-ms
+    //      gunzip cost is invisible behind WebAssembly.compile that
+    //      follows)
+    //   3. zig-out/capnpc.opt.wasm (raw, source checkout fallback)
     let bytes;
-    try {
-      bytes = await readFile(path);
-    } catch {
-      path = resolve(PKG_ROOT, "zig-out", "capnpc.opt.wasm");
-      bytes = await readFile(path);
+    if (wasmPath) {
+      bytes = await readFile(wasmPath);
+    } else {
+      try {
+        const gz = await readFile(resolve(PKG_ROOT, "dist", "capnpc.wasm.gz"));
+        const ds = new DecompressionStream("gzip");
+        const stream = new Response(gz).body.pipeThrough(ds);
+        bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+      } catch {
+        bytes = await readFile(resolve(PKG_ROOT, "zig-out", "capnpc.opt.wasm"));
+      }
     }
     const wasi = buildWasiImports();
     const { instance } = await WebAssembly.instantiate(bytes, {
