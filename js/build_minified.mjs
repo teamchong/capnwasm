@@ -39,6 +39,8 @@ const MODULES = [
   "stream.mjs",
   "tape_serializer.mjs",
   "rest_runtime.mjs",
+  "reconnect.mjs",         // optional: auto-reconnect helper
+  "router.mjs",            // optional: federation gateway
 ];
 
 await mkdir(DIST_DIR, { recursive: true });

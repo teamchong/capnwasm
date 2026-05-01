@@ -59,6 +59,17 @@
     "./manifest": "./js/manifest.mjs",
     "./harness": "./js/harness.mjs",
     "./probe": "./js/probe.mjs",
+    "./sturdyref": "./js/sturdyref.mjs",
+    "./pipeline": "./js/pipeline.mjs",
+    "./handoff": "./js/handoff.mjs",
+    "./reconnect": {
+      "development": "./js/reconnect.mjs",
+      "default": "./dist/reconnect.mjs"
+    },
+    "./router": {
+      "development": "./js/router.mjs",
+      "default": "./dist/router.mjs"
+    },
     "./capnp.slim.wasm": "./dist/capnp.slim.wasm"
   },
   "bin": {
