@@ -27,16 +27,12 @@ export class CapnCpp {
 
   static async load(wasmSource) {
     // Inline WASI imports — avoids a cross-module factory call on the cold
-    // path. The closures share `mem` via lexical scope, set after instantiate.
+    // path. Only the two imports the slim wasm actually declares
+    // (fd_write + fd_close). The reactor-mode build dropped the
+    // command-mode crt1, so args_get / args_sizes_get / proc_exit are
+    // no longer referenced by the wasm and don't need to be supplied.
     let mem;
     const wasi = {
-      args_get: zero,
-      args_sizes_get(argc_ptr, argv_buf_size_ptr) {
-        const dv = new DataView(mem.buffer);
-        dv.setUint32(argc_ptr, 0, true);
-        dv.setUint32(argv_buf_size_ptr, 0, true);
-        return 0;
-      },
       fd_write(fd, iovs_ptr, iovs_len, nwritten_ptr) {
         let total = 0;
         const dv = new DataView(mem.buffer);
@@ -52,7 +48,6 @@ export class CapnCpp {
         dv.setUint32(nwritten_ptr, total, true);
         return 0;
       },
-      proc_exit(code) { throw new Error(`capnp_cpp: proc_exit(${code})`); },
       fd_close: zero,
     };
     const importObj = { wasi_snapshot_preview1: wasi };
