@@ -8,7 +8,7 @@ Numbers from in-process Node bench (Apple Silicon, M-series, Node 22). Run `node
 
 | workload | capnwasm | capnweb | win |
 |---|---|---|---|
-| Burst 1000 calls (per-call) | **2.83 µs** | 7.4 µs | 2.6× faster |
+| Burst 1000 calls (per-call) | **2.67 µs** | 7.4 µs | 2.8× faster |
 | Burst 100 calls (per-call) | **2.92 µs** | 6.8 µs | 2.3× faster |
 | 64 KB text echo (round-trip) | **93 µs** | 362 µs | 3.9× faster |
 | 4 KB text echo | **17 µs** | 26 µs | 1.5× faster |

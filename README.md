@@ -161,7 +161,7 @@ Microsecond per-call differences vanish behind any real network. The cases where
 | **In-process RPC, 4 KB text echo** | 26 µs | 17 µs | **1.5× faster** |
 | **In-process RPC, 256 B text echo** | 8.2 µs | 5.2 µs | **1.6× faster** |
 | **In-process RPC, single tiny call** | 14 µs | 8.4 µs | **1.7× faster** |
-| **In-process RPC, burst 1000 calls (per-call)** | 7.4 µs | 2.83 µs | **2.6× faster** |
+| **In-process RPC, burst 1000 calls (per-call)** | 7.4 µs | 2.67 µs | **2.8× faster** |
 | **HTTP batch, sequential single call** | 1310 µs | 44 µs | **30× faster** |
 | **HTTP batch, burst of 100 calls** | 20 µs | 18 µs | **1.13× faster** |
 
