@@ -114,6 +114,16 @@ const charge = await stripe.retrieveCharge("ch_abc123");
 for await (const event of stripe.listEvents()) console.log(event.id);
 ```
 
+**Plus: operation manifest export** — the same internal model that drives codegen, surfaced as canonical JSON for downstream tools (drift detectors, mock generators, doc generators, MCP servers, contract test harnesses). One shape whether the source is `.capnp`, TS `@rest`, or OpenAPI:
+
+```bash
+npx capnwasm manifest user.capnp                  # → user.manifest.json
+npx capnwasm manifest stripe.json -o stripe.json  # OpenAPI source
+npx capnwasm manifest api.ts -o -                 # stdout (TS @rest source)
+```
+
+See [Schema truth & conformance](docs/schema-truth-and-conformance.md) for the manifest format + how it fits the broader "schema → all surfaces" pipeline.
+
 ---
 
 ## What's in the box

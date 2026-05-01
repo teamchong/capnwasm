@@ -224,30 +224,29 @@ Required one-time repo configuration before the workflows actually fire:
 ## 10. Schema-truth / conformance follow-ups
 
 Captured in [`docs/schema-truth-and-conformance.md`](schema-truth-and-conformance.md)
-along with the broader long-term framing. The three concrete pieces of
-work that would tighten capnwasm's conformance story:
+along with the broader long-term framing.
 
-- **Operation manifest export.** The internal struct/method model
-  already exists during codegen (one normalized object per parsed
-  schema). Emitting it as JSON via `npx capnwasm manifest user.capnp`
-  would let other tools (drift detectors, doc generators, MCP servers,
-  mock generators) consume the same artifact without re-parsing
-  `.capnp` themselves. Probably half a day of work — the model is right
-  there in `bin/capnwasm.mjs`, just needs a serializer + CLI command.
+- ~~**Operation manifest export.**~~ **Done** — `npx capnwasm manifest`
+  emits the canonical JSON envelope across `.capnp`, TS `@rest`, and
+  OpenAPI sources. Implementation in `js/manifest.mjs`, CLI subcommand
+  in `bin/capnwasm.mjs`, tests in `test/manifest.test.mjs`. Manifest
+  unblocks both remaining items below — they can both be standalone
+  tools that consume `*.manifest.json` instead of re-parsing source.
 - **Generated contract test harness.** For each generated method,
   emit a default round-trip test the consuming app can wire to a real
   or mock server. The mock can be generated from the same schema using
   the dynamic builder (already wired for runtime-schema reads). Brings
   "does the SDK actually work" from "trust me" to "here's the test."
-- **Round-trip drift probe.** Given a `.capnp` schema and a live
-  endpoint, `capnwasm probe` calls each method with synthesized
-  params and reports any reply field the schema doesn't declare, or
-  any expected field the endpoint doesn't return. Narrowed to one
-  service at a time. This is the audit-loop piece for keeping schemas
-  honest as the runtime drifts.
-
-Order of value: manifest → contract harness → probe. Manifest unblocks
-the other two and is also useful standalone.
+  Now a `manifest → harness` consumer rather than a re-parse-the-schema
+  step.
+- **Round-trip drift probe.** Given a manifest + a live endpoint,
+  `capnwasm probe` calls each operation with synthesized params and
+  reports any reply field the schema doesn't declare, or any expected
+  field the endpoint doesn't return. Narrowed to one service at a time.
+  This is the audit-loop piece for keeping schemas honest as the
+  runtime drifts. Same pattern: read manifest, exercise each operation,
+  diff observed shape against `interfaces[].methods[].resultsStruct`
+  (capnp) or `returnType` (REST).
 
 ---
 

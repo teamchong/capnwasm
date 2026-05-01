@@ -128,6 +128,75 @@ from a schema and we hope it agrees with the runtime." For
 schema, the wire format, the decoder, and the encoder are all
 descended from the same source — by construction, not by audit.
 
+### Operation manifest export (today)
+
+```bash
+npx capnwasm manifest user.capnp                  # → user.manifest.json
+npx capnwasm manifest stripe.json -o stripe.json  # OpenAPI source
+npx capnwasm manifest api.ts -o -                 # stdout (TS @rest source)
+```
+
+One canonical JSON envelope across all three input formats. Same
+shape whether the source is `.capnp`, a `@rest`-annotated TypeScript
+interface, or an OpenAPI spec — downstream tools (drift detectors,
+mock generators, doc generators, MCP servers, contract test
+harnesses) only ever have to implement one parser:
+
+```json
+{
+  "manifestVersion": 1,
+  "source": { "name": "user.capnp", "format": "capnp",
+              "generatedAt": "2026-05-01T..." },
+  "metadata": {},
+  "structs": [
+    {
+      "name": "User",
+      "dataWords": 3, "ptrWords": 3,
+      "fields": [
+        { "name": "id", "ordinal": 0, "type": "UInt64",
+          "kind": "data", "bitOffset": 0 },
+        { "name": "name", "ordinal": 1, "type": "Text",
+          "kind": "pointer", "ptrIndex": 0 }
+      ]
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "UserService", "id": "0xb86ba78412905b27",
+      "methods": [
+        { "operationId": "UserService.getUser",
+          "name": "getUser", "ordinal": 0,
+          "paramsStruct": "getUser$Params",
+          "resultsStruct": "getUser$Results",
+          "extensions": {} }
+      ]
+    }
+  ],
+  "restApis": [
+    {
+      "name": "MyAPI", "baseUrl": "https://api.example.com",
+      "defaults": { "auth": { "type": "bearer" } },
+      "methods": [
+        { "operationId": "MyAPI.getUser",
+          "name": "getUser", "httpMethod": "GET",
+          "path": "/users/{id}",
+          "params": [{ "name": "id", "in": "path",
+                       "type": "number", "required": true }],
+          "returnType": "User",
+          "extensions": {} }
+      ]
+    }
+  ]
+}
+```
+
+`extensions` and `metadata` are deliberately free-form so future
+@-directives can plumb owner team, repo URL, examples, deprecation
+flags, safe-to-test flags, and so on without bumping
+`manifestVersion`. Interface IDs are normalized to lowercase
+`0x`-prefixed hex strings — not numbers — so JS consumers don't lose
+precision on 64-bit IDs greater than 2^53.
+
 ### What capnwasm does NOT provide
 
 Honest list, because pretending it covers more than it does is the
@@ -137,10 +206,6 @@ trap this whole framing is meant to avoid:
   against a running endpoint and tell you "your `getUser` actually
   returns an extra field that's not in the schema." That requires a
   probe-the-runtime layer that doesn't exist here.
-- **No operation manifest export.** The internal struct model is
-  not currently emitted as a JSON manifest you could feed to other
-  generators. (Could be added — the model is already a plain JS
-  object during codegen.)
 - **No generated contract tests.** Generated SDKs come with type
   definitions but not with "and here's a runnable test that exercises
   every method against a mock server generated from the same schema."
@@ -175,29 +240,32 @@ generations honest.
 For capnwasm specifically, the obvious next steps that would tighten
 the conformance story:
 
-- **Emit the operation manifest as JSON.** The internal struct/method
-  model already exists during codegen. Exposing it as a stable schema
-  artifact would let other tools (drift detectors, doc generators,
-  MCP servers, mock generators) consume it without re-parsing
-  `.capnp` themselves.
+- ~~**Emit the operation manifest as JSON.**~~ **Done** — see the
+  `npx capnwasm manifest` section above and `js/manifest.mjs`. One
+  shape across `.capnp`, TypeScript `@rest`, and OpenAPI sources;
+  consumed by the next two ideas without re-parsing source schemas.
 - **Generate a contract test harness from the schema.** For each
   generated method, emit a default "happy-path" round-trip test that
   the consuming app can wire to a real or mock server. The mock can
   be generated from the same schema using the dynamic builder (a
   capability that's already there for the runtime-schema reader).
+  Now that the manifest exists, the harness can be a separate
+  consumer that reads `*.manifest.json`.
 - **Round-trip drift probe.** Given a `.capnp` schema and a live
   endpoint, `capnwasm probe` could call each method with synthesized
   params and report any reply field that the schema doesn't declare,
   or any expected field the endpoint doesn't return. This is the
   "schema says X; runtime actually does X?" check, narrowed to one
-  service at a time.
+  service at a time. Same pattern: read manifest, exercise each
+  operation, diff observed response shape against
+  `interfaces[].methods[].resultsStruct` (capnp) or `returnType`
+  (REST).
 
-None of those are landed yet. They'd be the right next chunk of work
-if the goal is to push capnwasm from "a schema-first runtime" toward
-"a schema-first conformance harness." The infrastructure to do them is
-all in place — the codegen model, the dynamic builder, the wasm-hosted
-schema compiler — what's missing is the surface layer that makes them
-runnable from the CLI and reportable from CI.
+The manifest is the unblocker — both remaining ideas are now
+"consume manifest, do thing X" rather than "re-parse schema, then do
+thing X." That's the right abstraction boundary if the broader
+ecosystem is ever going to build conformance tooling that doesn't
+care which generator produced a given SDK.
 
 ## Reading this against the rest of the docs
 

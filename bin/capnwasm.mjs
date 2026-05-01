@@ -29,6 +29,11 @@ Usage:
       Generate a typed REST client from an OpenAPI 3.x spec. Works against
       any service that publishes one (Stripe, GitHub, Twilio, etc.).
 
+  npx capnwasm manifest <schema.capnp|schema.ts|spec.yaml|spec.json> [-o out.json|-]
+      Emit canonical operation manifest as JSON. One stable shape across
+      all input formats; for downstream tools (drift detectors, mock
+      generators, doc generators, contract test harnesses).
+
   npx capnwasm build                Rebuild zig-out/capnp_cpp.opt.wasm
   npx capnwasm bench                Run the Playwright bench
   npx capnwasm <file>               Shorthand: dispatches by extension.
@@ -1498,6 +1503,87 @@ function generateGetter(field) {
   }
 }
 
+/**
+ * Emit the operation manifest as canonical JSON.
+ *
+ * Same input formats as `gen` — .capnp, .ts (with @rest), .yaml/.json
+ * (OpenAPI). Output is one JSON document per source schema; the shape is
+ * defined by `js/manifest.mjs` and stable across input formats so
+ * downstream consumers (drift detectors, mock generators, doc
+ * generators, MCP servers, contract test harnesses) only ever have to
+ * implement one parser.
+ *
+ * Usage:
+ *   npx capnwasm manifest user.capnp                  # → user.manifest.json
+ *   npx capnwasm manifest stripe.json -o stripe.json
+ *   npx capnwasm manifest user.capnp -o -             # stdout
+ */
+async function cmdManifest(argv) {
+  const args = parseGenArgs(argv);
+  // parseGenArgs assumes a .gen.mjs default output path; manifest defaults
+  // to .manifest.json next to the source instead.
+  const stem = basename(args.schema, extname(args.schema));
+  if (!argv.includes("-o") && !argv.includes("--output")) {
+    args.output = resolve(dirname(args.schema), `${stem}.manifest.json`);
+  }
+
+  const ext = extname(args.schema).toLowerCase();
+  const isOpenapi = ext === ".yaml" || ext === ".yml" || ext === ".json";
+
+  let model, format;
+  if (isOpenapi) {
+    const text = await import("node:fs/promises").then((m) => m.readFile(args.schema, "utf8"));
+    let spec;
+    if (ext === ".json") {
+      spec = JSON.parse(text);
+    } else {
+      try {
+        const yaml = await import("yaml");
+        spec = yaml.parse(text);
+      } catch {
+        console.error("To parse YAML OpenAPI specs install the optional 'yaml' package:");
+        console.error("  npm install yaml");
+        process.exit(1);
+      }
+    }
+    const { parseOpenApi } = await import("../js/openapi_parser.mjs");
+    model = parseOpenApi(spec);
+    format = "openapi";
+  } else if (args.schema.endsWith(".ts") || args.schema.endsWith(".tsx")) {
+    model = await parseSchema(args.schema);
+    format = "typescript-rest";
+  } else {
+    model = await parseSchema(args.schema);
+    format = "capnp";
+  }
+
+  const { buildManifestJson } = await import("../js/manifest.mjs");
+  const json = buildManifestJson(model, {
+    source: {
+      name: basename(args.schema),
+      format,
+      path: resolve(args.schema),
+    },
+  });
+
+  if (args.output === "-") {
+    process.stdout.write(json);
+  } else {
+    await writeFile(args.output, json);
+    console.log(`Wrote ${args.output}`);
+  }
+
+  // Brief summary on stderr so '> file' redirection still gives feedback.
+  const counts = {
+    structs:    model.structs?.length ?? 0,
+    interfaces: model.interfaces?.length ?? 0,
+    restApis:   model.restApis?.length ?? 0,
+  };
+  const opCount = (model.interfaces ?? []).reduce((n, i) => n + (i.methods?.length ?? 0), 0)
+                + (model.restApis   ?? []).reduce((n, a) => n + (a.methods?.length ?? 0), 0);
+  console.error(`  ${counts.structs} struct(s), ${counts.interfaces} interface(s), ${counts.restApis} REST API(s), ${opCount} operation(s)`);
+}
+
 async function cmdGen(argv) {
   const args = parseGenArgs(argv);
   const { structs, interfaces, restApis, typeInterfaces } = await parseSchema(args.schema);
@@ -1748,10 +1834,11 @@ async function main() {
 
   const cmd = argv[0];
   switch (cmd) {
-    case "gen":     await cmdGen(argv.slice(1)); return;
-    case "openapi": await cmdOpenapi(argv.slice(1)); return;
-    case "build":   cmdBuild(); return;
-    case "bench":   cmdBench(); return;
+    case "gen":      await cmdGen(argv.slice(1)); return;
+    case "openapi":  await cmdOpenapi(argv.slice(1)); return;
+    case "manifest": await cmdManifest(argv.slice(1)); return;
+    case "build":    cmdBuild(); return;
+    case "bench":    cmdBench(); return;
     case "-h": case "--help": case "help": topUsage(); return;
   }
   // Shorthand: `npx capnwasm path/to/schema.capnp` runs the generator.
