@@ -519,9 +519,10 @@ export function encodeDynamic(cpp, schema, obj) {
 export function openDynamic(cpp, schema, bytes) {
   if (bytes.length > cpp._cap) throw new Error("input larger than scratch buffer");
   cpp._u8.set(bytes, cpp._inPtr);
-  if (cpp._exports.cpp_any_open(bytes.length) !== 1) {
-    throw new Error("cpp_any_open failed");
-  }
+  // cpp_any_open returns the data section pointer (or 0 for an empty
+  // struct — that's still a successful open). It only "fails" by
+  // throwing inside the wasm if the bytes are malformed.
+  cpp._exports.cpp_any_open(bytes.length);
   return new DynamicReader(cpp, schema);
 }
 

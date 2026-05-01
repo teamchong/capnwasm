@@ -702,9 +702,18 @@ function _capnwasmPick(cpp, fields, names) {`);
     // Don't cache a Uint8Array view here: text/data getters fetch a
     // fresh one via this._cpp._u8 because the wasm calls inside them
     // can grow memory (and detach a pre-existing view).
-    lines.push(`  constructor(cpp) {`);
+    lines.push(`  constructor(cpp, dataPtr) {`);
     lines.push(`    this._cpp = cpp;`);
     lines.push(`    this._exp = cpp._exports;`);
+    // dataPtr is supplied by openX(cpp, bytes) and by the RPC layer's
+    // open_call_params / open_return_results paths. When present,
+    // primitive getters can read straight from wasm memory at
+    // dataPtr+offset — no per-field cpp_any_*_at boundary call. The
+    // cached _u8 view stays valid for the Reader's lifetime since
+    // primitive reads can't trigger memory growth.
+    lines.push(`    this._dataPtr = dataPtr | 0;`);
+    lines.push(`    this._u8 = cpp._u8;`);
+    lines.push(`    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
     lines.push(`  }`);
     lines.push("");
     // Union accessor: when this struct holds a union, `which()` returns the
@@ -972,8 +981,12 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push(`export function open${s.name}(cpp, bytes) {`);
     lines.push(`  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");`);
     lines.push(`  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());`);
-    lines.push(`  if (cpp._exports.cpp_any_open(bytes.length) !== 1) throw new Error("cpp_any_open failed");`);
-    lines.push(`  return new ${s.name}Reader(cpp);`);
+    // cpp_any_open returns the data section pointer of the opened
+    // AnyStruct (or 0 if the struct has no data section — still a valid
+    // open). Pass it through so primitive getters can read direct from
+    // wasm memory.
+    lines.push(`  const dataPtr = cpp._exports.cpp_any_open(bytes.length);`);
+    lines.push(`  return new ${s.name}Reader(cpp, dataPtr);`);
     lines.push(`}`);
     lines.push("");
     lines.push(`/** Begin building a new ${s.name} message. Returns a ${s.name}Builder. */`);
@@ -1429,28 +1442,33 @@ function generateGetter(field) {
     }
     return [`throw new Error("unsupported pointer type: ${field.type}");`];
   }
-  // data-section field
+  // data-section field. With _dataPtr set, primitive reads go straight to
+  // wasm memory — saves one cpp_any_*_at boundary call per field access.
+  // Fallback to wasm getter when _dataPtr is 0 (e.g., a sub-Reader inside
+  // a struct opened via cpp_any_enter_struct that doesn't update dataPtr).
   const off = field.bitOffset >> 3;
   switch (field.type) {
-    case "Bool":
-      return [`return this._exp.cpp_any_bool_at(${field.bitOffset}, 0) === 1;`];
+    case "Bool": {
+      const byte = field.bitOffset >> 3;
+      const bit = field.bitOffset & 7;
+      return [`return this._dataPtr ? ((this._u8[this._dataPtr + ${byte}] >> ${bit}) & 1) === 1 : this._exp.cpp_any_bool_at(${field.bitOffset}, 0) === 1;`];
+    }
     case "UInt8":
-      return [`return this._exp.cpp_any_uint8_at(${off}, 0);`];
+      return [`return this._dataPtr ? this._u8[this._dataPtr + ${off}] : this._exp.cpp_any_uint8_at(${off}, 0);`];
     case "Int8":
-      // sign-extend 8 -> 32 via <<24 >>24
-      return [`return (this._exp.cpp_any_uint8_at(${off}, 0) << 24) >> 24;`];
+      return [`return this._dataPtr ? ((this._u8[this._dataPtr + ${off}] << 24) >> 24) : ((this._exp.cpp_any_uint8_at(${off}, 0) << 24) >> 24);`];
     case "UInt16":
-      return [`return this._exp.cpp_any_uint16_at(${off}, 0);`];
+      return [`return this._dataPtr ? this._dv.getUint16(this._dataPtr + ${off}, true) : this._exp.cpp_any_uint16_at(${off}, 0);`];
     case "Int16":
-      return [`return (this._exp.cpp_any_uint16_at(${off}, 0) << 16) >> 16;`];
+      return [`return this._dataPtr ? this._dv.getInt16(this._dataPtr + ${off}, true) : ((this._exp.cpp_any_uint16_at(${off}, 0) << 16) >> 16);`];
     case "UInt32":
-      return [`return this._exp.cpp_any_uint32_at(${off}, 0);`];
+      return [`return this._dataPtr ? this._dv.getUint32(this._dataPtr + ${off}, true) : this._exp.cpp_any_uint32_at(${off}, 0);`];
     case "Int32":
-      return [`return this._exp.cpp_any_uint32_at(${off}, 0) | 0;`];
+      return [`return this._dataPtr ? this._dv.getInt32(this._dataPtr + ${off}, true) : (this._exp.cpp_any_uint32_at(${off}, 0) | 0);`];
     case "UInt64":
-      return [`return this._exp.cpp_any_int64_at(${off}, 0n);`];
+      return [`return this._dataPtr ? this._dv.getBigUint64(this._dataPtr + ${off}, true) : this._exp.cpp_any_int64_at(${off}, 0n);`];
     case "Int64":
-      return [`return this._exp.cpp_any_int64_at(${off}, 0n);`];
+      return [`return this._dataPtr ? this._dv.getBigInt64(this._dataPtr + ${off}, true) : this._exp.cpp_any_int64_at(${off}, 0n);`];
     case "Float32":
       // Reinterpret u32 bits as f32 via the module-scoped shared view (one
       // ArrayBuffer per module load, not per reader instance — the latter

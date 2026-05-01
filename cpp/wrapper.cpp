@@ -749,7 +749,9 @@ uint32_t cpp_any_open(uint32_t bytes_len) {
   any_reader = new (any_reader_storage) capnp::FlatArrayMessageReader(words);
   any_stack_top = 0;
   any_stack[0] = any_reader->getRoot<capnp::AnyPointer>().getAs<capnp::AnyStruct>();
-  return 1;
+  // Return data section pointer so the JS Reader can read primitives
+  // straight from wasm memory.
+  return reinterpret_cast<uint32_t>(any_stack[0].getDataSection().begin());
 }
 
 // Push the struct at pointer slot `ptr_idx` of the current top onto the stack.
@@ -2178,7 +2180,9 @@ uint32_t cpp_rpc_open_call_params() {
   auto params = rpc_reader->getRoot<capnp::rpc::Message>().getCall().getParams();
   any_stack[0] = params.getContent().getAs<capnp::AnyStruct>();
   any_stack_top = 0;
-  return 1;
+  // Return the data section address so the JS Reader can read primitives
+  // straight from wasm memory — no per-field cpp_any_*_at boundary call.
+  return reinterpret_cast<uint32_t>(any_stack[0].getDataSection().begin());
 }
 
 // Open the inbound Return's results.content as an AnyStruct on the reader
@@ -2189,7 +2193,7 @@ uint32_t cpp_rpc_open_return_results() {
   if (!ret.isResults()) return 0;
   any_stack[0] = ret.getResults().getContent().getAs<capnp::AnyStruct>();
   any_stack_top = 0;
-  return 1;
+  return reinterpret_cast<uint32_t>(any_stack[0].getDataSection().begin());
 }
 
 // ---------------------------------------------------------------------------

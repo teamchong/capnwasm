@@ -101,34 +101,37 @@ function _capnwasmPick(cpp, fields, names) {
 }
 
 export class PrimitivesReader {
-  constructor(cpp) {
+  constructor(cpp, dataPtr) {
     this._cpp = cpp;
     this._exp = cpp._exports;
+    this._dataPtr = dataPtr | 0;
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
   get u8() {
-    return this._exp.cpp_any_uint8_at(0, 0);
+    return this._dataPtr ? this._u8[this._dataPtr + 0] : this._exp.cpp_any_uint8_at(0, 0);
   }
   get u16() {
-    return this._exp.cpp_any_uint16_at(2, 0);
+    return this._dataPtr ? this._dv.getUint16(this._dataPtr + 2, true) : this._exp.cpp_any_uint16_at(2, 0);
   }
   get u32() {
-    return this._exp.cpp_any_uint32_at(4, 0);
+    return this._dataPtr ? this._dv.getUint32(this._dataPtr + 4, true) : this._exp.cpp_any_uint32_at(4, 0);
   }
   get u64() {
-    return this._exp.cpp_any_int64_at(8, 0n);
+    return this._dataPtr ? this._dv.getBigUint64(this._dataPtr + 8, true) : this._exp.cpp_any_int64_at(8, 0n);
   }
   get i8() {
-    return (this._exp.cpp_any_uint8_at(1, 0) << 24) >> 24;
+    return this._dataPtr ? ((this._u8[this._dataPtr + 1] << 24) >> 24) : ((this._exp.cpp_any_uint8_at(1, 0) << 24) >> 24);
   }
   get i16() {
-    return (this._exp.cpp_any_uint16_at(16, 0) << 16) >> 16;
+    return this._dataPtr ? this._dv.getInt16(this._dataPtr + 16, true) : ((this._exp.cpp_any_uint16_at(16, 0) << 16) >> 16);
   }
   get i32() {
-    return this._exp.cpp_any_uint32_at(20, 0) | 0;
+    return this._dataPtr ? this._dv.getInt32(this._dataPtr + 20, true) : (this._exp.cpp_any_uint32_at(20, 0) | 0);
   }
   get i64() {
-    return this._exp.cpp_any_int64_at(24, 0n);
+    return this._dataPtr ? this._dv.getBigInt64(this._dataPtr + 24, true) : this._exp.cpp_any_int64_at(24, 0n);
   }
   get f32() {
     _F32_VIEW_U32[0] = this._exp.cpp_any_uint32_at(32, 0) >>> 0;
@@ -140,13 +143,13 @@ export class PrimitivesReader {
     return _F64_VIEW_F64[0];
   }
   get flag0() {
-    return this._exp.cpp_any_bool_at(144, 0) === 1;
+    return this._dataPtr ? ((this._u8[this._dataPtr + 18] >> 0) & 1) === 1 : this._exp.cpp_any_bool_at(144, 0) === 1;
   }
   get flag1() {
-    return this._exp.cpp_any_bool_at(145, 0) === 1;
+    return this._dataPtr ? ((this._u8[this._dataPtr + 18] >> 1) & 1) === 1 : this._exp.cpp_any_bool_at(145, 0) === 1;
   }
   get flag2() {
-    return this._exp.cpp_any_bool_at(146, 0) === 1;
+    return this._dataPtr ? ((this._u8[this._dataPtr + 18] >> 2) & 1) === 1 : this._exp.cpp_any_bool_at(146, 0) === 1;
   }
   get text() {
     const len = this._exp.cpp_any_text_at(0);
@@ -410,8 +413,8 @@ export class PrimitivesBuilder {
 export function openPrimitives(cpp, bytes) {
   if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
   cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
-  if (cpp._exports.cpp_any_open(bytes.length) !== 1) throw new Error("cpp_any_open failed");
-  return new PrimitivesReader(cpp);
+  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
+  return new PrimitivesReader(cpp, dataPtr);
 }
 
 /** Begin building a new Primitives message. Returns a PrimitivesBuilder. */

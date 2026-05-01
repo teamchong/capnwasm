@@ -101,9 +101,12 @@ function _capnwasmPick(cpp, fields, names) {
 }
 
 export class BigUserReader {
-  constructor(cpp) {
+  constructor(cpp, dataPtr) {
     this._cpp = cpp;
     this._exp = cpp._exports;
+    this._dataPtr = dataPtr | 0;
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
   get field0() {
@@ -4806,8 +4809,8 @@ export class BigUserBuilder {
 export function openBigUser(cpp, bytes) {
   if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
   cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
-  if (cpp._exports.cpp_any_open(bytes.length) !== 1) throw new Error("cpp_any_open failed");
-  return new BigUserReader(cpp);
+  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
+  return new BigUserReader(cpp, dataPtr);
 }
 
 /** Begin building a new BigUser message. Returns a BigUserBuilder. */

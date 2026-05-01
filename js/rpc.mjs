@@ -766,10 +766,12 @@ export class RpcSession {
         return this.#snapshotOut(len);
       },
       openParams: (ReaderClass) => {
-        if (this.#exp.cpp_rpc_open_call_params() !== 1) {
-          throw new Error("cpp_rpc_open_call_params failed");
-        }
-        return new ReaderClass(this.#cpp);
+        // open_call_params returns the data section pointer of the
+        // params AnyStruct — Reader uses it for direct-memory primitive
+        // reads (no per-field cpp_any_*_at boundary call).
+        const dataPtr = this.#exp.cpp_rpc_open_call_params();
+        if (!dataPtr) throw new Error("cpp_rpc_open_call_params failed");
+        return new ReaderClass(this.#cpp, dataPtr);
       },
       beginResults: (BuilderClass) => {
         if (typeof BuilderClass?._DATA_WORDS !== "number") {
@@ -921,12 +923,13 @@ export class RpcSession {
         // rpc_reader is still live. The promise resolves with whatever the
         // extractor returns — no result-bytes Uint8Array allocated, no
         // wasm-to-JS copy of the payload.
-        if (this.#exp.cpp_rpc_open_return_results() !== 1) {
+        const dataPtr = this.#exp.cpp_rpc_open_return_results();
+        if (!dataPtr) {
           q.deferred.reject(new Error("cpp_rpc_open_return_results failed"));
         } else {
           let extracted;
           try {
-            const reader = q.resultsReader ? new q.resultsReader(this.#cpp) : null;
+            const reader = q.resultsReader ? new q.resultsReader(this.#cpp, dataPtr) : null;
             extracted = q.extract(reader, caps);
           } catch (err) {
             q.deferred.reject(err instanceof Error ? err : new Error(String(err)));

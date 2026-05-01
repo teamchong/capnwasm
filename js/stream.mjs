@@ -38,8 +38,9 @@ export async function openFromStream(cpp, ReaderClass, stream) {
   }
 
   if (pos === 0) throw new Error("stream produced no bytes");
-  if (cpp._exports.cpp_any_open(pos) !== 1) {
-    throw new Error("cpp_any_open failed on streamed bytes");
-  }
-  return new ReaderClass(cpp);
+  // cpp_any_open returns the data section pointer (truthy on success,
+  // 0 only for an empty struct — also valid). Pass through to the Reader
+  // so primitive getters can read from wasm memory directly.
+  const dataPtr = cpp._exports.cpp_any_open(pos);
+  return new ReaderClass(cpp, dataPtr);
 }

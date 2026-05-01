@@ -382,10 +382,10 @@ export async function inspect(input, opts = {}) {
     }
     const u8 = cpp._u8;
     u8.set(bytes, cpp._inPtr);
-    if (cpp._exports.cpp_any_open(bytes.length) !== 1) {
-      throw new Error("inspect(): cpp_any_open failed — input may not be a valid framed message");
-    }
-    const r = new reader(cpp);
+    // cpp_any_open returns the data section pointer (or 0 for empty).
+    // Pass it through to the Reader for direct primitive reads.
+    const dataPtr = cpp._exports.cpp_any_open(bytes.length);
+    const r = new reader(cpp, dataPtr);
     const obj = {};
     for (const name of Object.keys(reader._FIELDS)) {
       try {
