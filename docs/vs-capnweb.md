@@ -4,18 +4,21 @@ Numbers from in-process Node bench (Apple Silicon, M-series, Node 22). Run `node
 
 ## Where capnwasm wins (WebSocket, in-process)
 
+5-run medians.
+
 | workload | capnwasm | capnweb | win |
 |---|---|---|---|
-| Burst 1000 calls (per-call) | **3.0 µs** | 7.3 µs | 2.4× faster |
-| Burst 100 calls (per-call) | **2.9 µs** | 7.2 µs | 2.5× faster |
-| 64 KB text echo (round-trip) | **102 µs** | 381 µs | 3.7× faster |
-| 4 KB text echo | **20 µs** | 26 µs | 1.3× faster |
-| 256 B text echo | **5.5 µs** | 9.1 µs | 1.7× faster |
-| Single tiny call (u8 echo) | **8.7 µs** | 14.5 µs | 1.7× faster |
+| Burst 1000 calls (per-call) | **2.9 µs** | 7.4 µs | 2.6× faster |
+| Burst 100 calls (per-call) | **3.4 µs** | 6.8 µs | 2.0× faster |
+| 64 KB text echo (round-trip) | **100 µs** | 381 µs | 3.8× faster |
+| 4 KB text echo | **17 µs** | 26 µs | 1.5× faster |
+| 256 B text echo | **5.4 µs** | 8.5 µs | 1.6× faster |
+| 16 B text echo | **6.9 µs** | 8.0 µs | 1.2× faster |
+| Single tiny call (u8 echo) | **8.4 µs** | 14 µs | 1.7× faster |
 | Wire bytes, 64 KB binary blob | **65.9 KB** | 468 KB | 7.1× smaller |
 | Wire bytes, 4 KB text | **4.5 KB** | 8.3 KB | 1.9× smaller |
 | Sparse field access (read 3 of 32) | 27 µs | 26 µs | tied (within noise) |
-| Cap-passing (`getChild` + echo) | 14 µs | 12 µs | capnweb 1.2× faster |
+| Cap-passing (`getChild` + echo) | 13 µs | 12 µs | capnweb 1.1× faster |
 
 capnwasm consistently beats capnweb on:
 - **Throughput** — once you batch calls (which most apps do), capnwasm pulls 2-3× ahead.
