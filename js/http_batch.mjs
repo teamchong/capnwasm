@@ -190,23 +190,23 @@ export function httpBatchTransport(url, opts = {}) {
     }
   }
 
-  // Each HTTP batch request is a fresh server-side RpcSession: there's no
-  // server-side state for the client to release, so Finish and Release
-  // frames the client emits in response to Returns are no-ops over this
-  // transport. Filtering them here saves a round-trip — without this
-  // every batched call generates a second wasted POST containing only
-  // Finish frames for the responses that arrived in the first.
-  const DROP = new Set([RPC_FINISH, RPC_RELEASE]);
+  // Each HTTP batch request is a fresh server-side RpcSession: there's
+  // no server-side state for the client to release, so Finish and
+  // Release frames the client emits in response to Returns are no-ops.
+  // The connectHttpBatch wrapper passes stateless: true to RpcSession,
+  // so those frames are never generated in the first place — no
+  // post-send filterFrames pass is needed. (If a user wires this
+  // transport up against a non-stateless session, Finish/Release frames
+  // will go on the wire and waste a round-trip; pass `stateless: true`
+  // to your RpcSession to fix.)
 
   return {
     send(bytes) {
       if (closed) return;
-      const filtered = filterFrames(bytes, DROP);
-      if (!filtered) return;
       // Defensive copy: `bytes` is typically a slice of wasm memory that
       // gets reused before the fetch completes. Without the copy, the
       // POST body would be whatever wasm wrote next.
-      outbox.push(filtered === bytes ? new Uint8Array(bytes) : filtered);
+      outbox.push(new Uint8Array(bytes));
       scheduleFlush();
     },
     onMessage(handler) { messageCb = handler; },
@@ -229,6 +229,10 @@ export function connectHttpBatch(cpp, url, opts = {}) {
   const transport = httpBatchTransport(url, opts);
   return new RpcSession(cpp, transport, opts.registry, {
     bootstrap: opts.bootstrap,
+    // Stateless mode: peer (server) creates a fresh session per request,
+    // so Finish/Release frames are pointless — and sending them would
+    // force the transport into an extra POST (wasted round-trip).
+    stateless: true,
   });
 }
 
@@ -297,7 +301,10 @@ export function createHttpBatchHandler(cpp, registry, opts = {}) {
       ? opts.bootstrap(req)
       : opts.bootstrap;
 
-    const session = new RpcSession(cpp, transport, registry, { bootstrap });
+    // Stateless: this server-side session lives for the duration of one
+    // request. Skip the wire features that only make sense across calls
+    // (Finish/Release frames). Saves a per-call frame allocation.
+    const session = new RpcSession(cpp, transport, registry, { bootstrap, stateless: true });
 
     try {
       for (const f of frames) {

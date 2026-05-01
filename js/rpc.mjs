@@ -251,6 +251,10 @@ export class RpcSession {
   // settled before flushing the response. See idle() below.
   #inflight = 0;
   #idleDeferreds = [];
+  // Stateless mode: peer's session is ephemeral (HTTP batch). Skip
+  // generating Finish/Release frames — they'd just be wasted bytes
+  // (and would force the http-batch transport to filter them).
+  #stateless = false;
   // Per-(target, ifc, method) cache of empty-params Call frame bytes.
   // After the first wasm cpp_rpc_build_call for a tuple, subsequent calls
   // copy the cached bytes and patch the questionId at byte 28 — no wasm
@@ -286,6 +290,7 @@ export class RpcSession {
     this.#dv     = new DataView(this.#buffer);
     this.#transport = transport;
     this.#registry = registry || new InterfaceRegistry();
+    if (options.stateless) this.#stateless = true;
     if (options.bootstrap) {
       this.#localBootstrap = options.bootstrap;
       // Pre-install the bootstrap as localCaps[0] so peers can address it
@@ -548,6 +553,11 @@ export class RpcSession {
   /** Send Finish to release the peer's hold on a question's resources. */
   finish(questionId) {
     if (this.#closed) return;
+    // In stateless mode, skip Finish entirely — the peer's session is
+    // ephemeral (see HTTP batch handler). Saves per-call frame
+    // allocation AND lets the http-batch transport drop its
+    // filterFrames pass altogether.
+    if (this.#stateless) return;
     // Skip the wasm boundary call — Finish frames are fixed-shape (44 B,
     // questionId at byte 36 LE u32). buildFinishFrame patches a JS-side
     // template. Saves a wasm crossing + a MallocMessageBuilder cycle on
@@ -569,6 +579,7 @@ export class RpcSession {
     if (this.#closed) return;
     if (!this.#imports.has(importId)) return;  // already released or never imported
     this.#imports.delete(importId);
+    if (this.#stateless) return;  // stateless peer has nothing to release
     const len = this.#exp.cpp_rpc_build_release(importId, refcount);
     if (!len) return;  // best-effort; nothing to do if build fails
     try { this.#sendFromOut(len); } catch { /* transport closed mid-release */ }
