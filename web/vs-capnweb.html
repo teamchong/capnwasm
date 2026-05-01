@@ -25,7 +25,11 @@
         from the in-process Node bench (<code>node bench/rpc_bench.mjs</code>) on Apple Silicon and the
         in-browser playground (Chromium prod build, localhost). All claims reproducible.
       </p>
-      <nav><a href="./">&larr; Landing</a> &middot; <a href="./playground.html">Playground</a></nav>
+      <nav>
+        <a href="./">&larr; Landing</a> &middot;
+        <a href="./playground.html">Playground</a> &middot;
+        <a href="./render-bench.html">End-to-end render bench</a>
+      </nav>
     </header>
 
     <section>
@@ -186,6 +190,64 @@
     </section>
 
     <section>
+      <h2>End-to-end with rendering</h2>
+      <p>
+        Per-call latency is one slice of the truth. The full picture is what happens from
+        <code>cap.method()</code> through wire, decode, every <code>.field</code> read used by render, to
+        forced layout. We built the
+        <a href="./render-bench.html">live render bench</a> to measure exactly that across
+        capnweb &times; capnwasm &times; (WebSocket, HTTP-batch) &times; (small, medium, large) &times; (cold, warm).
+        Every cell. No averages.
+      </p>
+      <p>What we found, on Apple Silicon, Chromium prod build, localhost (warm medians, 10 iter):</p>
+
+      <h3>capnwasm wins (warm medians)</h3>
+      <table class="cmp small">
+        <thead><tr><th>workload</th><th>capnwasm/WS</th><th>capnweb/WS</th><th>note</th></tr></thead>
+        <tbody>
+          <tr><td>Binary blob 256 KB round-trip</td><td class="win">1.0 ms</td><td>2.3 ms</td><td>2.3&times; faster &mdash; raw bytes vs base64</td></tr>
+          <tr><td>Sparse field access (50&times; calls, read 3 of 32)</td><td class="win">2.6 ms</td><td>3.2 ms</td><td>only crosses wasm 3&times; per call, capnweb materializes all 32</td></tr>
+          <tr><td>List render 100 records</td><td class="win">1.2 ms</td><td>1.4 ms</td><td>schema-typed binary decode beats JSON.parse + DOM</td></tr>
+        </tbody>
+      </table>
+
+      <h3>capnweb wins (warm medians)</h3>
+      <table class="cmp small">
+        <thead><tr><th>workload</th><th>capnweb/WS</th><th>capnwasm/WS</th><th>note</th></tr></thead>
+        <tbody>
+          <tr><td>Re-read storm (1000&times; field reads after one fetch)</td><td class="win">200 &mu;s</td><td>400 &mu;s</td><td>2&times; faster &mdash; pure JS reads vs per-read wasm crossing</td></tr>
+          <tr><td>List render 1000 records</td><td class="win">8.9 ms</td><td>9.7 ms</td><td>DOM dominates; capnweb&apos;s up-front parse is &ldquo;free&rdquo; here</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Practically tied (warm medians)</h3>
+      <table class="cmp small">
+        <thead><tr><th>workload</th><th>capnwasm/WS</th><th>capnweb/WS</th><th>note</th></tr></thead>
+        <tbody>
+          <tr><td>Dense field access (50&times; calls, read all 32)</td><td>14.9 ms</td><td>13.8 ms</td><td>within noise; capnwasm crosses wasm 32&times; per call, capnweb&apos;s eager-decode catches up</td></tr>
+          <tr><td>Re-read 10&times;</td><td>200 &mu;s</td><td>300 &mu;s</td><td>both at the measurement floor on a hot WS</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        <strong>HTTP-batch numbers</strong> generally trail WS for both libraries because each request
+        reopens / dispatches a session. The cold path for HTTP is shorter than WS (no handshake), but the
+        warm path is longer (no kept connection). capnwasm holds the lead on blobs and sparse reads even
+        over HTTP; capnweb keeps its re-read advantage on either transport.
+      </p>
+      <p>
+        <strong>Cold paths are all over the place</strong> for sub-100-ms workloads. The first call after
+        opening a transport mixes WS handshake / first POST / wasm fetch (capnwasm only) / V8 JIT warmup,
+        none of which is the library&apos;s fault. Look at warm.
+      </p>
+      <p>
+        <strong>The honest takeaway</strong>: pick capnwasm if your workload is binary-heavy, sparse-field, or
+        you want one schema across languages. Pick capnweb if your workload is JS-only and dominated by
+        repeated reads of small payloads. The render bench is a click away &mdash; don&apos;t take our word for it.
+      </p>
+    </section>
+
+    <section>
       <h2>Methodology / reproducibility</h2>
       <ul>
         <li>In-process numbers: <code>node bench/rpc_bench.mjs</code> and <code>node bench/realistic.mjs</code>.</li>
@@ -194,6 +256,7 @@
         <li>All wins reported are median of multiple runs; outliers from GC pauses excluded.</li>
         <li>Bundle sizes measured on <code>dist/inlined.mjs</code> (capnwasm) and <code>../capnweb/dist/index.js</code> (capnweb) post-gzip-9.</li>
         <li>In-browser numbers: <code>cd web &amp;&amp; npm run build &amp;&amp; npm run preview</code>, then run the playground in Chromium.</li>
+        <li>End-to-end render bench: <code>cd web &amp;&amp; npm run dev</code>, then visit <code>/render-bench.html</code> and click Run. Source at <code>web/render-bench.html</code> + <code>web/src/render-bench/main.ts</code>; server endpoints at <code>web/vite-rpc-server.mjs</code>.</li>
       </ul>
     </section>
 

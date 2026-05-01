@@ -33,6 +33,7 @@ export default defineConfig(({ command }) => ({
         rpc: resolve(__dirname, "rpc.html"),
         chat: resolve(__dirname, "chat.html"),
         vsCapnweb: resolve(__dirname, "vs-capnweb.html"),
+        renderBench: resolve(__dirname, "render-bench.html"),
         inspect: resolve(__dirname, "inspect.html"),
         notes: resolve(__dirname, "notes.html"),
       },

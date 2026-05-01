@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>capnwasm &mdash; render bench (full pipeline, no cherry-picking)</title>
+  <meta name="description" content="End-to-end RPC bench across capnweb vs capnwasm × WS vs HTTP × small/medium/large × cold/warm. Measures the full pipeline from cap.method() to forced DOM layout. Wins, losses, ties — all in one place." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="./src/render-bench/style.css" />
+</head>
+<body>
+  <article id="app">
+    <header>
+      <h1><a href="./">capnwasm</a> <span class="dim">render bench</span></h1>
+      <p class="subtitle">
+        End-to-end pipeline: <code>request</code> &rarr; wire &rarr; <code>decode</code> &rarr; <code>field reads</code> &rarr;
+        <code>DOM mutation</code> &rarr; forced layout. capnweb &times; capnwasm crossed with WebSocket &times; HTTP-batch,
+        each at three sizes, with cold &amp; warm timings. No averages between transports &mdash; you see every cell.
+      </p>
+      <nav>
+        <a href="./">&larr; Landing</a> &middot;
+        <a href="./vs-capnweb.html">vs capnweb</a> &middot;
+        <a href="./playground.html">playground</a> &middot;
+        <a href="./rpc.html">RPC bench</a>
+      </nav>
+    </header>
+
+    <section class="banner">
+      <div id="server-status">
+        <span id="server-dot" class="dot"></span>
+        <span id="server-msg">Probing server&hellip;</span>
+      </div>
+      <div class="controls">
+        <label>iters per warm cell:
+          <select id="iters-selector">
+            <option value="3">3 (fast)</option>
+            <option value="10" selected>10 (balanced)</option>
+            <option value="30">30 (stable)</option>
+          </select>
+        </label>
+        <button id="run-btn" disabled>Run all benchmarks</button>
+      </div>
+      <div id="status" class="status">Idle.</div>
+    </section>
+
+    <section class="summary-section">
+      <h2>Summary</h2>
+      <div id="summary" class="summary">Run a bench to see the rollup.</div>
+    </section>
+
+    <section>
+      <h2>Workload 1 &mdash; List render</h2>
+      <p>
+        Server returns N user records in one RPC reply. Client decodes, builds a
+        <code>&lt;ul&gt;</code> with one <code>&lt;li&gt;</code> per row, forces layout via
+        <code>offsetHeight</code>. Realistic shape: list view, table page, search results.
+      </p>
+      <div id="bench-list" class="bench-block"></div>
+    </section>
+
+    <section>
+      <h2>Workload 2 &mdash; Sparse field access (read 3 of 32)</h2>
+      <p>
+        Server returns a 32-field metadata struct. Client reads only 3 fields and renders them.
+        Cap&apos;n Proto&rsquo;s schema-evolved layout lets capnwasm skip the other 29; capnweb&apos;s JSON
+        round-trip materializes all 32 upfront. The size axis here is the number of consecutive
+        requests fired in the same tick (testing batching).
+      </p>
+      <div id="bench-sparse" class="bench-block"></div>
+    </section>
+
+    <section>
+      <h2>Workload 3 &mdash; Dense field access (read all 32)</h2>
+      <p>
+        Same metadata struct, but the client reads every field and renders all 32 to the DOM.
+        capnweb&apos;s eager-decode model wins here: once the JSON is parsed, every field is a
+        plain JS property read. capnwasm crosses into wasm memory per field unless the app caches.
+      </p>
+      <div id="bench-dense" class="bench-block"></div>
+    </section>
+
+    <section>
+      <h2>Workload 4 &mdash; Re-read storm (10 fields &times; N reads, animation simulation)</h2>
+      <p>
+        After one fetch, read 10 fields N times each (simulating a re-render loop or per-frame
+        animation). capnwasm pays a wasm crossing per re-read; capnweb is pure JS reads after
+        the initial decode. Picks N = small/medium/large. <em>Single fetch, repeated reads &mdash; isolates
+        the post-fetch read cost.</em>
+      </p>
+      <div id="bench-reread" class="bench-block"></div>
+    </section>
+
+    <section>
+      <h2>Workload 5 &mdash; Binary blob round-trip</h2>
+      <p>
+        Server echoes K bytes of binary data. Client decodes, renders the byte length to DOM
+        (no canvas paint &mdash; we&apos;re measuring wire + decode, not GPU work). capnwasm sends
+        raw bytes; capnweb base64-encodes (1.33&times; bandwidth + parse cost both directions).
+      </p>
+      <div id="bench-blob" class="bench-block"></div>
+    </section>
+
+    <section>
+      <h2>Methodology</h2>
+      <ul>
+        <li><strong>Cold</strong> = the very first call against a transport (includes WS handshake / first POST connect, and for capnwasm the wasm fetch + compile if not cached).</li>
+        <li><strong>Warm</strong> = median of the configured iter count, after a warmup pass.</li>
+        <li><strong>End-to-end</strong> includes encode, transport, decode, every <code>.field</code> access used by the render path, and forced layout via <code>offsetHeight</code>.</li>
+        <li>Both libraries hit the <em>same</em> server process (web/vite-rpc-server.mjs), with matching method semantics, so the only thing varying is the library + transport.</li>
+        <li>capnwasm&rsquo;s sparse-field bench actually skips reads &mdash; we don&rsquo;t materialize the 29 fields we don&rsquo;t need. capnweb has no equivalent (the JSON is fully parsed upfront), so it&rsquo;s an architectural win for capnp.</li>
+        <li>capnweb base64-inflates binary; capnwasm sends raw bytes &mdash; on the blob workload the wire-bytes column tells the story.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <a href="https://github.com/teamchong/capnwasm">GitHub</a> &middot;
+      <a href="https://www.npmjs.com/package/capnwasm">npm</a> &middot;
+      <a href="./">capnwasm</a>
+    </footer>
+
+    <!-- Hidden render targets — each workload writes into one of these so the
+         layout-forcing measurement reflects real DOM work, not just JS. They
+         live off-screen but are real DOM, with real reflow cost. -->
+    <div class="render-sink-wrap" aria-hidden="true">
+      <ul id="render-sink-list"></ul>
+      <div id="render-sink-fields"></div>
+      <div id="render-sink-blob"></div>
+    </div>
+  </article>
+  <script type="module" src="./src/render-bench/main.ts"></script>
+</body>
+</html>
