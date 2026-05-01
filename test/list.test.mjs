@@ -143,3 +143,55 @@ test("List<Struct>: length + at(i) returns typed Reader", async () => {
   assert.equal(tags.length, 0);
   assert.equal(tags.at(0), undefined);
 });
+
+test("List<Struct>: at(i) reads correct fields for every element, not just at(0)", async () => {
+  // Regression for a codegen bug where at(0) worked but at(1+) returned
+  // zeros. Cause: at() called cpp_any_open_list relative to whatever
+  // happened to be on top of the any_stack; the previous at() call had
+  // pushed an element, so the second at() opened the list relative to
+  // that element instead of the parent. Fix: track per-wrapper "have I
+  // pushed?" flag and pop only when needed (so the first at() doesn't
+  // over-pop the parent in nested-struct cases).
+  //
+  // Build a Post with tags = [{name:"alpha", weight:10}, {name:"beta",
+  // weight:20}, {name:"gamma", weight:30}] via the dynamic builder, then
+  // walk all three elements via the codegen Reader.
+  const { defineSchema, buildDynamic } = await import(
+    pathToFileURL(resolve(ROOT, "js", "dynamic.mjs")).href);
+  const TAG = defineSchema({
+    name:   { kind: "text",   slot: 0 },
+    weight: { kind: "uint32", offset: 0 },
+  }, { dataWords: 1, ptrWords: 1 });
+  const POST = defineSchema({
+    title:   { kind: "text",       slot: 0 },
+    tags:    { kind: "listStruct", slot: 1, element: TAG },
+    scores:  { kind: "listUint32", slot: 2 },
+    authors: { kind: "listText",   slot: 3 },
+  }, { dataWords: 0, ptrWords: 4 });
+  const b = buildDynamic(cpp, POST);
+  b.set("tags", [
+    { name: "alpha", weight: 10 },
+    { name: "beta",  weight: 20 },
+    { name: "gamma", weight: 30 },
+  ]);
+  const bytes = b.finalize();
+
+  const r = gen.openPost(cpp, bytes);
+  const tags = r.tags;
+  assert.equal(tags.length, 3);
+
+  // Walk each element, checking BOTH fields each time. If at(i) leaks
+  // cursor depth across calls, at(1+) will return empty/zero values.
+  const t0 = tags.at(0); assert.equal(t0.name, "alpha"); assert.equal(t0.weight, 10);
+  const t1 = tags.at(1); assert.equal(t1.name, "beta");  assert.equal(t1.weight, 20);
+  const t2 = tags.at(2); assert.equal(t2.name, "gamma"); assert.equal(t2.weight, 30);
+
+  // for..of iteration uses the same at() — should also walk correctly.
+  const collected = [];
+  for (const t of tags) collected.push({ name: t.name, weight: t.weight });
+  assert.deepEqual(collected, [
+    { name: "alpha", weight: 10 },
+    { name: "beta",  weight: 20 },
+    { name: "gamma", weight: 30 },
+  ]);
+});

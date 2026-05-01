@@ -1373,18 +1373,21 @@ function generateListGetter(ptrIndex, innerType) {
   // the stack pointer, so callers reading multiple elements should
   // materialize before iterating further.
   //
-  // leave_struct first: if a previous at(i) pushed an element onto the
-  // any_stack, we need to pop it before opening the list again (otherwise
-  // open_list operates on the *element*, not the parent, and reads garbage
-  // for at(j) where j != 0). leave_struct is a no-op when the stack is
-  // already at the root, so the first at() call is unaffected.
+  // The `pushed` flag tracks whether THIS wrapper has previously pushed
+  // an element onto the any_stack. If yes, pop it before re-opening the
+  // list (otherwise open_list operates on the *element*, not the parent,
+  // and reads garbage for at(j) where j != 0). If no, don't pop —
+  // leave_struct is too aggressive when the parent itself is a nested
+  // struct sitting on the stack, since it would unwind the parent.
+  lines.push(`let pushed = false;`);
   lines.push(`return {`);
   lines.push(`  length: size,`);
   lines.push(`  at(i) {`);
   lines.push(`    if (i < 0 || i >= size) return undefined;`);
-  lines.push(`    cpp._exports.cpp_any_leave_struct();`);
+  lines.push(`    if (pushed) cpp._exports.cpp_any_leave_struct();`);
   lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
   lines.push(`    cpp._exports.cpp_any_enter_list_at(i);`);
+  lines.push(`    pushed = true;`);
   lines.push(`    const r = new ${innerType}Reader(cpp);`);
   lines.push(`    return r;`);
   lines.push(`  },`);
