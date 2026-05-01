@@ -18,9 +18,22 @@ Numbers from in-process Node bench (Apple Silicon, M-series, Node 22). Run `node
 | Wire bytes, 64 KB binary blob | **65.9 KB** | 468 KB | 7.1× smaller |
 | Wire bytes, 4 KB text | **4.5 KB** | 8.3 KB | 1.9× smaller |
 | Sparse field access (read 3 of 32) | 27 µs | 26 µs | tied (within noise) |
-| Cap-passing (`getChild` + echo) | 13 µs | 12 µs | capnweb 1.1× faster |
+| Cap-passing (`getChild` + echo) | 12.7 µs | 12.7 µs | tied (was capnweb 1.1× faster — closed the gap) |
 
-**This pass shaved 32% off tiny-call latency.** The compounding boundary-call reductions (cached DataView per session, combined `cpp_rpc_decode` + per-kind summary write, cached aux pointers, `cpp_rpc_begin_call/begin_return` returning the data section pointer instead of just success, empty-params Call frame template caching keyed on (target, ifc, method)) dropped per-RPC wasm crossings from ~9 to ~5. Burst N=1000 dropped 7%. The remaining floor on tight loops is dominated by JS-side Promise scheduling — past microsecond cuts there require either an awaitable-batch API change or skipping `async` framing on sync-handler dispatch.
+**This pass shaved 34% off tiny-call latency, closed the cap-passing gap.** The compounding boundary-call reductions + per-call allocation cleanups:
+
+- Cached DataView per session
+- Combined `cpp_rpc_decode` + per-kind summary write (one boundary call instead of two per inbound)
+- Cached aux pointers
+- `cpp_rpc_begin_call/begin_return` returning the data section pointer instead of just success
+- Empty-params Call frame template caching keyed on (target, ifc, method)
+- `CallStarted` / `CallSentResult` classes replacing per-call object literals + closures (V8 hidden-class stability)
+- Pinned `BigInt(target.id)` on the target object so `RpcCap` chains avoid re-allocating
+- Skip `BigInt()` coercion when arg is already a BigInt
+- Shared frozen `EMPTY_CAPS` for zero-cap Returns
+- `registry.dispatch` returns the bare handler (no per-call binding closure)
+
+Per-RPC wasm crossings dropped from ~9 to ~5. The remaining floor on tight loops is dominated by JS-side Promise scheduling — past microsecond cuts there require either an awaitable-batch API change or splitting `#handleCall` into sync-fast + async-slow dispatchers.
 
 capnwasm consistently beats capnweb on:
 - **Throughput** — once you batch calls (which most apps do), capnwasm pulls 2-3× ahead.
