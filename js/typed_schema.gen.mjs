@@ -416,7 +416,7 @@ export class WideUserDataBuilder {
     this._dataPtr = (opts && opts.dataPtr !== undefined)
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
-    this._dv = new DataView(cpp._u8.buffer);
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
   set field0(value) {

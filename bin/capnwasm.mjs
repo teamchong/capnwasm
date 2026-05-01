@@ -843,7 +843,10 @@ function _capnwasmPick(cpp, fields, names) {`);
     // ~15 ns of GC pressure each. The setters reference this._dv directly
     // — only text/data setters need to refresh it, since they're the
     // paths that can trigger wasm memory growth.
-    lines.push(`    this._dv = new DataView(cpp._u8.buffer);`);
+    // Reuse the shared DataView cached on the cpp instance — refreshed
+    // there when memory grows. Saves one alloc per Builder construction
+    // (per call on the hot RPC path).
+    lines.push(`    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
     lines.push(`  }`);
     lines.push("");
     // Union setters: when this struct holds a union, expose
