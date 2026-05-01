@@ -462,12 +462,15 @@ export class RpcSession {
     }
     const questionId = this.#allocQuestionId();
     const targetKind = target.kind === "promise" ? TARGET_PROMISED_ANSWER : TARGET_IMPORTED_CAP;
-    const ok = this.#exp.cpp_rpc_begin_call(
+    // begin_call returns the data section pointer for the freshly-init'd
+    // params struct — combines the begin_call op with the data_ptr lookup
+    // the Builder needs anyway. Saves one wasm boundary call per outbound.
+    const dataPtr = this.#exp.cpp_rpc_begin_call(
       questionId, targetKind, BigInt(target.id), BigInt(interfaceId), methodId,
       BuilderClass._DATA_WORDS, BuilderClass._PTR_WORDS,
     );
-    if (!ok) throw new Error("cpp_rpc_begin_call failed");
-    const params = new BuilderClass(this.#cpp, { preinitialized: true });
+    if (!dataPtr) throw new Error("cpp_rpc_begin_call failed");
+    const params = new BuilderClass(this.#cpp, { preinitialized: true, dataPtr });
     // send() optionally takes { resultsReader, extract } to read the Return
     // synchronously inside #handleReturn (while rpc_reader still holds the
     // inbound bytes). The promise then resolves to whatever extract returns
@@ -739,12 +742,15 @@ export class RpcSession {
         if (typeof BuilderClass?._DATA_WORDS !== "number") {
           throw new Error("BuilderClass must expose static _DATA_WORDS / _PTR_WORDS");
         }
-        const ok = this.#exp.cpp_rpc_begin_return(
+        // begin_return returns the data section pointer (combines op +
+        // data_ptr lookup the Builder needs anyway). Saves one wasm
+        // boundary call per outbound Return.
+        const dataPtr = this.#exp.cpp_rpc_begin_return(
           answerId, BuilderClass._DATA_WORDS, BuilderClass._PTR_WORDS,
         );
-        if (!ok) throw new Error("cpp_rpc_begin_return failed");
+        if (!dataPtr) throw new Error("cpp_rpc_begin_return failed");
         beginResultsUsed = true;
-        return new BuilderClass(this.#cpp, { preinitialized: true });
+        return new BuilderClass(this.#cpp, { preinitialized: true, dataPtr });
       },
     };
     // Synchronous-handler fast path: if the handler returns a non-thenable,

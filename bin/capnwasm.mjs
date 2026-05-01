@@ -833,7 +833,10 @@ function _capnwasmPick(cpp, fields, names) {`);
     // setter allocation: every `b.field = v` would otherwise do
     // `new Uint8Array(cpp.memory.buffer)` — modern V8 spends more GC
     // time than wasm-call time on a write-heavy struct.
-    lines.push(`    this._dataPtr = this._exp.cpp_any_builder_data_ptr();`);
+    // If begin_call/begin_return supplied the data pointer (zero-copy RPC
+    // path), use it directly — saves another wasm boundary call per call.
+    lines.push(`    this._dataPtr = (opts && opts.dataPtr !== undefined)`);
+    lines.push(`      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();`);
     lines.push(`    this._u8 = cpp._u8;`);
     // Cache one DataView for the wasm memory.buffer. The 64-bit and float
     // setters all need a DataView; allocating one per setter call was

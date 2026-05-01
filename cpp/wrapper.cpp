@@ -2128,7 +2128,10 @@ uint32_t cpp_rpc_begin_call(
   any_builder_root = new (any_builder_root_storage) capnp::AnyStruct::Builder(kj::mv(contentAnyStruct));
   cursor_stack[0] = any_builder_root;
   cursor_depth = 0;
-  return 1;
+  // Return the data section pointer instead of a 0/1 success — the JS
+  // Builder needs it on every call, and combining the lookup with the
+  // begin_call op saves a wasm boundary crossing per outbound Call.
+  return reinterpret_cast<uint32_t>(any_builder_root->getDataSection().begin());
 }
 
 // Begin a Return with results: set up rpc_builder + Return header, point
@@ -2153,7 +2156,9 @@ uint32_t cpp_rpc_begin_return(
   any_builder_root = new (any_builder_root_storage) capnp::AnyStruct::Builder(kj::mv(contentAnyStruct));
   cursor_stack[0] = any_builder_root;
   cursor_depth = 0;
-  return 1;
+  // Return data section pointer for the same reason as begin_call above:
+  // saves a wasm boundary crossing per outbound Return.
+  return reinterpret_cast<uint32_t>(any_builder_root->getDataSection().begin());
 }
 
 // All cpp_rpc_build_* and cpp_rpc_begin_*/finalize variants emit

@@ -242,7 +242,8 @@ export class PrimitivesBuilder {
         throw new Error("cpp_any_builder_init failed");
       }
     }
-    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = new DataView(cpp._u8.buffer);
   }
