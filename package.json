@@ -71,6 +71,8 @@
     "!dist/*.map",
     "!js/*.gen.mjs",
     "!js/*.gen.d.ts",
+    "!js/build_*.mjs",
+    "!js/typed_wide_user_data.mjs",
     "LICENSE.txt"
   ],
   "scripts": {
