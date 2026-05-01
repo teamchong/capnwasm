@@ -59,8 +59,7 @@
     "./manifest": "./js/manifest.mjs",
     "./harness": "./js/harness.mjs",
     "./probe": "./js/probe.mjs",
-    "./capnp.slim.wasm": "./dist/capnp.slim.wasm",
-    "./capnp.wasm": "./dist/capnp.wasm"
+    "./capnp.slim.wasm": "./dist/capnp.slim.wasm"
   },
   "bin": {
     "capnwasm": "./bin/capnwasm.mjs"

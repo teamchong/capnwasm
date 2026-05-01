@@ -321,21 +321,22 @@ wasm-opt "$OUT" \
 echo "Optimized: $OPT_OUT"
 ls -la "$OPT_OUT"
 
-# Two artifacts go into dist/:
-#   dist/capnp.wasm       — full wasm (with bench/test helpers baked in),
-#                           consumed by `import "capnwasm"` (inlined as
-#                           base64) and tests that exercise typed/big/
-#                           conformance schemas
+# Two artifacts in dist/:
 #   dist/capnp.slim.wasm  — production-only wasm (no test helpers),
 #                           served by `import "capnwasm/browser"` as a
 #                           separately-fetched asset
+#   dist/inlined.mjs      — full wasm (with helpers) embedded in the
+#                           single-file Node/Workers bundle, consumed by
+#                           the default `import "capnwasm"`. Reads the
+#                           full wasm from zig-out/ directly — never
+#                           needs a copy in dist/.
 #
 # Building both requires two compilation passes (BENCH_MODE differs).
 # A non-bench invocation produces capnp.slim.wasm and then recursively
-# self-invokes in bench mode to produce capnp.wasm + dist/inlined.mjs.
+# self-invokes in bench mode to produce dist/inlined.mjs from the full
+# wasm.
 if [ "$BENCH_MODE" = "1" ]; then
   node js/build_inlined.mjs   # writes dist/inlined.mjs
-  cp "$OPT_OUT" dist/capnp.wasm
 else
   cp "$OPT_OUT" dist/capnp.slim.wasm
   echo "[build.sh] building full bundle (for tests + default import)..."

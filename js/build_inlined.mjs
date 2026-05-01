@@ -31,11 +31,11 @@ const stripImports = (src) =>
 // base64 of the GZIPPED wasm is dramatically shorter than base64 of raw
 // wasm to begin with. Net win on both raw and on-wire bytes.
 //
-// At load time we gunzip via DecompressionStream("gzip"), which is
-// universal: Node 18+, Cloudflare Workers, all modern browsers (Chrome
-// 80+, Firefox 113+, Safari 16.4+). The decompression cost is sub-ms
-// for ~110 KB of wasm — invisible behind the WebAssembly.compile that
-// follows it.
+// Brotli would shrink the embedded blob another ~11 KB but
+// DecompressionStream("brotli") only reaches Chromium 124+ / FF 126+ /
+// Safari 18+ (and the Playwright Chromium some test rigs use is older
+// than that). gzip is universal: Node 18+, Workers, all browsers from
+// 2020+. The gzip path's bigger blob is the compatibility tax.
 const wasmGz = gzipSync(wasm, { level: 9 });
 
 const bundle = `// capnwasm: single-file inlined bundle (cpp_loader + wasi shim + the
@@ -58,8 +58,8 @@ function __base64ToBytes(b64) {
 }
 
 async function __gunzip(bytes) {
-  // DecompressionStream is universal across Node 18+, Workers, and modern
-  // browsers (Chrome 80+, FF 113+, Safari 16.4+).
+  // DecompressionStream("gzip") is universal across Node 18+, Workers,
+  // and modern browsers (Chrome 80+, FF 113+, Safari 16.4+).
   const ds = new DecompressionStream("gzip");
   const stream = new Response(bytes).body.pipeThrough(ds);
   return new Uint8Array(await new Response(stream).arrayBuffer());
