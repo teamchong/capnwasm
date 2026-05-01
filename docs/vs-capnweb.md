@@ -33,9 +33,9 @@ capnweb wins or ties on:
 
 | workload | capnwasm | capnweb | win |
 |---|---|---|---|
-| Single sequential call (tiny) | **45 µs** | 1310 µs | **29× faster** |
-| 10 KB string echo (sequential) | **65 µs** | 1330 µs | **20× faster** |
-| Burst of 100 calls in 1 tick | 16 µs | 13 µs | capnweb ~1.2× faster (within noise) |
+| Single sequential call (tiny) | **44 µs** | 1310 µs | **30× faster** |
+| 10 KB string echo (sequential) | **67 µs** | 1330 µs | **20× faster** |
+| Burst of 100 calls in 1 tick | **18 µs** | 20 µs | 1.13× faster |
 
 The 29× sequential gap is structural, not implementation: capnweb's `BatchClientTransport` waits for a `setTimeout(0)` macrotask before sending so multiple in-tick calls coalesce into one POST. That gives every sequential `await` ~1 ms of macrotask delay before any bytes hit the wire. capnwasm uses `queueMicrotask`, so a single `await` round-trips fast. Burst workloads amortize the macrotask cost — that's the regime where capnweb catches up.
 
