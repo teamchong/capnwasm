@@ -6,13 +6,51 @@
   "main": "js/index.mjs",
   "exports": {
     ".":             "./dist/inlined.mjs",
-    "./browser":     "./js/browser.mjs",
-    "./tape":        "./js/tape_serializer.mjs",
-    "./rest":        "./js/rest_runtime.mjs",
-    "./stream":      "./js/stream.mjs",
-    "./rpc":         "./js/rpc.mjs",
-    "./dynamic":     "./js/dynamic.mjs",
-    "./client":      "./js/client.mjs",
+    "./browser":     {
+      "development": "./js/browser.mjs",
+      "default":     "./dist/browser.mjs"
+    },
+    "./tape":        {
+      "development": "./js/tape_serializer.mjs",
+      "default":     "./dist/tape_serializer.mjs"
+    },
+    "./rest":        {
+      "development": "./js/rest_runtime.mjs",
+      "default":     "./dist/rest_runtime.mjs"
+    },
+    "./stream":      {
+      "development": "./js/stream.mjs",
+      "default":     "./dist/stream.mjs"
+    },
+    "./rpc":         {
+      "development": "./js/rpc.mjs",
+      "default":     "./dist/rpc.mjs"
+    },
+    "./http-batch":  {
+      "development": "./js/http_batch.mjs",
+      "default":     "./dist/http_batch.mjs"
+    },
+    "./http-stream": {
+      "development": "./js/http_stream.mjs",
+      "default":     "./dist/http_stream.mjs"
+    },
+    "./postmessage": {
+      "development": "./js/postmessage.mjs",
+      "default":     "./dist/postmessage.mjs"
+    },
+    "./dynamic":     {
+      "development": "./js/dynamic.mjs",
+      "default":     "./dist/dynamic.mjs"
+    },
+    "./client":      {
+      "development": "./js/client.mjs",
+      "default":     "./dist/client.mjs"
+    },
+    "./typed": {
+      "types":       "./js/typed.d.ts",
+      "development": "./js/typed.mjs",
+      "default":     "./dist/typed.mjs"
+    },
     "./codegen":     "./dist/codegen.mjs",
     "./vite-plugin": {
       "types":   "./js/vite-plugin.d.ts",
@@ -34,6 +72,7 @@
     "build:wasm":          "bash cpp/build.sh",
     "build:wasm:bench":    "bash cpp/build.sh bench",
     "build:capnpc":        "bash cpp/embed_standard_schemas.sh && bash cpp/build_capnpc.sh && node js/build_codegen_inlined.mjs",
+    "build:minified":      "node js/build_minified.mjs",
     "bench":            "node bench/runner.mjs",
     "bench:scale":      "node bench/scale-runner.mjs",
     "bench:rpc":        "node bench/rpc-runner.mjs",
