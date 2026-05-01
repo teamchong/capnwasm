@@ -204,6 +204,11 @@ export function connectHttpStream(cpp, url, opts = {}) {
   const transport = httpStreamTransport(url, opts);
   return new RpcSession(cpp, transport, opts.registry, {
     bootstrap: opts.bootstrap,
+    // Client-side: this transport is one-shot client→server (only the
+    // initial POST carries client frames). Finish/Release frames the
+    // RpcSession would emit after the initial wave just get dropped by
+    // the transport's `started` guard, so don't bother building them.
+    stateless: true,
   });
 }
 
@@ -284,7 +289,10 @@ export function createHttpStreamHandler(cpp, registry, opts = {}) {
     const stream = new ReadableStream({
       start(controller) {
         streamController = controller;
-        session = new RpcSession(cpp, transport, registry, { bootstrap });
+        // Server-side: client is one-shot (no follow-up Finish frames
+        // ever arrive), so we have nothing to release on the client's
+        // behalf either. Skip Finish/Release generation.
+        session = new RpcSession(cpp, transport, registry, { bootstrap, stateless: true });
         // Feed the initial batch synchronously so the first wave of Returns
         // is in the stream by the time the response head reaches the client.
         for (const f of initialFrames) {
