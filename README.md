@@ -1,6 +1,6 @@
 # capnwasm
 
-Typed RPC for the browser, with a real Cap'n Proto C++ runtime in 42 KB gz (40 KB brotli). Talks to non-JS services. Beats capnweb 1.7-3.8× on real workloads.
+Typed RPC for the browser, with a real Cap'n Proto C++ runtime in 41 KB gz (35 KB brotli) for the wasm-only path; **49 KB gz** for the typical typed-proxy + HTTP-batch shape. Talks to non-JS services. Beats capnweb 1.7-3.7× on real workloads, 29× on sequential HTTP-batch calls.
 
 ```js
 // 1. Write a schema:           user.capnp
@@ -42,11 +42,13 @@ npm install capnwasm
 [Zero to RPC](docs/zero-to-rpc.md) ·
 [Dynamic (no codegen)](docs/dynamic.md) ·
 [Cloudflare Workers](docs/workers.md) ·
+[API gateway pattern](docs/api-gateway-pattern.md) ·
+[Transports (WS / HTTP batch / HTTP stream)](docs/transports.md) ·
 [Vite plugin](docs/vite-plugin.md) ·
 [DevTools inspector](docs/inspect.md) ·
 [Production deployment](docs/deployment.md) ·
 [vs gRPC-Web](docs/grpc-web-comparison.md) ·
-[Honest comparison](docs/honest-comparison.md)
+[vs capnweb](docs/vs-capnweb.md)
 
 ---
 
@@ -115,18 +117,21 @@ for await (const event of stripe.listEvents()) console.log(event.id);
 
 ## What's in the box
 
+All entry-point sizes are minified-then-gzipped (the `dist/` build that ships in the npm package). Picking one transport is the typical browser shape; "everything" pulls every transport for the rare app that wants WS + HTTP-batch + HTTP-stream + postMessage in one bundle.
+
 | | what | gzip | brotli |
 |---|---|---|---|
 | `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, base64-inlined wasm) | 68 KB | 63 KB |
-| `import "capnwasm/browser"` | **browser-optimized: 3 KB JS shim + 39 KB wasm fetched as a separate asset (streaming compile)** | **42 KB** | **40 KB** |
-| `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | small | small |
-| `import "capnwasm/rpc"` | full RPC layer (sessions, caps, streaming) | small | small |
-| `import "capnwasm/client"` | three small helpers: `createClient`, `subscribeQuery`, `optimistic` | small | small |
-| `import "capnwasm/dynamic"` | runtime-schema reader — schema is data, no codegen step ([docs](docs/dynamic.md)) | small | small |
-| `import "capnwasm/tape"` | optional capnweb-shape `serialize`/`deserialize` helpers | small | small |
+| `import "capnwasm/browser"` | wasm-only path: shim + loader + slim wasm. Read capnp messages, no RPC. | **41 KB** | **35 KB** |
+| `+ "capnwasm/rpc"` | adds the RPC layer (sessions, caps, streaming, all wire-conformance handlers) | **47 KB** | **40 KB** |
+| `+ "capnwasm/typed" + "capnwasm/http-batch"` | typed proxy + HTTP-batch transport — the typical browser app shape | **49 KB** | **42 KB** |
+| All four transports + typed + dynamic | every transport (WS, HTTP-batch, HTTP-stream, postMessage) + typed proxy + dynamic-schema reader | **55 KB** | **47 KB** |
+| `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | 2.6 KB | 2.4 KB |
+| `import "capnwasm/dynamic"` | runtime-schema reader — schema is data, no codegen step ([docs](docs/dynamic.md)) | 3.9 KB | 3.6 KB |
 | `import "capnwasm/codegen"` | wasm-built capnp schema compiler — runs in browser | 356 KB | — |
-| `import "capnwasm/stream"` | helper to stream `fetch` bytes straight into wasm | small | small |
 | `import "capnwasm/vite-plugin"` | Vite plugin: schemas regenerate on save, no manual `npx capnwasm gen` ([docs](docs/vite-plugin.md)) | dev-only | dev-only |
+
+Subpath imports also work standalone (`capnwasm/http-batch` alone is 1.3 KB gz, `capnwasm/postmessage` is 0.6 KB) — pull only what you use.
 
 **Wire inspector** for debugging — not bundled in the package, hosted as a single file. Paste this into DevTools when you want to see decoded capnp bytes ([docs](docs/inspect.md)):
 
@@ -137,7 +142,7 @@ cw.inspect(fetch("/api/user.capnp"));   // expandable tree in the console
 
 **Live three-way playground** at [teamchong.github.io/capnwasm](https://teamchong.github.io/capnwasm/) — REST/JSON vs capnweb vs capnwasm side-by-side, fetching the same fixtures and rendering to DOM in your browser. Plus a [WebSocket RPC bench](https://teamchong.github.io/capnwasm/rpc.html) that runs burst, pipelining, and 64 KB binary-echo workloads against a real RPC server (capnwasm wins ~5× on burst). Source in [`web/`](web/) — `cd web && npm run dev` to run it locally.
 
-For browsers, prefer `capnwasm/browser`: a 3 KB JS shim + a separately-fetched 39 KB `dist/capnp.slim.wasm`, totalling 42 KB gz / 40 KB brotli. No base64 inflation, and `WebAssembly.instantiateStreaming` compiles the wasm while it's still being downloaded.
+For browsers, prefer `capnwasm/browser`: a tiny JS shim + a separately-fetched 41 KB `dist/capnp.slim.wasm`. No base64 inflation, and `WebAssembly.instantiateStreaming` compiles the wasm while it's still being downloaded. Add `capnwasm/typed` and one transport (`capnwasm/http-batch`, `capnwasm/http-stream`, `capnwasm/postmessage`, or the WS path via `capnwasm/rpc`) for end-to-end RPC at ~49 KB gz total.
 
 For comparison: capnweb is ~21 KB gzip. We're roughly 2× larger because we ship a real Cap'n Proto wasm runtime; that buys us things capnweb structurally can't have (binary wire, zero-copy field access, true sparse-read perf, multi-language interop).
 
@@ -149,13 +154,14 @@ Microsecond per-call differences vanish behind any real network. The cases where
 
 | workload | capnweb (JSON) | capnwasm (binary) | win |
 |---|---|---|---|
-| **Decode 1000 records, read 5 fields each** (sparse access) | 20.4 ms | 1.7 ms | **12x faster** |
+| **Decode 1000 records, read 5 fields each** (sparse access) | 20.4 ms | 1.7 ms | **12× faster** |
 | **5 MB binary asset** over 10 Mbps link | 5.33 s | 4.00 s | **1.33 s saved per asset** (no base64 bloat) |
-| **10K-msg/s telemetry stream decode** | 1.0 M msgs/sec | 3.3 M msgs/sec | **3.2x throughput** |
-| **In-process RPC, 64 KB text echo** | 365 µs | 96 µs | **3.8x faster** |
-| **In-process RPC, 4 KB text echo** | 26 µs | 17 µs | **1.5x faster** |
-| **In-process RPC, single tiny call** | 15 µs | 8.5 µs | **1.75x faster** |
-| **In-process RPC, burst 1000 calls (per-call)** | 7.9 µs | 2.5 µs | **3.2x faster** |
+| **10K-msg/s telemetry stream decode** | 1.0 M msgs/sec | 3.3 M msgs/sec | **3.2× throughput** |
+| **In-process RPC, 64 KB text echo** | 381 µs | 102 µs | **3.7× faster** |
+| **In-process RPC, 4 KB text echo** | 26 µs | 20 µs | **1.3× faster** |
+| **In-process RPC, single tiny call** | 14.5 µs | 8.7 µs | **1.7× faster** |
+| **In-process RPC, burst 1000 calls (per-call)** | 7.3 µs | 3.0 µs | **2.4× faster** |
+| **HTTP batch, sequential single call** | 1310 µs | 45 µs | **29× faster** |
 
 Choose capnwasm when:
 - You're moving binary data (images, audio, models, embeddings) and want raw bytes on the wire
