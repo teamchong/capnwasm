@@ -111,6 +111,11 @@ const deferred = typeof Promise.withResolvers === "function"
       return { promise, resolve, reject };
     };
 
+// Shared frozen empty array — every zero-cap Return resolves with this
+// instead of allocating a new `[]`. Saves a per-call alloc on tight
+// echo / no-cap loops.
+const EMPTY_CAPS = Object.freeze([]);
+
 // Per-call result object returned by callBuilder().send(). Using a class
 // instead of an object literal with a closure-captured getter lets V8
 // give every instance the same hidden class — better inline-cache hit
@@ -874,19 +879,24 @@ export class RpcSession {
     if (!q) return;
     this.#questions.delete(answerId);
     if (retKind === RET_RESULTS) {
-      // capCount already populated by the summary call; per-cap kind/id
-      // still need their own boundary calls (rare path — most Returns
-      // carry zero caps).
-      const caps = new Array(capCount);
-      for (let i = 0; i < capCount; i++) {
-        const kind = this.#exp.cpp_rpc_get_return_cap_kind(i);
-        const id   = this.#exp.cpp_rpc_get_return_cap_id(i);
-        if (kind === 1 /* senderHosted */) {
-          const cap = new RpcCap(this, { kind: "import", id }, this.#registry);
-          this.#trackImport(cap, id);
-          caps[i] = cap;
-        } else {
-          caps[i] = null;
+      // Most Returns carry zero caps — skip even allocating the empty
+      // array in that case. The non-bootstrap zero-extract path returns
+      // { bytes, caps } where `caps` is the same shared empty array.
+      let caps;
+      if (capCount === 0) {
+        caps = EMPTY_CAPS;
+      } else {
+        caps = new Array(capCount);
+        for (let i = 0; i < capCount; i++) {
+          const kind = this.#exp.cpp_rpc_get_return_cap_kind(i);
+          const id   = this.#exp.cpp_rpc_get_return_cap_id(i);
+          if (kind === 1 /* senderHosted */) {
+            const cap = new RpcCap(this, { kind: "import", id }, this.#registry);
+            this.#trackImport(cap, id);
+            caps[i] = cap;
+          } else {
+            caps[i] = null;
+          }
         }
       }
       // The bootstrap cap lives at importId 0. The bootstrap RpcCap was
