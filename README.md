@@ -1,6 +1,6 @@
 # capnwasm
 
-Typed RPC for the browser, with a real Cap'n Proto C++ runtime in 41 KB gz (35 KB brotli) for the wasm-only path; **49 KB gz** for the typical typed-proxy + HTTP-batch shape. Talks to non-JS services. Beats capnweb 1.7-3.7× on real workloads, 29× on sequential HTTP-batch calls.
+Typed RPC for the browser, with a real Cap'n Proto C++ runtime in 38 KB gz (32 KB brotli) for the wasm-only path; **46 KB gz** for the typical typed-proxy + HTTP-batch shape. Talks to non-JS services. Beats capnweb 1.7-3.7× on real workloads, 29× on sequential HTTP-batch calls.
 
 ```js
 // 1. Write a schema:           user.capnp
@@ -122,10 +122,10 @@ All entry-point sizes are minified-then-gzipped (the `dist/` build that ships in
 | | what | gzip | brotli |
 |---|---|---|---|
 | `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, base64-inlined wasm) | 68 KB | 63 KB |
-| `import "capnwasm/browser"` | wasm-only path: shim + loader + slim wasm. Read capnp messages, no RPC. | **41 KB** | **35 KB** |
-| `+ "capnwasm/rpc"` | adds the RPC layer (sessions, caps, streaming, all wire-conformance handlers) | **47 KB** | **40 KB** |
-| `+ "capnwasm/typed" + "capnwasm/http-batch"` | typed proxy + HTTP-batch transport — the typical browser app shape | **49 KB** | **42 KB** |
-| All four transports + typed + dynamic | every transport (WS, HTTP-batch, HTTP-stream, postMessage) + typed proxy + dynamic-schema reader | **55 KB** | **47 KB** |
+| `import "capnwasm/browser"` | wasm-only path: shim + loader + slim wasm. Read capnp messages, no RPC. | **38 KB** | **32 KB** |
+| `+ "capnwasm/rpc"` | adds the RPC layer (sessions, caps, streaming, all wire-conformance handlers) | **43 KB** | **37 KB** |
+| `+ "capnwasm/typed" + "capnwasm/http-batch"` | typed proxy + HTTP-batch transport — the typical browser app shape | **46 KB** | **39 KB** |
+| All four transports + typed + dynamic | every transport (WS, HTTP-batch, HTTP-stream, postMessage) + typed proxy + dynamic-schema reader | **52 KB** | **44 KB** |
 | `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | 2.6 KB | 2.4 KB |
 | `import "capnwasm/dynamic"` | runtime-schema reader — schema is data, no codegen step ([docs](docs/dynamic.md)) | 3.9 KB | 3.6 KB |
 | `import "capnwasm/codegen"` | wasm-built capnp schema compiler — runs in browser | 356 KB | — |
@@ -142,7 +142,7 @@ cw.inspect(fetch("/api/user.capnp"));   // expandable tree in the console
 
 **Live three-way playground** at [teamchong.github.io/capnwasm](https://teamchong.github.io/capnwasm/) — REST/JSON vs capnweb vs capnwasm side-by-side, fetching the same fixtures and rendering to DOM in your browser. Plus a [WebSocket RPC bench](https://teamchong.github.io/capnwasm/rpc.html) that runs burst, pipelining, and 64 KB binary-echo workloads against a real RPC server (capnwasm wins ~5× on burst). Source in [`web/`](web/) — `cd web && npm run dev` to run it locally.
 
-For browsers, prefer `capnwasm/browser`: a tiny JS shim + a separately-fetched 41 KB `dist/capnp.slim.wasm`. No base64 inflation, and `WebAssembly.instantiateStreaming` compiles the wasm while it's still being downloaded. Add `capnwasm/typed` and one transport (`capnwasm/http-batch`, `capnwasm/http-stream`, `capnwasm/postmessage`, or the WS path via `capnwasm/rpc`) for end-to-end RPC at ~49 KB gz total.
+For browsers, prefer `capnwasm/browser`: a tiny JS shim + a separately-fetched 38 KB `dist/capnp.slim.wasm`. No base64 inflation, and `WebAssembly.instantiateStreaming` compiles the wasm while it's still being downloaded. Add `capnwasm/typed` and one transport (`capnwasm/http-batch`, `capnwasm/http-stream`, `capnwasm/postmessage`, or the WS path via `capnwasm/rpc`) for end-to-end RPC at ~46 KB gz total.
 
 For comparison: capnweb is ~21 KB gzip. We're roughly 2× larger because we ship a real Cap'n Proto wasm runtime; that buys us things capnweb structurally can't have (binary wire, zero-copy field access, true sparse-read perf, multi-language interop).
 

@@ -47,12 +47,12 @@ All sizes minified-then-gzipped (the `dist/` build that ships in npm).
 | scenario | capnweb | capnwasm | ratio |
 |---|---|---|---|
 | Whole library, RPC-ready | **21 KB** (everything in `dist/index.js`) | — | — |
-| Wasm runtime only (read capnp messages) | n/a | **41 KB** | — |
-| WebSocket RPC (transport + sessions + caps) | **21 KB** | **47 KB** | 2.2× |
-| Typed proxy + HTTP-batch transport (typical browser shape) | **21 KB** | **49 KB** | 2.3× |
-| All four transports + typed + dynamic | **21 KB** | **55 KB** | 2.6× |
+| Wasm runtime only (read capnp messages) | n/a | **38 KB** | — |
+| WebSocket RPC (transport + sessions + caps) | **21 KB** | **43 KB** | 2.0× |
+| Typed proxy + HTTP-batch transport (typical browser shape) | **21 KB** | **46 KB** | 2.2× |
+| All four transports + typed + dynamic | **21 KB** | **52 KB** | 2.5× |
 
-41 KB of every capnwasm scenario is the wasm runtime — a real Cap'n Proto C++ implementation. Hard to shrink further without dropping wire compatibility with non-JS peers. The JS code itself is small after minification (rpc.mjs is 5.2 KB gz, each transport is 0.6–1.5 KB gz, the typed proxy is 1 KB).
+38 KB of every capnwasm scenario is the wasm runtime — a real Cap'n Proto C++ implementation. The JS code itself is small after minification (rpc.mjs is 5.2 KB gz, each transport is 0.6–1.5 KB gz, the typed proxy is 1 KB). The slim browser wasm dropped 3 KB by moving the tape codec (used only by `capnwasm/tape`, the capnweb-shape compatibility layer) out of the production build.
 
 If your bundle budget is tight and you don't need binary wire interop, **capnweb is the smaller choice**. There is no way for capnwasm to reach 21 KB without giving up the wasm runtime, which is what makes the rest of the wins possible.
 
