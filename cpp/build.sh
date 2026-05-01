@@ -20,7 +20,8 @@ KJ_SOURCES=(
   "$CAPNP_SRC/kj/array.c++"
   "$CAPNP_SRC/kj/memory.c++"
   "$CAPNP_SRC/kj/units.c++"
-  "$CAPNP_SRC/kj/encoding.c++"
+  # encoding.c++ removed — UTF-16/32 / wide / hex / URI helpers; capnwasm
+  # works in UTF-8 only and does encode/decode on the JS side via TextEncoder.
   # io.c++ removed — only referenced from POSIX paths in exception.c++ we no-op.
   "$CAPNP_SRC/kj/mutex.c++"
   # time.c++ skipped: no time syscalls needed for serialize/deserialize.
@@ -108,13 +109,17 @@ FLAGS=(
   -Wl,--export=cpp_out_ptr
   -Wl,--export=cpp_in_capacity
   -Wl,--export=cpp_abi_version
-  -Wl,--export=cpp_serialize_tape
-  -Wl,--export=cpp_deserialize_to_tape
+  # cpp_lazy_* and cpp_any_* are still needed by the production code paths
+  # (cpp_loader scratch helpers, dynamic-API batch reads via cpp_lazy_open).
   -Wl,--export=cpp_lazy_open
   -Wl,--export=cpp_lazy_msg_obj_field_text
   -Wl,--export=cpp_lazy_obj_fields_text
   -Wl,--export=cpp_lazy_aux_ptr
   -Wl,--export=cpp_lazy_aux_capacity
+  # cpp_serialize_tape / cpp_deserialize_to_tape are only used by
+  # capnwasm/tape (the capnweb-shape compatibility layer). Moved to bench
+  # mode + we ship a separate tape-enabled wasm if/when that subpath is
+  # actually imported. Browser RPC/dynamic paths don't need them.
   -Wl,--export=cpp_any_open
   -Wl,--export=cpp_any_enter_struct
   -Wl,--export=cpp_any_leave_struct
@@ -239,6 +244,11 @@ if [ "$BENCH_MODE" = "1" ]; then
     -Wl,--export=cpp_any_builder_set_int64_lo_hi
     -Wl,--export=cpp_any_builder_set_bool
     -Wl,--export=cpp_any_builder_set_struct_from_bytes
+    # Tape codec — only used by the capnwasm/tape subpath (capnweb-shape
+    # serialize/deserialize). The slim build doesn't ship it; the bench
+    # build (used by tests + the inlined Node bundle) keeps it.
+    -Wl,--export=cpp_serialize_tape
+    -Wl,--export=cpp_deserialize_to_tape
   )
   WRAPPER+=("${WRAPPER_BENCH_ONLY[@]}")
 fi
