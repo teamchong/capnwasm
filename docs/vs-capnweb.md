@@ -187,6 +187,68 @@ If your app fits inside "fetch some data, render it, occasionally POST" then pla
 - You need wire compatibility with C++/Rust/Go services
 - You can absorb the 23 KB extra bundle and 5–50 ms first-load cost
 
+## End-to-end with rendering (the full pipeline)
+
+Per-call latency is a slice of the truth. The full picture is from
+`cap.method()` invocation through wire, decode, every `.field` read used
+by render, the DOM mutation, and forced layout. The
+[live render bench](../web/render-bench.html) measures all of that across
+**capnweb × capnwasm × (WebSocket, HTTP-batch) × (small, medium, large) ×
+(cold, warm)**. Every cell. No averages.
+
+`cd web && npm run dev`, open `/render-bench.html`, click Run. Numbers
+below are warm medians from one run on Apple Silicon, Chromium prod
+build, localhost (10 iter per cell). Cold is the first call after the
+transport opens — handshake + JIT + wasm fetch all baked in.
+
+### capnwasm wins
+
+| workload | capnwasm/WS | capnweb/WS | note |
+|---|---|---|---|
+| Binary blob 256 KB round-trip | **1.0 ms** | 2.3 ms | 2.3× — raw bytes vs base64 in JSON |
+| Sparse field access (50× calls, read 3 of 32) | **2.6 ms** | 3.2 ms | only crosses wasm 3× per call; capnweb materializes all 32 |
+| List render 100 records | **1.2 ms** | 1.4 ms | schema-typed binary decode + DOM build |
+
+### capnweb wins
+
+| workload | capnweb/WS | capnwasm/WS | note |
+|---|---|---|---|
+| Re-read storm (1000× field reads after one fetch) | **200 µs** | 400 µs | 2× — pure JS reads vs per-read wasm crossing |
+| List render 1000 records | **8.9 ms** | 9.7 ms | DOM dominates; capnweb's eager parse is "free" amortized |
+
+### Practically tied (within noise)
+
+| workload | capnwasm/WS | capnweb/WS | note |
+|---|---|---|---|
+| Dense field access (50× calls, read all 32) | 14.9 ms | 13.8 ms | wasm crossings catch capnweb's eager-decode lead |
+| Re-read 10× | 200 µs | 300 µs | both at the measurement floor on hot WS |
+
+### Notes on cold paths and HTTP
+
+**Cold paths are noisy** for sub-100-ms workloads. The first call after
+opening a transport mixes WS handshake / first POST / wasm fetch
+(capnwasm only) / V8 JIT warmup, none of which is the library's fault.
+Look at warm if you want to compare libraries; look at cold if you care
+about first-paint latency on a fresh tab.
+
+**HTTP-batch trails WS** for both libraries on warm because each request
+reopens / re-dispatches a session. The cold path for HTTP is shorter
+than WS (no handshake), but warm is longer (no kept connection).
+capnwasm holds the lead on blobs and sparse reads even over HTTP;
+capnweb keeps its re-read advantage on either transport.
+
+### The honest takeaway
+
+There is no single winner. Pick by workload:
+
+- **capnwasm** if your traffic is binary-heavy, sparse-field, or you
+  want one schema across multiple language SDKs.
+- **capnweb** if your traffic is JS-only and dominated by repeated
+  reads of small payloads.
+
+Both are dominated by network RTT and DOM cost in any real deployment;
+the library-level delta only shows up when those two are small.
+
 ## Methodology / reproducibility
 
 - In-process numbers: `node bench/rpc_bench.mjs` and `node bench/realistic.mjs`
@@ -195,6 +257,7 @@ If your app fits inside "fetch some data, render it, occasionally POST" then pla
 - All wins reported are median of multiple runs; outliers from GC pauses excluded.
 - Bundle sizes measured on `dist/inlined.mjs` (capnwasm) and `../capnweb/dist/index.js`
   (capnweb) post-gzip-9.
-
-End-to-end browser numbers (fetch → decode → render to DOM) are forthcoming in
-`bench/browser-e2e/` — those are the numbers that matter for actual browser apps.
+- End-to-end render bench: `cd web && npm run dev`, open `/render-bench.html`,
+  click Run. Source: `web/render-bench.html` + `web/src/render-bench/main.ts`.
+  Server endpoints (HTTP-batch + WebSocket for both libraries):
+  `web/vite-rpc-server.mjs`.

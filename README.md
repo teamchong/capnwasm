@@ -48,7 +48,8 @@ npm install capnwasm
 [DevTools inspector](docs/inspect.md) ·
 [Production deployment](docs/deployment.md) ·
 [vs gRPC-Web](docs/grpc-web-comparison.md) ·
-[vs capnweb](docs/vs-capnweb.md)
+[vs capnweb](docs/vs-capnweb.md) ·
+[Schema truth & conformance](docs/schema-truth-and-conformance.md)
 
 ---
 
@@ -142,6 +143,8 @@ cw.inspect(fetch("/api/user.capnp"));   // expandable tree in the console
 
 **Live three-way playground** at [teamchong.github.io/capnwasm](https://teamchong.github.io/capnwasm/) — REST/JSON vs capnweb vs capnwasm side-by-side, fetching the same fixtures and rendering to DOM in your browser. Plus a [WebSocket RPC bench](https://teamchong.github.io/capnwasm/rpc.html) that runs burst, pipelining, and 64 KB binary-echo workloads against a real RPC server (capnwasm wins ~5× on burst). Source in [`web/`](web/) — `cd web && npm run dev` to run it locally.
 
+**End-to-end render bench** at [teamchong.github.io/capnwasm/render-bench.html](https://teamchong.github.io/capnwasm/render-bench.html) — capnweb × capnwasm × WS × HTTP-batch × small/medium/large × cold/warm, all in one page. Measures the full pipeline (request → wire → decode → field reads → DOM mutation → forced layout). **Both libraries win some, lose some**: capnwasm leads on binary blobs and sparse reads, capnweb leads on re-read storms and large-list rendering. The page shows every cell — no averages, no cherry-picking. See [`docs/vs-capnweb.md`](docs/vs-capnweb.md) for the writeup or click through to the live page to run it yourself.
+
 For browsers, prefer `capnwasm/browser`: a tiny JS shim + a separately-fetched 38 KB `dist/capnp.slim.wasm`. No base64 inflation, and `WebAssembly.instantiateStreaming` compiles the wasm while it's still being downloaded. Add `capnwasm/typed` and one transport (`capnwasm/http-batch`, `capnwasm/http-stream`, `capnwasm/postmessage`, or the WS path via `capnwasm/rpc`) for end-to-end RPC at ~46 KB gz total.
 
 For comparison: capnweb is ~21 KB gzip. We're roughly 2× larger because we ship a real Cap'n Proto wasm runtime; that buys us things capnweb structurally can't have (binary wire, zero-copy field access, true sparse-read perf, multi-language interop).
@@ -174,6 +177,9 @@ Choose capnwasm when:
 Choose capnweb when:
 - Pure JS-to-JS, all-text payloads, and you want the smallest bundle possible
 - You don't need wire interop with non-JS peers
+- Your hot path is **re-reading** the same payload many times after one fetch (animation loops, framework re-render). capnweb's eager-decode is pure JS reads after the first parse; capnwasm pays a wasm crossing per re-read unless the app caches.
+
+The honest framing — neither is "the winner." Each owns a different region of the workload space. The [end-to-end render bench](https://teamchong.github.io/capnwasm/render-bench.html) puts both libraries side by side across 4 transports × 5 workloads × 3 sizes so you can see exactly which region your traffic falls into.
 
 ---
 
