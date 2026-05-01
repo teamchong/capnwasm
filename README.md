@@ -142,7 +142,7 @@ All entry-point sizes are minified-then-gzipped (the `dist/` build that ships in
 
 | | what | gzip | brotli |
 |---|---|---|---|
-| `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, base64-inlined wasm) | 68 KB | 63 KB |
+| `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, gzipped+base64-inlined wasm) | 47 KB | 46 KB |
 | `import "capnwasm/browser"` | wasm-only path: shim + loader + slim wasm. Read capnp messages, no RPC. | **34 KB** | **28 KB** |
 | `+ "capnwasm/rpc"` | adds the RPC layer (sessions, caps, streaming, all wire-conformance handlers) | **39 KB** | **33 KB** |
 | `+ "capnwasm/typed" + "capnwasm/http-batch"` | typed proxy + HTTP-batch transport — the typical browser app shape | **41 KB** | **35 KB** |
