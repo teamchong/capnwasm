@@ -512,8 +512,12 @@ export class RpcSession {
     // Use the cap's pre-computed BigInt(target.id) when available (the
     // typical caller is RpcCap.callBuilder which forwards its own target).
     const tIdBig = target._idBig !== undefined ? target._idBig : BigInt(target.id);
+    // typeof check is cheaper than the BigInt() coercion call when the
+    // user already passed a BigInt (the typical case — interfaceId is a
+    // schema constant emitted as `0x…n`).
+    const ifcBig = typeof interfaceId === "bigint" ? interfaceId : BigInt(interfaceId);
     const dataPtr = this.#exp.cpp_rpc_begin_call(
-      questionId, targetKind, tIdBig, BigInt(interfaceId), methodId,
+      questionId, targetKind, tIdBig, ifcBig, methodId,
       BuilderClass._DATA_WORDS, BuilderClass._PTR_WORDS,
     );
     if (!dataPtr) throw new Error("cpp_rpc_begin_call failed");
