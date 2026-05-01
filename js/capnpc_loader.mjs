@@ -134,6 +134,22 @@ export class CapnpCompiler {
   }
 
   /**
+   * Extract interface metadata from the most recently compiled request.
+   * Must be called *after* compileToModel — they share the same buffered
+   * CodeGeneratorRequest in capnpc_in. Returns a list of:
+   *   { name, id, methods: [{ id, name, paramStructId, resultStructId }] }
+   * Empty array if the schema declares no interfaces.
+   */
+  extractInterfaces() {
+    const len = this.#exports.capnpc_extract_interfaces();
+    if (len === 0) return [];
+    const outPtr = this.#exports.capnpc_out_ptr();
+    const u8 = this.#u8();
+    const json = new TextDecoder().decode(u8.slice(outPtr, outPtr + len));
+    return JSON.parse(json);
+  }
+
+  /**
    * Compile a single .capnp source. Returns the binary CodeGeneratorRequest
    * (Cap'n Proto framed message) as a Uint8Array, or throws with the
    * concatenated error text.

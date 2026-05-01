@@ -112,6 +112,7 @@ FLAGS=(
   -Wl,--export=capnpc_compile
   -Wl,--export=capnpc_get_errors
   -Wl,--export=capnpc_extract_structs
+  -Wl,--export=capnpc_extract_interfaces
   -lwasi-emulated-signal
   -lwasi-emulated-mman
   -Wl,--gc-sections

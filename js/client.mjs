@@ -9,30 +9,72 @@
 // shape obvious without forcing every caller through the lower-level RPC
 // API surface.
 
-import { load } from "../dist/inlined.mjs";
-import { connectWebSocket } from "./rpc.mjs";
+// Transports are dynamically imported per-call so a bundler only includes
+// the transport modules the user actually reaches. A typed-proxy + HTTP-
+// batch consumer pays for rpc.mjs (foundational) + http_batch.mjs only —
+// http_stream.mjs and postmessage.mjs stay out of the bundle.
+//
+// Default wasm loader is also dynamic so the heavy inlined-wasm bundle
+// isn't pulled into browser builds when the caller already has a loaded
+// `cpp` (e.g. `await load()` from "capnwasm/browser") or supplies their
+// own loader.
+async function defaultLoad() {
+  const m = await import("../dist/inlined.mjs");
+  return m.load();
+}
 
 /**
- * One-call client construction. Loads the wasm runtime, opens a WebSocket
+ * One-call client construction. Loads the wasm runtime, opens a connection
  * to `url`, and returns `{ session, cap }` where `cap` is the bootstrap
- * capability.
+ * capability. The transport is picked by URL scheme:
+ *
+ *   ws:// or wss://      → WebSocket transport (full-duplex, long-lived)
+ *   http:// or https://  → HTTP batch transport (stateless POST/response)
+ *   any URL + opts.transport === "stream" → HTTP streaming transport
  *
  *   const { session, cap } = await createClient("wss://api.example.com/rpc");
  *   const result = await cap.call(IFC, METHOD, params).promise;
  *
- * For Node, pass `opts.WebSocket` (e.g. from the `ws` package) — Node 22+
- * has a built-in WebSocket so this is only needed on older runtimes.
+ * For Node WebSocket, pass `opts.WebSocket` (e.g. from the `ws` package) —
+ * Node 22+ has a built-in WebSocket so this is only needed on older runtimes.
  *
- * @param {string} url - ws:// or wss:// URL
+ * @param {string} url
  * @param {object} [opts]
+ * @param {"auto"|"ws"|"batch"|"stream"} [opts.transport="auto"]
  * @param {InterfaceRegistry} [opts.registry] - typed wrappers for inbound calls
  * @param {object} [opts.bootstrap] - object exposed when peer requests Bootstrap
  * @param {Function} [opts.WebSocket] - WebSocket constructor (defaults to globalThis.WebSocket)
+ * @param {Function} [opts.fetch] - fetch implementation (HTTP transports)
+ * @param {object} [opts.headers] - extra HTTP headers (HTTP transports)
+ * @param {AbortSignal} [opts.signal] - aborts in-flight HTTP requests + closes
+ * @param {object} [opts.cpp] - pre-loaded CapnCpp instance. Pass this from
+ *   "capnwasm/browser" (`await load()`) to avoid pulling the inlined-wasm
+ *   bundle into your browser build.
+ * @param {Function} [opts.load] - custom loader that returns a CapnCpp.
  */
 export async function createClient(url, opts = {}) {
-  const cpp = await load();
-  const session = await connectWebSocket(cpp, url, opts);
+  const cpp = opts.cpp ?? (opts.load ? await opts.load() : await defaultLoad());
+  const transport = opts.transport ?? autoDetect(url);
+  let session;
+  if (transport === "ws") {
+    const { connectWebSocket } = await import("./rpc.mjs");
+    session = await connectWebSocket(cpp, url, opts);
+  } else if (transport === "batch") {
+    const { connectHttpBatch } = await import("./http_batch.mjs");
+    session = connectHttpBatch(cpp, url, opts);
+  } else if (transport === "stream") {
+    const { connectHttpStream } = await import("./http_stream.mjs");
+    session = connectHttpStream(cpp, url, opts);
+  } else {
+    throw new Error(`createClient: unknown transport "${transport}"`);
+  }
   return { cpp, session, cap: session.bootstrap() };
+}
+
+function autoDetect(url) {
+  if (url.startsWith("ws:") || url.startsWith("wss:")) return "ws";
+  if (url.startsWith("http:") || url.startsWith("https:")) return "batch";
+  throw new Error(`createClient: cannot auto-detect transport from "${url}"; pass opts.transport`);
 }
 
 /**

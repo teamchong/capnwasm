@@ -469,4 +469,74 @@ uint32_t capnpc_extract_structs() {
   return static_cast<uint32_t>(out.size());
 }
 
+// JS Number can only safely represent u53; capnp interface/struct IDs are
+// 64-bit hashes that routinely exceed that. Emit u64 as a decimal STRING
+// so the JS side can BigInt() it without precision loss.
+static void appendU64Str(kj::Vector<char>& out, uint64_t v) {
+  out.add('"');
+  auto s = kj::str(v);
+  out.addAll(kj::ArrayPtr<const char>(s.cStr(), s.size()));
+  out.add('"');
+}
+
+// Extract interface metadata from the buffered CodeGeneratorRequest. Emits a
+// JSON array of interfaces; each method's ordinal is its index in the
+// methods list (the same convention the runtime uses on the wire).
+//
+// Output shape per interface:
+//   { "name":"Echo", "id":"<decimal u64>", "methods":[
+//       { "id":0, "name":"echo",
+//         "paramStructId":"<decimal u64>",
+//         "resultStructId":"<decimal u64>" }, ...
+//   ]}
+// The u64 fields are quoted strings so JS BigInt(s) reads them losslessly.
+uint32_t capnpc_extract_interfaces() {
+  uint32_t reqLen;
+  std::memcpy(&reqLen, capnpc_in, 4);
+  if (reqLen + 4 > CAPNPC_CAP) return 0;
+  auto words = kj::ArrayPtr<const capnp::word>(
+      reinterpret_cast<const capnp::word*>(capnpc_in + 4),
+      reqLen / sizeof(capnp::word));
+
+  capnp::FlatArrayMessageReader reader(words);
+  auto req = reader.getRoot<capnp::schema::CodeGeneratorRequest>();
+
+  kj::Vector<char> out(4096);
+  out.add('[');
+  bool firstIface = true;
+  for (auto node : req.getNodes()) {
+    if (!node.isInterface()) continue;
+    if (!firstIface) out.add(',');
+    firstIface = false;
+    out.add('{');
+    out.addAll(kj::StringPtr("\"name\":"));
+    appendJsonString(out, shortNameOf(node.getDisplayName()));
+    out.addAll(kj::StringPtr(",\"id\":"));
+    appendU64Str(out, node.getId());
+    out.addAll(kj::StringPtr(",\"methods\":["));
+    auto in = node.getInterface();
+    bool firstMethod = true;
+    uint32_t methodOrdinal = 0;
+    for (auto method : in.getMethods()) {
+      if (!firstMethod) out.add(',');
+      firstMethod = false;
+      out.add('{');
+      out.addAll(kj::StringPtr("\"id\":"));
+      appendUint(out, methodOrdinal++);
+      out.addAll(kj::StringPtr(",\"name\":"));
+      appendJsonString(out, method.getName());
+      out.addAll(kj::StringPtr(",\"paramStructId\":"));
+      appendU64Str(out, method.getParamStructType());
+      out.addAll(kj::StringPtr(",\"resultStructId\":"));
+      appendU64Str(out, method.getResultStructType());
+      out.add('}');
+    }
+    out.addAll(kj::StringPtr("]}"));
+  }
+  out.add(']');
+  if ((uint32_t)out.size() > CAPNPC_CAP) return 0;
+  std::memcpy(capnpc_out, out.begin(), out.size());
+  return static_cast<uint32_t>(out.size());
+}
+
 }  // extern "C"

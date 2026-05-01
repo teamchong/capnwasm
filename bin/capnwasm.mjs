@@ -475,8 +475,9 @@ async function parseSchema(schemaPath) {
   // sources produce both compiler and runtime, guaranteed compatible.
   const compiler = await getCapnpCompiler();
   const structs = await compiler.compileToModel(basename(abs), text);
+  const interfaces = compiler.extractInterfaces();
   validateStructs(structs);
-  return { structs, restApis: [], typeInterfaces: [] };
+  return { structs, interfaces, restApis: [], typeInterfaces: [] };
 }
 
 
@@ -1104,6 +1105,107 @@ function generateSetter(field) {
 /**
  * Emit a `.d.ts` for the same set of structs. Each Cap'n Proto type maps
  * back to its closest TS type so consumers get autocomplete + type errors
+/**
+ * Emit interface metadata for capnp interfaces. The output is a single
+ * `<Name>_INTERFACE` const per interface, plus a callable proxy factory
+ * that the runtime helper `typedClient(cap, meta)` consumes.
+ *
+ * Each method entry references the params/results Builder/Reader classes
+ * directly (already exported by generateJs), so no separate import step
+ * is needed at the user's call site.
+ */
+function generateInterfaceMeta(interfaces, structs) {
+  const lines = [];
+  lines.push(`// --- Interface metadata ---`);
+  lines.push("");
+  for (const iface of interfaces) {
+    const name = iface.name;
+    lines.push(`export const ${name}_INTERFACE = Object.freeze({`);
+    lines.push(`  name: ${JSON.stringify(name)},`);
+    lines.push(`  id: BigInt("${iface.id}"),`);
+    lines.push(`  methods: Object.freeze([`);
+    for (const m of iface.methods) {
+      // Convention: capnpc emits param/result struct displayName as
+      // "<methodName>$Params" / "<methodName>$Results", which our struct
+      // generator surfaces as <methodName>$ParamsBuilder etc. Reference
+      // them directly by name since both live in the same .gen.mjs.
+      const paramsName = `${m.name}$Params`;
+      const resultsName = `${m.name}$Results`;
+      lines.push(`    Object.freeze({`);
+      lines.push(`      id: ${m.id},`);
+      lines.push(`      name: ${JSON.stringify(m.name)},`);
+      lines.push(`      Params: ${paramsName}Builder,`);
+      lines.push(`      ParamsReader: ${paramsName}Reader,`);
+      lines.push(`      openParams: open${paramsName},`);
+      lines.push(`      Results: ${resultsName}Builder,`);
+      lines.push(`      ResultsReader: ${resultsName}Reader,`);
+      lines.push(`      openResults: open${resultsName},`);
+      lines.push(`    }),`);
+    }
+    lines.push(`  ]),`);
+    lines.push(`});`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+/** Emit .d.ts companion for the interface metadata + a per-interface
+ *  Client type that the typed proxy returns. The Client type maps each
+ *  capnp method to a typed `(args) => Promise<results>` signature so
+ *  IDE completion works on `proxy.someMethod(args)` calls. */
+function generateInterfaceDts(interfaces, structs) {
+  const lines = [];
+  const declared = new Set(structs.map((s) => s.name));
+  // Build a lookup from struct name to its definition.
+  const structByName = new Map(structs.map((s) => [s.name, s]));
+
+  lines.push(`// --- Interface metadata + typed clients ---`);
+  lines.push("");
+  lines.push(`export interface CapnInterfaceMeta {`);
+  lines.push(`  name: string;`);
+  lines.push(`  id: bigint;`);
+  lines.push(`  methods: ReadonlyArray<CapnMethodMeta>;`);
+  lines.push(`}`);
+  lines.push(`export interface CapnMethodMeta {`);
+  lines.push(`  id: number;`);
+  lines.push(`  name: string;`);
+  lines.push(`  Params: any;`);
+  lines.push(`  ParamsReader: any;`);
+  lines.push(`  openParams: (cpp: any, bytes: Uint8Array) => any;`);
+  lines.push(`  Results: any;`);
+  lines.push(`  ResultsReader: any;`);
+  lines.push(`  openResults: (cpp: any, bytes: Uint8Array) => any;`);
+  lines.push(`}`);
+  lines.push("");
+
+  // Per-interface: a Client interface listing each method as a typed call.
+  for (const iface of interfaces) {
+    lines.push(`/** Typed client for the ${iface.name} interface — pass into typed/typedClient. */`);
+    lines.push(`export interface ${iface.name}Client {`);
+    for (const m of iface.methods) {
+      const paramsStruct = structByName.get(`${m.name}$Params`);
+      const resultsStruct = structByName.get(`${m.name}$Results`);
+      const argsType = paramsStruct ? structToTsObjectType(paramsStruct, declared) : "void";
+      const resultType = resultsStruct ? structToTsObjectType(resultsStruct, declared) : "void";
+      const argsParam = argsType === "void" || argsType === "{}" ? "" : `args: ${argsType}`;
+      lines.push(`  ${m.name}(${argsParam}): Promise<${resultType}>;`);
+    }
+    lines.push(`}`);
+    lines.push("");
+    lines.push(`export declare const ${iface.name}_INTERFACE: CapnInterfaceMeta;`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+/** Render a struct's fields as a TS object-type literal: `{ a: string; b: number }`. */
+function structToTsObjectType(struct, declared) {
+  if (!struct.fields || struct.fields.length === 0) return "{}";
+  const props = struct.fields.map((f) => `${f.name}: ${capnpToTs(f.type, declared)}`);
+  return `{ ${props.join("; ")} }`;
+}
+
+/**
  * on field misuse. Map mirrors TS_TO_CAPNP from parseTsInterfaces.
  */
 function generateDts(structs, schemaName) {
@@ -1362,9 +1464,9 @@ function generateGetter(field) {
 
 async function cmdGen(argv) {
   const args = parseGenArgs(argv);
-  const { structs, restApis, typeInterfaces } = await parseSchema(args.schema);
-  if (structs.length === 0 && restApis.length === 0) {
-    console.error("No struct or REST interface definitions found in schema.");
+  const { structs, interfaces, restApis, typeInterfaces } = await parseSchema(args.schema);
+  if (structs.length === 0 && restApis.length === 0 && (!interfaces || interfaces.length === 0)) {
+    console.error("No struct, interface, or REST interface definitions found in schema.");
     process.exit(1);
   }
 
@@ -1372,12 +1474,14 @@ async function cmdGen(argv) {
   // REST clients defined via @rest interfaces.
   const jsParts = [];
   if (structs.length > 0) jsParts.push(generateJs(structs, basename(args.schema)));
+  if (interfaces && interfaces.length > 0) jsParts.push(generateInterfaceMeta(interfaces, structs));
   for (const api of restApis) jsParts.push(generateRestClient(api, basename(args.schema), structs));
   await writeFile(args.output, jsParts.join("\n\n"));
   console.log(`Wrote ${args.output}`);
 
   const dtsParts = [];
   if (structs.length > 0) dtsParts.push(generateDts(structs, basename(args.schema)));
+  if (interfaces && interfaces.length > 0) dtsParts.push(generateInterfaceDts(interfaces, structs));
   for (const api of restApis) dtsParts.push(generateRestDts(api, basename(args.schema), structs, typeInterfaces));
   const dtsPath = args.output.replace(/\.mjs$/, ".d.ts");
   await writeFile(dtsPath, dtsParts.join("\n\n"));
