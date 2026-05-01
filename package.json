@@ -56,6 +56,9 @@
       "types":   "./js/vite-plugin.d.ts",
       "default": "./js/vite-plugin.mjs"
     },
+    "./manifest":    "./js/manifest.mjs",
+    "./harness":     "./js/harness.mjs",
+    "./probe":       "./js/probe.mjs",
     "./capnp.slim.wasm": "./dist/capnp.slim.wasm",
     "./capnp.wasm":      "./dist/capnp.wasm"
   },
