@@ -305,6 +305,147 @@ export class DynamicBuilder {
         exp.cpp_any_builder_set_data(desc.off, value.length);
         return;
       }
+      // Lists — desc.type is "list" with desc.element being the element
+      // kind ("uint32", "text", "data", "bool", etc.). The init+set pair
+      // is named after the element kind. Lists of primitives + text + data
+      // all live here.
+      case "list": {
+        if (!Array.isArray(value)) throw new TypeError(`list<${desc.element}> field expects an array`);
+        const elemKind = desc.element;
+        if (elemKind === "text") {
+          if (exp.cpp_any_builder_init_list_text(desc.off, value.length) !== 1) {
+            throw new Error("init_list_text failed");
+          }
+          const inPtr = exp.cpp_in_ptr();
+          const inCap = exp.cpp_in_capacity();
+          for (let i = 0; i < value.length; i++) {
+            const s = value[i];
+            let written;
+            if (typeof s === "string") {
+              const dst = cpp._u8.subarray(inPtr, inPtr + inCap);
+              written = SHARED_ENCODER.encodeInto(s, dst).written;
+            } else {
+              if (s.length > inCap) throw new Error("text element larger than scratch buffer");
+              cpp._u8.set(s, inPtr);
+              written = s.length;
+            }
+            if (exp.cpp_any_builder_set_list_text(desc.off, i, written) !== 1) {
+              throw new Error(`set_list_text(${i}) failed`);
+            }
+          }
+          return;
+        }
+        if (elemKind === "data") {
+          if (exp.cpp_any_builder_init_list_data(desc.off, value.length) !== 1) {
+            throw new Error("init_list_data failed");
+          }
+          const inPtr = exp.cpp_in_ptr();
+          const inCap = exp.cpp_in_capacity();
+          for (let i = 0; i < value.length; i++) {
+            const d = value[i];
+            if (!(d instanceof Uint8Array)) throw new TypeError(`list<data>[${i}] not a Uint8Array`);
+            if (d.length > inCap) throw new Error(`data element ${i} larger than scratch buffer`);
+            cpp._u8.set(d, inPtr);
+            if (exp.cpp_any_builder_set_list_data(desc.off, i, d.length) !== 1) {
+              throw new Error(`set_list_data(${i}) failed`);
+            }
+          }
+          return;
+        }
+        // Numeric / bool lists.
+        const init = exp[`cpp_any_builder_init_list_${elemKind}`];
+        const setEl = exp[`cpp_any_builder_set_list_${elemKind}`];
+        if (!init || !setEl) throw new Error(`builder for list<${elemKind}> not exported`);
+        if (init(desc.off, value.length) !== 1) {
+          throw new Error(`init_list_${elemKind} failed`);
+        }
+        if (elemKind === "uint64" || elemKind === "int64") {
+          for (let i = 0; i < value.length; i++) {
+            const v = value[i];
+            setEl(desc.off, i, typeof v === "bigint" ? v : BigInt(v));
+          }
+        } else if (elemKind === "bool") {
+          for (let i = 0; i < value.length; i++) setEl(desc.off, i, value[i] ? 1 : 0);
+        } else {
+          for (let i = 0; i < value.length; i++) setEl(desc.off, i, value[i]);
+        }
+        return;
+      }
+      // Nested struct: push a nested AnyStruct cursor onto the wasm
+      // stack so subsequent setters write into the nested struct, then
+      // walk the nested fields and pop. Doesn't allocate a separate
+      // message — wire bytes are exactly what a single end-to-end build
+      // would produce. Save/restore _schema + _dataPtr around the
+      // recursion so nested-of-nested works.
+      case "struct": {
+        if (!desc.schema) throw new Error("struct field requires a `schema` in its descriptor");
+        if (value === null) return;
+        const ns = desc.schema;
+        if (typeof ns?.dataWords !== "number" || typeof ns?.ptrWords !== "number") {
+          throw new Error("nested struct schema needs dataWords + ptrWords");
+        }
+        if (exp.cpp_any_builder_enter_struct(desc.off, ns.dataWords, ns.ptrWords) !== 1) {
+          throw new Error("enter_struct failed");
+        }
+        const savedSchema = this._schema;
+        const savedDataPtr = this._dataPtr;
+        this._schema = ns;
+        this._dataPtr = exp.cpp_any_builder_data_ptr();
+        try {
+          for (const subName in ns.fields) {
+            const v = value[subName];
+            if (v === undefined) continue;
+            this.set(subName, v);
+          }
+        } finally {
+          this._schema = savedSchema;
+          this._dataPtr = savedDataPtr;
+          if (exp.cpp_any_builder_exit_struct() !== 1) {
+            throw new Error("exit_struct failed");
+          }
+        }
+        return;
+      }
+      // List of structs: init the list-of-AnyStruct at the parent's
+      // pointer slot using the element schema's size, then for each
+      // element push the element AnyStruct onto the cursor stack and
+      // recursively populate it via the same set() machinery used for
+      // a single nested struct.
+      case "listStruct": {
+        if (!Array.isArray(value)) throw new TypeError("listStruct field expects an array");
+        const elem = desc.element;
+        if (typeof elem?.dataWords !== "number" || typeof elem?.ptrWords !== "number") {
+          throw new Error("listStruct element schema needs dataWords + ptrWords");
+        }
+        if (exp.cpp_any_builder_init_list_struct(desc.off, value.length, elem.dataWords, elem.ptrWords) !== 1) {
+          throw new Error("init_list_struct failed");
+        }
+        for (let i = 0; i < value.length; i++) {
+          const item = value[i];
+          if (item == null) continue;
+          if (exp.cpp_any_builder_enter_list_element(desc.off, i) !== 1) {
+            throw new Error(`enter_list_element(${i}) failed`);
+          }
+          const savedSchema = this._schema;
+          const savedDataPtr = this._dataPtr;
+          this._schema = elem;
+          this._dataPtr = exp.cpp_any_builder_data_ptr();
+          try {
+            for (const subName in elem.fields) {
+              const v = item[subName];
+              if (v === undefined) continue;
+              this.set(subName, v);
+            }
+          } finally {
+            this._schema = savedSchema;
+            this._dataPtr = savedDataPtr;
+            if (exp.cpp_any_builder_exit_struct() !== 1) {
+              throw new Error("exit_struct failed (list element)");
+            }
+          }
+        }
+        return;
+      }
       default:
         throw new Error(`buildDynamic: kind "${desc.type}" not supported on the write side`);
     }

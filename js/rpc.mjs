@@ -15,7 +15,10 @@ const KIND_BOOTSTRAP  = 1;
 const KIND_CALL       = 2;
 const KIND_RETURN     = 3;
 const KIND_FINISH     = 4;
+const KIND_RESOLVE    = 5;
 const KIND_RELEASE    = 6;
+const KIND_DISEMBARGO = 7;
+const KIND_ABORT      = 8;
 
 // Stream extension frame markers. Not part of standard rpc.capnp; we
 // detect them by checking byte 0 of the payload BEFORE handing to the
@@ -194,6 +197,12 @@ export class RpcSession {
   // Outbound streaming-call state: questionId -> { pushChunk, end, next }.
   // Populated by callStream; drained by #handleStreamChunk / End.
   #streamQuestions = new Map();
+  // In-flight inbound handler count. #handleCall and #runStreamHandler are
+  // async; their returned promises are tracked here so callers (the HTTP-
+  // batch handler especially) can wait until all server-side work has
+  // settled before flushing the response. See idle() below.
+  #inflight = 0;
+  #idleDeferreds = [];
 
   /**
    * @param {object} cpp - loaded CapnCpp instance (from `await load()`)
@@ -220,7 +229,19 @@ export class RpcSession {
     this.#u8     = new Uint8Array(this.#buffer);
     this.#transport = transport;
     this.#registry = registry || new InterfaceRegistry();
-    if (options.bootstrap) this.#localBootstrap = options.bootstrap;
+    if (options.bootstrap) {
+      this.#localBootstrap = options.bootstrap;
+      // Pre-install the bootstrap as localCaps[0] so peers can address it
+      // without first sending a Bootstrap frame. The wire convention
+      // already pins the bootstrap to import id 0 on the calling side;
+      // doing the same on the answering side eagerly makes the
+      // stateless-HTTP-batch case work (client sends Bootstrap once over
+      // its lifetime; subsequent batches contain only Calls against
+      // importedCap(0) — which on the server is whatever cap is sitting
+      // at localCaps[0]).
+      this.#localCaps.set(0, { target: this.#localBootstrap, refcount: 1 });
+      if (this.#nextLocalCapId === 0) this.#nextLocalCapId = 1;
+    }
     // FinalizationRegistry callback runs (sometime) after the RpcCap is GC'd.
     // We don't get strong timing guarantees, but for cap accounting that's
     // exactly the right semantic: release when nobody is using it anymore.
@@ -250,6 +271,39 @@ export class RpcSession {
 
   /** The wasm instance this session uses. Exposed for openPrimitives etc. */
   get cpp() { return this.#cpp; }
+
+  /**
+   * Resolves once all inbound handlers have settled and the outbound send
+   * queue has drained. Useful when you need to know "the server has
+   * finished servicing everything currently in flight" — the HTTP batch
+   * handler uses this to decide when to flush the response.
+   *
+   * If new inbound frames arrive while idle() is awaited, idle() will keep
+   * waiting until everything is once again drained.
+   */
+  idle() {
+    if (this.#inflight === 0 && this.#sendQueue === null) return Promise.resolve();
+    return new Promise((resolve) => { this.#idleDeferreds.push(resolve); });
+  }
+
+  // Tracks an async inbound handler. Increments the in-flight counter,
+  // attaches a finally that decrements + notifies idle waiters when the
+  // session is fully drained.
+  #trackInflight(p) {
+    this.#inflight++;
+    p.finally(() => {
+      this.#inflight--;
+      this.#maybeNotifyIdle();
+    });
+  }
+
+  #maybeNotifyIdle() {
+    if (this.#inflight === 0 && this.#sendQueue === null && this.#idleDeferreds.length) {
+      const ds = this.#idleDeferreds;
+      this.#idleDeferreds = [];
+      for (const d of ds) d();
+    }
+  }
 
   /**
    * Request the peer's bootstrap capability. Returns an RpcCap handle that
@@ -496,14 +550,18 @@ export class RpcSession {
     this.#stageIn(payload);
     const kind = this.#exp.cpp_rpc_decode(payload.length);
     switch (kind) {
-      case KIND_BOOTSTRAP: this.#handleBootstrap(); break;
-      case KIND_CALL:      this.#handleCall(); break;
-      case KIND_RETURN:    this.#handleReturn(); break;
-      case KIND_FINISH:    this.#handleFinish(); break;
-      case KIND_RELEASE:   this.#handleRelease(); break;
+      case KIND_BOOTSTRAP:  this.#handleBootstrap(); break;
+      case KIND_CALL:       this.#trackInflight(this.#handleCall()); break;
+      case KIND_RETURN:     this.#handleReturn(); break;
+      case KIND_FINISH:     this.#handleFinish(); break;
+      case KIND_RELEASE:    this.#handleRelease(); break;
+      case KIND_RESOLVE:    this.#handleResolve(); break;
+      case KIND_DISEMBARGO: this.#handleDisembargo(); break;
+      case KIND_ABORT:      this.#handleAbort(); break;
       default:
-        // Resolve/Disembargo/Abort: not yet wired. Ignored so unknown
-        // peers don't crash the loop. Wire them up as the RPC layer grows.
+        // Unknown frame kind: silently drop. Per the Cap'n Proto RPC spec,
+        // peers MAY echo back an Unimplemented frame here; capnwasm doesn't
+        // generate level-3 features (third-party handoff) so we don't bother.
         break;
     }
   }
@@ -982,6 +1040,124 @@ export class RpcSession {
     if (entry.refcount <= 0) this.#localCaps.delete(id);
   }
 
+  // ---- Resolve / Disembargo / Abort --------------------------------------
+
+  // Abort: peer hit a fatal protocol error and is tearing down. Reject
+  // every pending question/answer/stream with the reason and close the
+  // session — receiving an Abort means the wire is gone, so any later
+  // sends would fail anyway and any pending awaits would hang forever.
+  #handleAbort() {
+    const len = this.#exp.cpp_rpc_get_abort_reason();
+    const reason = len ? textDecode(this.#snapshotOut(len)) : "peer aborted";
+    const err = new Error(`peer aborted: ${reason}`);
+    for (const [, q] of this.#questions) {
+      // Attach a swallow before rejecting — bootstrap promises and other
+      // questions that nobody awaited shouldn't surface as unhandled
+      // rejections when the connection dies. Real awaiters (`await call.promise`)
+      // still see the rejection when they reach their await.
+      q.deferred.promise.catch(() => {});
+      q.deferred.reject(err);
+    }
+    this.#questions.clear();
+    for (const [, a] of this.#answers) {
+      if (a.readyDeferred && !a.resolved) a.readyDeferred.reject(err);
+    }
+    this.#answers.clear();
+    for (const [, s] of this.#streamQuestions) {
+      if (s.end) s.end(err);
+    }
+    this.#streamQuestions.clear();
+    this.close();
+  }
+
+  // Resolve: peer is informing us that an export they previously gave us as
+  // a senderPromise has now resolved to a different cap (or to an exception).
+  // The id is one of OUR import ids; rebind it to the resolved cap.
+  //
+  // capnwasm doesn't generate Resolves itself — we don't pass senderPromise
+  // capDescriptors out — but real Cap'n Proto peers (the C++ runtime,
+  // capnp-rpc-rust) might. Without this handler the import would silently
+  // route to a stale answer.
+  #handleResolve() {
+    if (this.#exp.cpp_rpc_get_resolve_summary() !== 1) return;
+    const u8 = this.#mem();
+    const dv = new DataView(u8.buffer, this.#outPtr, 12);
+    const promiseId = dv.getUint32(0, true);
+    const isException = dv.getUint32(4, true) === 1;
+    const capDescKind = dv.getUint32(8, true);
+
+    if (isException) {
+      const len = this.#exp.cpp_rpc_get_resolve_exception();
+      const reason = len ? textDecode(this.#snapshotOut(len)) : "promise broken";
+      // Drop the import; downstream calls against it will get the standard
+      // "no capability at target" exception, which is what you want for a
+      // broken promise.
+      this.#imports.delete(promiseId);
+      // Wake anyone holding a deferred on this promise (currently none —
+      // we don't attach awaiters to plain imports — but kept here so the
+      // future promise-handle path can plug in).
+      return;
+    }
+    // Cap kinds 1=senderHosted (peer-hosted) and 3=receiverHosted (us-hosted)
+    // are the level-1 cases. For senderHosted, we just remap our import
+    // entry to the new id — same Map slot, different routing target.
+    // receiverHosted means the resolved cap is one of OUR exports; in
+    // that case the import is fundamentally a loopback and the right
+    // semantics is "drop the import; future calls go to the local cap."
+    const newId = this.#exp.cpp_rpc_get_resolve_cap_id();
+    if (capDescKind === 1 /* senderHosted */ || capDescKind === 2 /* senderPromise */) {
+      // Remap. The cap id our routing uses changes from `promiseId` to `newId`.
+      // We treat them as aliases by leaving both in the map pointing at the
+      // same logical entry. (Keep promiseId so in-flight messages still route.)
+      const entry = this.#imports.get(promiseId);
+      if (entry !== undefined && newId !== promiseId) {
+        this.#imports.set(newId, entry);
+      }
+    } else {
+      // Anything else (receiverHosted / receiverAnswer / none / thirdParty):
+      // best to drop the import. Calls against `promiseId` will get a clean
+      // failure rather than silently misroute.
+      this.#imports.delete(promiseId);
+    }
+  }
+
+  // Disembargo: ordering primitive used to enforce that pipelined calls
+  // delivered before a Resolve are processed before any new calls that
+  // were sent on the resolved path. The level-1 obligation:
+  //   senderLoopback   → echo back as receiverLoopback (with the same id)
+  //   receiverLoopback → fire any local awaiter for that embargo id
+  //   accept           → level-3 only; ignore at level 1
+  //
+  // capnwasm doesn't generate senderLoopbacks of its own (we don't have
+  // the multi-vat routing that would need them), so the receiverLoopback
+  // path is unreachable in practice — but it's wired anyway so a peer
+  // doing arbitrary level-1 things lands somewhere correct.
+  #handleDisembargo() {
+    if (this.#exp.cpp_rpc_get_disembargo_summary() !== 1) return;
+    const u8 = this.#mem();
+    const dv = new DataView(u8.buffer, this.#outPtr, 16);
+    const contextKind = dv.getUint32(0, true);
+    const embargoId = dv.getUint32(4, true);
+    const targetKind = dv.getUint32(8, true);
+    const targetId = dv.getUint32(12, true);
+
+    if (contextKind === 0 /* senderLoopback */) {
+      // Echo back. Build a Disembargo with the same target + receiverLoopback.
+      const len = this.#exp.cpp_rpc_build_disembargo_receiver_loopback(
+        targetKind, targetId, embargoId,
+      );
+      if (len) this.#sendFromOut(len);
+      return;
+    }
+    if (contextKind === 1 /* receiverLoopback */) {
+      // Resolve any pending embargo. Currently we don't track outbound
+      // embargoes (we never send senderLoopback), so no action needed.
+      return;
+    }
+    // accept (level 3) or unknown — silently drop, matches the
+    // permissive-receiver pattern.
+  }
+
   #sendException(answerId, reason) {
     // If anything is waiting to pipeline off this answer, fail them with
     // the same reason — otherwise they'd hang on a promise that never settles.
@@ -1035,15 +1211,16 @@ export class RpcSession {
   #flush() {
     this.#flushScheduled = false;
     const q = this.#sendQueue;
-    if (!q || q.length === 0) return;
+    if (!q || q.length === 0) { this.#maybeNotifyIdle(); return; }
     this.#sendQueue = null;
     const total = this.#sendQueueBytes;
     this.#sendQueueBytes = 0;
-    if (q.length === 1) { this.#transport.send(q[0]); return; }
+    if (q.length === 1) { this.#transport.send(q[0]); this.#maybeNotifyIdle(); return; }
     const out = new Uint8Array(total);
     let p = 0;
     for (let i = 0; i < q.length; i++) { out.set(q[i], p); p += q[i].length; }
     this.#transport.send(out);
+    this.#maybeNotifyIdle();
   }
 
   // For paths that materialize bytes for the user (call-result delivery,
@@ -1105,6 +1282,9 @@ export class RpcCap {
   }
   /** Used by typed wrappers to look up the method handler for an inbound call. */
   get _target() { return this.#target; }
+  /** Wasm instance the cap's session uses — needed by typed proxies that
+   *  build params/result Builder/Reader instances. */
+  get cpp() { return this.#session.cpp; }
 }
 
 /**

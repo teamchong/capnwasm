@@ -199,10 +199,14 @@ const r = new DynamicReader(cpp, dynamicUser);
 
 This is useful for tools that want to walk an arbitrary message generically (inspectors, diff viewers) but already have a codegen'd reader sitting around for the schema.
 
+## What landed in this pass
+
+- **List of primitives builders** — every numeric type, bool, text, data. Init + per-element write, both via the wasm cursor.
+- **Nested-struct builders** — `kind: "struct"` with a recursive `schema:`. In-place write via a wasm cursor stack (max depth 8); wire bytes are bit-identical to a single end-to-end build. Arbitrarily-deep nesting.
+- **List-of-struct builders** — `kind: "listStruct"` with an `element:` schema. Initializes a `List<AnyStruct>` of the right element size at the parent's pointer slot, then writes each element in-place by pushing onto the cursor stack.
+
 ## What's not in this pass
 
-- **List builders** — wasm side doesn't expose a list-builder API yet.
-- **Nested-struct builders** — same; would need a wasm-side `cpp_any_builder_enter_struct` to push the cursor.
 - **Capability fields** — caps are server-managed identities, not data; capnwasm/dynamic is for plain data structs. RPC clients can still send caps via the codegen RPC layer.
 - **Unions** — discriminant reading works (via the underlying `cpp_any_uint16_at`), but there's no friendly union API. Model unions as a `which` field plus per-variant fields and check `which` directly.
 

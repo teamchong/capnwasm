@@ -138,19 +138,60 @@ FLAGS=(
   -Wl,--export=cpp_any_bool_at
   -Wl,--export=cpp_any_batch_read
   -Wl,--export=cpp_any_builder_init
-  -Wl,--export=cpp_any_builder_set_uint8
-  -Wl,--export=cpp_any_builder_set_uint16
-  -Wl,--export=cpp_any_builder_set_uint32
-  -Wl,--export=cpp_any_builder_set_int64_lo_hi
-  -Wl,--export=cpp_any_builder_set_bool
+  # NOTE: cpp_any_builder_set_uint8/16/32, set_int64_lo_hi, set_bool intentionally
+  # not exported — JS writes data-section primitives directly via the cached
+  # data_ptr offset, no wasm boundary call. Keeping the C++ definitions
+  # available (extern "C") for tests that need to write via wasm; --gc-sections
+  # drops them from the production wasm because nothing references them.
   -Wl,--export=cpp_any_builder_set_text
   -Wl,--export=cpp_any_builder_set_data
+  -Wl,--export=cpp_any_builder_init_list_uint8
+  -Wl,--export=cpp_any_builder_set_list_uint8
+  -Wl,--export=cpp_any_builder_init_list_uint16
+  -Wl,--export=cpp_any_builder_set_list_uint16
+  -Wl,--export=cpp_any_builder_init_list_uint32
+  -Wl,--export=cpp_any_builder_set_list_uint32
+  -Wl,--export=cpp_any_builder_init_list_uint64
+  -Wl,--export=cpp_any_builder_set_list_uint64
+  -Wl,--export=cpp_any_builder_init_list_int8
+  -Wl,--export=cpp_any_builder_set_list_int8
+  -Wl,--export=cpp_any_builder_init_list_int16
+  -Wl,--export=cpp_any_builder_set_list_int16
+  -Wl,--export=cpp_any_builder_init_list_int32
+  -Wl,--export=cpp_any_builder_set_list_int32
+  -Wl,--export=cpp_any_builder_init_list_int64
+  -Wl,--export=cpp_any_builder_set_list_int64
+  -Wl,--export=cpp_any_builder_init_list_float32
+  -Wl,--export=cpp_any_builder_set_list_float32
+  -Wl,--export=cpp_any_builder_init_list_float64
+  -Wl,--export=cpp_any_builder_set_list_float64
+  -Wl,--export=cpp_any_builder_init_list_bool
+  -Wl,--export=cpp_any_builder_set_list_bool
+  -Wl,--export=cpp_any_builder_init_list_text
+  -Wl,--export=cpp_any_builder_set_list_text
+  -Wl,--export=cpp_any_builder_init_list_data
+  -Wl,--export=cpp_any_builder_set_list_data
+  # cpp_any_builder_set_struct_from_bytes — superseded by enter_struct/exit_struct,
+  # left in source for tests but not exported in the production build.
+  -Wl,--export=cpp_any_builder_enter_struct
+  -Wl,--export=cpp_any_builder_exit_struct
+  -Wl,--export=cpp_any_builder_init_list_struct
+  -Wl,--export=cpp_any_builder_enter_list_element
   -Wl,--export=cpp_any_builder_finalize
   -Wl,--export=cpp_any_builder_data_ptr
   -Wl,--export=cpp_rpc_build_bootstrap
   -Wl,--export=cpp_rpc_build_call
   -Wl,--export=cpp_rpc_build_return
   -Wl,--export=cpp_rpc_build_release
+  -Wl,--export=cpp_rpc_build_disembargo_receiver_loopback
+  # cpp_rpc_build_{abort, resolve_*, disembargo_sender_loopback} — exported
+  # only in bench mode (used by test harness to inject these frames at peers).
+  # Production receivers handle the frames; they're not generated locally.
+  -Wl,--export=cpp_rpc_get_abort_reason
+  -Wl,--export=cpp_rpc_get_resolve_summary
+  -Wl,--export=cpp_rpc_get_resolve_cap_id
+  -Wl,--export=cpp_rpc_get_resolve_exception
+  -Wl,--export=cpp_rpc_get_disembargo_summary
   -Wl,--export=cpp_rpc_decode
   -Wl,--export=cpp_rpc_get_bootstrap_question_id
   -Wl,--export=cpp_rpc_get_call_summary
@@ -186,6 +227,18 @@ if [ "$BENCH_MODE" = "1" ]; then
     -Wl,--export=cpp_typed_serialize_wide
     -Wl,--export=cpp_typed_field_at
     -Wl,--export=cpp_conformance_serialize
+    # Test-only RPC builders (inject frames into peers in tests)
+    -Wl,--export=cpp_rpc_build_abort
+    -Wl,--export=cpp_rpc_build_resolve_cap
+    -Wl,--export=cpp_rpc_build_resolve_exception
+    -Wl,--export=cpp_rpc_build_disembargo_sender_loopback
+    # Test-only setters that JS replaced with direct-memory writes
+    -Wl,--export=cpp_any_builder_set_uint8
+    -Wl,--export=cpp_any_builder_set_uint16
+    -Wl,--export=cpp_any_builder_set_uint32
+    -Wl,--export=cpp_any_builder_set_int64_lo_hi
+    -Wl,--export=cpp_any_builder_set_bool
+    -Wl,--export=cpp_any_builder_set_struct_from_bytes
   )
   WRAPPER+=("${WRAPPER_BENCH_ONLY[@]}")
 fi

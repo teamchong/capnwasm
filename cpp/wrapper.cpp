@@ -1080,10 +1080,29 @@ static capnp::MallocMessageBuilder* any_builder = nullptr;
 alignas(8) static char any_builder_root_storage[64];
 static capnp::AnyStruct::Builder* any_builder_root = nullptr;
 
+// Cursor stack for nested-struct building. cursor_stack[0] is the root;
+// enter_struct pushes a nested AnyStruct::Builder onto the stack so all
+// subsequent setters (via current_cursor()) write into the nested struct.
+// exit_struct pops back. Max depth bounds the supported nesting.
+constexpr int CURSOR_MAX_DEPTH = 8;
+alignas(8) static char cursor_stack_storage[CURSOR_MAX_DEPTH][sizeof(capnp::AnyStruct::Builder)];
+static capnp::AnyStruct::Builder* cursor_stack[CURSOR_MAX_DEPTH] = { nullptr };
+static int cursor_depth = 0;
+
+static inline capnp::AnyStruct::Builder* current_cursor() {
+  return cursor_stack[cursor_depth];
+}
+
 uint32_t cpp_any_builder_init(uint32_t data_words, uint32_t ptr_words) {
+  while (cursor_depth > 0) {
+    cursor_stack[cursor_depth]->~Builder();
+    cursor_stack[cursor_depth] = nullptr;
+    cursor_depth--;
+  }
   if (any_builder_root) {
     any_builder_root->~Builder();
     any_builder_root = nullptr;
+    cursor_stack[0] = nullptr;
   }
   if (any_builder) {
     any_builder->~MallocMessageBuilder();
@@ -1097,6 +1116,31 @@ uint32_t cpp_any_builder_init(uint32_t data_words, uint32_t ptr_words) {
   static_assert(sizeof(capnp::AnyStruct::Builder) <= sizeof(any_builder_root_storage),
                 "any_builder_root_storage too small");
   any_builder_root = new (any_builder_root_storage) capnp::AnyStruct::Builder(kj::mv(anyStruct));
+  cursor_stack[0] = any_builder_root;
+  cursor_depth = 0;
+  return 1;
+}
+
+// Push a nested AnyStruct cursor onto the stack. All setters use the new
+// top-of-stack until exit_struct is called.
+uint32_t cpp_any_builder_enter_struct(uint32_t ptr_idx, uint32_t data_words, uint32_t ptr_words) {
+  if (cursor_depth + 1 >= CURSOR_MAX_DEPTH) return 0;
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  auto ptrs = cur->getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  auto nested = ptrs[ptr_idx].initAsAnyStruct(data_words, ptr_words);
+  cursor_depth++;
+  cursor_stack[cursor_depth] = new (cursor_stack_storage[cursor_depth])
+      capnp::AnyStruct::Builder(kj::mv(nested));
+  return 1;
+}
+
+uint32_t cpp_any_builder_exit_struct() {
+  if (cursor_depth == 0) return 0;
+  cursor_stack[cursor_depth]->~Builder();
+  cursor_stack[cursor_depth] = nullptr;
+  cursor_depth--;
   return 1;
 }
 
@@ -1106,24 +1150,28 @@ uint32_t cpp_any_builder_init(uint32_t data_words, uint32_t ptr_words) {
 // Pointer-section fields (text, data, structs) still need wasm because
 // they require arena allocation, but the inline data is just bytes.
 uint32_t cpp_any_builder_data_ptr() {
-  if (!any_builder_root) return 0;
-  return reinterpret_cast<uint32_t>(any_builder_root->getDataSection().begin());
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  return reinterpret_cast<uint32_t>(cur->getDataSection().begin());
 }
 
 uint32_t cpp_any_builder_data_size() {
-  if (!any_builder_root) return 0;
-  return static_cast<uint32_t>(any_builder_root->getDataSection().size());
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  return static_cast<uint32_t>(cur->getDataSection().size());
 }
 
 void cpp_any_builder_set_uint8(uint32_t byte_off, uint32_t value) {
-  if (!any_builder_root) return;
-  auto data = any_builder_root->getDataSection();
+  auto cur = current_cursor();
+  if (!cur) return;
+  auto data = cur->getDataSection();
   if (byte_off < data.size()) data[byte_off] = static_cast<uint8_t>(value);
 }
 
 void cpp_any_builder_set_uint16(uint32_t byte_off, uint32_t value) {
-  if (!any_builder_root) return;
-  auto data = any_builder_root->getDataSection();
+  auto cur = current_cursor();
+  if (!cur) return;
+  auto data = cur->getDataSection();
   if (byte_off + 2 <= data.size()) {
     uint16_t v = static_cast<uint16_t>(value);
     std::memcpy(data.begin() + byte_off, &v, 2);
@@ -1131,16 +1179,18 @@ void cpp_any_builder_set_uint16(uint32_t byte_off, uint32_t value) {
 }
 
 void cpp_any_builder_set_uint32(uint32_t byte_off, uint32_t value) {
-  if (!any_builder_root) return;
-  auto data = any_builder_root->getDataSection();
+  auto cur = current_cursor();
+  if (!cur) return;
+  auto data = cur->getDataSection();
   if (byte_off + 4 <= data.size()) {
     std::memcpy(data.begin() + byte_off, &value, 4);
   }
 }
 
 void cpp_any_builder_set_int64_lo_hi(uint32_t byte_off, uint32_t lo, uint32_t hi) {
-  if (!any_builder_root) return;
-  auto data = any_builder_root->getDataSection();
+  auto cur = current_cursor();
+  if (!cur) return;
+  auto data = cur->getDataSection();
   if (byte_off + 8 <= data.size()) {
     std::memcpy(data.begin() + byte_off, &lo, 4);
     std::memcpy(data.begin() + byte_off + 4, &hi, 4);
@@ -1148,8 +1198,9 @@ void cpp_any_builder_set_int64_lo_hi(uint32_t byte_off, uint32_t lo, uint32_t hi
 }
 
 void cpp_any_builder_set_bool(uint32_t bit_off, uint32_t value) {
-  if (!any_builder_root) return;
-  auto data = any_builder_root->getDataSection();
+  auto cur = current_cursor();
+  if (!cur) return;
+  auto data = cur->getDataSection();
   uint32_t byte = bit_off / 8;
   uint32_t bit = bit_off & 7;
   if (byte >= data.size()) return;
@@ -1157,22 +1208,138 @@ void cpp_any_builder_set_bool(uint32_t bit_off, uint32_t value) {
   else       data[byte] &= static_cast<uint8_t>(~(1u << bit));
 }
 
-// Set a Text field at pointer slot `ptr_idx` from cpp_in[0..text_len].
 uint32_t cpp_any_builder_set_text(uint32_t ptr_idx, uint32_t text_len) {
-  if (!any_builder_root) return 0;
-  auto ptrs = any_builder_root->getPointerSection();
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  auto ptrs = cur->getPointerSection();
   if (ptr_idx >= ptrs.size()) return 0;
-  auto sp = capnp::Text::Reader(reinterpret_cast<const char*>(cpp_in), text_len);
-  ptrs[ptr_idx].setAs<capnp::Text>(sp);
+  ptrs[ptr_idx].setAs<capnp::Text>(
+      capnp::Text::Reader(reinterpret_cast<const char*>(cpp_in), text_len));
   return 1;
 }
 
 uint32_t cpp_any_builder_set_data(uint32_t ptr_idx, uint32_t data_len) {
-  if (!any_builder_root) return 0;
-  auto ptrs = any_builder_root->getPointerSection();
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  auto ptrs = cur->getPointerSection();
   if (ptr_idx >= ptrs.size()) return 0;
-  auto d = capnp::Data::Reader(cpp_in, data_len);
-  ptrs[ptr_idx].setAs<capnp::Data>(d);
+  ptrs[ptr_idx].setAs<capnp::Data>(capnp::Data::Reader(cpp_in, data_len));
+  return 1;
+}
+
+// ---- Dynamic list-of-primitives builders -----------------------------------
+#define LIST_PRIM(NAME, CTYPE) \
+  uint32_t cpp_any_builder_init_list_##NAME(uint32_t ptr_idx, uint32_t count) { \
+    auto cur = current_cursor(); \
+    if (!cur) return 0; \
+    auto ptrs = cur->getPointerSection(); \
+    if (ptr_idx >= ptrs.size()) return 0; \
+    ptrs[ptr_idx].initAs<capnp::List<CTYPE>>(count); \
+    return 1; \
+  } \
+  void cpp_any_builder_set_list_##NAME(uint32_t ptr_idx, uint32_t i, CTYPE v) { \
+    auto cur = current_cursor(); \
+    if (!cur) return; \
+    auto ptrs = cur->getPointerSection(); \
+    if (ptr_idx >= ptrs.size()) return; \
+    auto list = ptrs[ptr_idx].getAs<capnp::List<CTYPE>>(); \
+    if (i >= list.size()) return; \
+    list.set(i, v); \
+  }
+
+LIST_PRIM(uint8,   uint8_t)
+LIST_PRIM(uint16,  uint16_t)
+LIST_PRIM(uint32,  uint32_t)
+LIST_PRIM(uint64,  uint64_t)
+LIST_PRIM(int8,    int8_t)
+LIST_PRIM(int16,   int16_t)
+LIST_PRIM(int32,   int32_t)
+LIST_PRIM(int64,   int64_t)
+LIST_PRIM(float32, float)
+LIST_PRIM(float64, double)
+LIST_PRIM(bool,    bool)
+
+#undef LIST_PRIM
+
+uint32_t cpp_any_builder_init_list_text(uint32_t ptr_idx, uint32_t count) {
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  auto ptrs = cur->getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  ptrs[ptr_idx].initAs<capnp::List<capnp::Text>>(count);
+  return 1;
+}
+uint32_t cpp_any_builder_set_list_text(uint32_t ptr_idx, uint32_t i, uint32_t text_len) {
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  auto ptrs = cur->getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  auto list = ptrs[ptr_idx].getAs<capnp::List<capnp::Text>>();
+  if (i >= list.size()) return 0;
+  list.set(i, capnp::Text::Reader(reinterpret_cast<const char*>(cpp_in), text_len));
+  return 1;
+}
+
+uint32_t cpp_any_builder_init_list_data(uint32_t ptr_idx, uint32_t count) {
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  auto ptrs = cur->getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  ptrs[ptr_idx].initAs<capnp::List<capnp::Data>>(count);
+  return 1;
+}
+uint32_t cpp_any_builder_set_list_data(uint32_t ptr_idx, uint32_t i, uint32_t data_len) {
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  auto ptrs = cur->getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  auto list = ptrs[ptr_idx].getAs<capnp::List<capnp::Data>>();
+  if (i >= list.size()) return 0;
+  list.set(i, capnp::Data::Reader(cpp_in, data_len));
+  return 1;
+}
+
+// List of structs: init the list-of-AnyStruct + push element via cursor stack.
+uint32_t cpp_any_builder_init_list_struct(
+    uint32_t ptr_idx, uint32_t count, uint32_t data_words, uint32_t ptr_words) {
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  auto ptrs = cur->getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  ptrs[ptr_idx].initAsListOfAnyStruct(
+      static_cast<uint16_t>(data_words),
+      static_cast<uint16_t>(ptr_words),
+      count);
+  return 1;
+}
+
+uint32_t cpp_any_builder_enter_list_element(uint32_t ptr_idx, uint32_t elem_idx) {
+  if (cursor_depth + 1 >= CURSOR_MAX_DEPTH) return 0;
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  auto ptrs = cur->getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  auto anyList = ptrs[ptr_idx].getAs<capnp::AnyList>();
+  auto structList = anyList.as<capnp::List<capnp::AnyStruct>>();
+  if (elem_idx >= structList.size()) return 0;
+  cursor_depth++;
+  cursor_stack[cursor_depth] = new (cursor_stack_storage[cursor_depth])
+      capnp::AnyStruct::Builder(structList[elem_idx]);
+  return 1;
+}
+
+// Set a pointer slot's struct from a fully-built capnp message in cpp_in.
+uint32_t cpp_any_builder_set_struct_from_bytes(uint32_t ptr_idx, uint32_t bytes_len) {
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  auto ptrs = cur->getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  if (bytes_len > SCRATCH_CAP) return 0;
+  auto words = kj::ArrayPtr<const capnp::word>(
+      reinterpret_cast<const capnp::word*>(cpp_in),
+      bytes_len / sizeof(capnp::word));
+  capnp::FlatArrayMessageReader reader(words);
+  ptrs[ptr_idx].setAs<capnp::AnyPointer>(reader.getRoot<capnp::AnyPointer>());
   return 1;
 }
 
@@ -1398,6 +1565,178 @@ int32_t cpp_rpc_decode(uint32_t bytes_len) {
 uint32_t cpp_rpc_get_bootstrap_question_id() {
   if (!rpc_reader) return 0;
   return rpc_reader->getRoot<capnp::rpc::Message>().getBootstrap().getQuestionId();
+}
+
+// ---- Abort / Resolve / Disembargo accessors --------------------------------
+//
+// Abort carries an Exception. We surface the textual reason; sessions
+// receiving an Abort terminate immediately. Returns the byte length of the
+// reason text written to cpp_out, or 0 if not an Abort or no reason.
+uint32_t cpp_rpc_get_abort_reason() {
+  if (!rpc_reader) return 0;
+  auto msg = rpc_reader->getRoot<capnp::rpc::Message>();
+  if (msg.which() != capnp::rpc::Message::ABORT) return 0;
+  auto reason = msg.getAbort().getReason();
+  if (reason.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, reason.cStr(), reason.size());
+  return static_cast<uint32_t>(reason.size());
+}
+
+// Resolve summary: one boundary call returns all the metadata for a Resolve
+// frame. Layout (12 bytes) at cpp_out:
+//   [0..4]  promiseId   u32 LE
+//   [4..8]  kind        u32 LE  (0=cap, 1=exception)
+//   [8..12] capDescKind u32 LE  (0=none, 1=senderHosted, 2=senderPromise,
+//                                3=receiverHosted, 4=receiverAnswer,
+//                                5=thirdPartyHosted)
+// Returns 1 on success, 0 if not a Resolve.
+uint32_t cpp_rpc_get_resolve_summary() {
+  if (!rpc_reader) return 0;
+  auto msg = rpc_reader->getRoot<capnp::rpc::Message>();
+  if (msg.which() != capnp::rpc::Message::RESOLVE) return 0;
+  auto rr = msg.getResolve();
+  uint32_t* w = reinterpret_cast<uint32_t*>(cpp_out);
+  w[0] = static_cast<uint32_t>(rr.getPromiseId());
+  if (rr.which() == capnp::rpc::Resolve::EXCEPTION) {
+    w[1] = 1;
+    w[2] = 0;
+  } else {
+    w[1] = 0;
+    auto cap = rr.getCap();
+    switch (cap.which()) {
+      case capnp::rpc::CapDescriptor::NONE:               w[2] = 0; break;
+      case capnp::rpc::CapDescriptor::SENDER_HOSTED:      w[2] = 1; break;
+      case capnp::rpc::CapDescriptor::SENDER_PROMISE:     w[2] = 2; break;
+      case capnp::rpc::CapDescriptor::RECEIVER_HOSTED:    w[2] = 3; break;
+      case capnp::rpc::CapDescriptor::RECEIVER_ANSWER:    w[2] = 4; break;
+      case capnp::rpc::CapDescriptor::THIRD_PARTY_HOSTED: w[2] = 5; break;
+    }
+  }
+  return 1;
+}
+
+uint32_t cpp_rpc_get_resolve_cap_id() {
+  if (!rpc_reader) return 0;
+  auto msg = rpc_reader->getRoot<capnp::rpc::Message>();
+  if (msg.which() != capnp::rpc::Message::RESOLVE) return 0;
+  auto rr = msg.getResolve();
+  if (rr.which() != capnp::rpc::Resolve::CAP) return 0;
+  auto cap = rr.getCap();
+  switch (cap.which()) {
+    case capnp::rpc::CapDescriptor::SENDER_HOSTED:   return cap.getSenderHosted();
+    case capnp::rpc::CapDescriptor::SENDER_PROMISE:  return cap.getSenderPromise();
+    case capnp::rpc::CapDescriptor::RECEIVER_HOSTED: return cap.getReceiverHosted();
+    default: return 0;
+  }
+}
+
+uint32_t cpp_rpc_get_resolve_exception() {
+  if (!rpc_reader) return 0;
+  auto msg = rpc_reader->getRoot<capnp::rpc::Message>();
+  if (msg.which() != capnp::rpc::Message::RESOLVE) return 0;
+  auto rr = msg.getResolve();
+  if (rr.which() != capnp::rpc::Resolve::EXCEPTION) return 0;
+  auto reason = rr.getException().getReason();
+  if (reason.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, reason.cStr(), reason.size());
+  return static_cast<uint32_t>(reason.size());
+}
+
+// Disembargo summary: 16 bytes at cpp_out — context kind, embargo id, target
+// kind, target id.
+uint32_t cpp_rpc_get_disembargo_summary() {
+  if (!rpc_reader) return 0;
+  auto msg = rpc_reader->getRoot<capnp::rpc::Message>();
+  if (msg.which() != capnp::rpc::Message::DISEMBARGO) return 0;
+  auto d = msg.getDisembargo();
+  uint32_t* w = reinterpret_cast<uint32_t*>(cpp_out);
+  auto ctx = d.getContext();
+  switch (ctx.which()) {
+    case capnp::rpc::Disembargo::Context::SENDER_LOOPBACK:
+      w[0] = 0; w[1] = ctx.getSenderLoopback(); break;
+    case capnp::rpc::Disembargo::Context::RECEIVER_LOOPBACK:
+      w[0] = 1; w[1] = ctx.getReceiverLoopback(); break;
+    case capnp::rpc::Disembargo::Context::ACCEPT:
+      w[0] = 2; w[1] = 0; break;
+    default:
+      w[0] = 0xff; w[1] = 0; break;
+  }
+  auto target = d.getTarget();
+  switch (target.which()) {
+    case capnp::rpc::MessageTarget::IMPORTED_CAP:
+      w[2] = 0; w[3] = target.getImportedCap(); break;
+    case capnp::rpc::MessageTarget::PROMISED_ANSWER:
+      w[2] = 1; w[3] = target.getPromisedAnswer().getQuestionId(); break;
+  }
+  return 1;
+}
+
+// Build a Disembargo with a receiverLoopback context — used to echo back a
+// senderLoopback from a peer.
+uint32_t cpp_rpc_build_disembargo_receiver_loopback(
+    uint32_t target_kind, uint32_t target_id, uint32_t embargo_id) {
+  resetRpcBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto d = msg.initDisembargo();
+  if (target_kind == 0) {
+    d.initTarget().setImportedCap(target_id);
+  } else {
+    d.initTarget().initPromisedAnswer().setQuestionId(target_id);
+  }
+  d.initContext().setReceiverLoopback(embargo_id);
+  return finalizeRpcBuilder();
+}
+
+// Build a Resolve(promiseId, cap=senderHosted(capId)). Test-only.
+uint32_t cpp_rpc_build_resolve_cap(uint32_t promise_id, uint32_t cap_id) {
+  resetRpcBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto rr = msg.initResolve();
+  rr.setPromiseId(promise_id);
+  rr.initCap().setSenderHosted(cap_id);
+  return finalizeRpcBuilder();
+}
+
+// Build a Resolve(promiseId, exception). Test-only.
+uint32_t cpp_rpc_build_resolve_exception(
+    uint32_t promise_id, uint32_t reason_offset, uint32_t reason_len) {
+  if (reason_offset + reason_len > SCRATCH_CAP) return 0;
+  resetRpcBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto rr = msg.initResolve();
+  rr.setPromiseId(promise_id);
+  kj::StringPtr reason(reinterpret_cast<const char*>(cpp_in + reason_offset), reason_len);
+  auto ex = rr.initException();
+  ex.setReason(reason);
+  ex.setType(capnp::rpc::Exception::Type::FAILED);
+  return finalizeRpcBuilder();
+}
+
+// Build a Disembargo with senderLoopback context. Test-only.
+uint32_t cpp_rpc_build_disembargo_sender_loopback(
+    uint32_t target_kind, uint32_t target_id, uint32_t embargo_id) {
+  resetRpcBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto d = msg.initDisembargo();
+  if (target_kind == 0) {
+    d.initTarget().setImportedCap(target_id);
+  } else {
+    d.initTarget().initPromisedAnswer().setQuestionId(target_id);
+  }
+  d.initContext().setSenderLoopback(embargo_id);
+  return finalizeRpcBuilder();
+}
+
+// Build an Abort frame with the given reason. Test-only.
+uint32_t cpp_rpc_build_abort(uint32_t reason_offset, uint32_t reason_len) {
+  if (reason_offset + reason_len > SCRATCH_CAP) return 0;
+  resetRpcBuilder();
+  auto msg = rpc_builder->initRoot<capnp::rpc::Message>();
+  auto ab = msg.initAbort();
+  kj::StringPtr reason(reinterpret_cast<const char*>(cpp_in + reason_offset), reason_len);
+  ab.setReason(reason);
+  ab.setType(capnp::rpc::Exception::Type::FAILED);
+  return finalizeRpcBuilder();
 }
 
 // Batched call-summary read: one wasm call returns all the per-Call
@@ -1683,13 +2022,20 @@ uint32_t cpp_rpc_begin_call(
   call.setInterfaceId(interface_id);
   call.setMethodId(method_id);
   auto payload = call.initParams();
-  // Tear down any prior any_builder_root and re-root it inside Call.params.content.
-  if (any_builder_root) { any_builder_root->~Builder(); any_builder_root = nullptr; }
+  // Tear down any prior any_builder_root + nested cursors before re-rooting.
+  while (cursor_depth > 0) {
+    cursor_stack[cursor_depth]->~Builder();
+    cursor_stack[cursor_depth] = nullptr;
+    cursor_depth--;
+  }
+  if (any_builder_root) { any_builder_root->~Builder(); any_builder_root = nullptr; cursor_stack[0] = nullptr; }
   if (any_builder)      { delete any_builder; any_builder = nullptr; }
   auto contentAnyStruct = payload.getContent().initAsAnyStruct(data_words, ptr_words);
   static_assert(sizeof(capnp::AnyStruct::Builder) <= sizeof(any_builder_root_storage),
                 "any_builder_root_storage too small");
   any_builder_root = new (any_builder_root_storage) capnp::AnyStruct::Builder(kj::mv(contentAnyStruct));
+  cursor_stack[0] = any_builder_root;
+  cursor_depth = 0;
   return 1;
 }
 
@@ -1704,10 +2050,17 @@ uint32_t cpp_rpc_begin_return(
   auto ret = msg.initReturn();
   ret.setAnswerId(answer_id);
   auto payload = ret.initResults();
-  if (any_builder_root) { any_builder_root->~Builder(); any_builder_root = nullptr; }
+  while (cursor_depth > 0) {
+    cursor_stack[cursor_depth]->~Builder();
+    cursor_stack[cursor_depth] = nullptr;
+    cursor_depth--;
+  }
+  if (any_builder_root) { any_builder_root->~Builder(); any_builder_root = nullptr; cursor_stack[0] = nullptr; }
   if (any_builder)      { delete any_builder; any_builder = nullptr; }
   auto contentAnyStruct = payload.getContent().initAsAnyStruct(data_words, ptr_words);
   any_builder_root = new (any_builder_root_storage) capnp::AnyStruct::Builder(kj::mv(contentAnyStruct));
+  cursor_stack[0] = any_builder_root;
+  cursor_depth = 0;
   return 1;
 }
 
