@@ -49,3 +49,17 @@
 #define KJ_FAIL_ASSERT(...) \
   for (::kj::_::Debug::Fault f(__FILE__, __LINE__, ::kj::Exception::Type::FAILED, \
                                nullptr, nullptr, ##__VA_ARGS__);; f.fatal())
+
+// KJ_LOG / KJ_DBG are debugging output paths that go through formatted
+// logging — they pull in kj::str() formatters, the Debug::log severity
+// filter, and (transitively, via kj's sysstr) the wasi-libc strerror
+// table. None of this is callable from JS in our environment; log
+// messages have nowhere to go (no stderr) even if reached. Replacing
+// the macros with no-ops lets --gc-sections drop ~1.5 KB of errno-name
+// table and the surrounding format machinery.
+#undef KJ_LOG
+#define KJ_LOG(severity, ...) ((void)0)
+#undef KJ_LOG_AT
+#define KJ_LOG_AT(severity, location, ...) ((void)0)
+#undef KJ_DBG
+#define KJ_DBG(...) ((void)0)

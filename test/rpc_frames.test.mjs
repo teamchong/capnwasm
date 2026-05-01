@@ -218,12 +218,13 @@ test("Disembargo senderLoopback: receiver echoes back as receiverLoopback with t
   assert.ok(dembFrames.length >= 1, "found at least one Disembargo frame on the wire");
 
   // Stage that frame into the server-side wasm and read the context out.
+  // cpp_rpc_decode writes the disembargo summary (16 bytes: ctxKind,
+  // embargoId, targetKind, targetId) inline at cpp_out — the standalone
+  // getter that used to do this is no longer exported.
   const dembBytes = dembFrames[0];
   new Uint8Array(setup2.cppB.memory.buffer).set(dembBytes, setup2.cppB._inPtr);
   const kind = setup2.cppB._exports.cpp_rpc_decode(dembBytes.length);
   assert.equal(kind, 7, "decoded as KIND_DISEMBARGO");
-  const summaryOk = setup2.cppB._exports.cpp_rpc_get_disembargo_summary();
-  assert.equal(summaryOk, 1);
   const dv = new DataView(setup2.cppB.memory.buffer, setup2.cppB._outPtr, 16);
   assert.equal(dv.getUint32(0, true), 1, "context kind = receiverLoopback (1)");
   assert.equal(dv.getUint32(4, true), 42, "embargoId echoed back as 42");

@@ -732,8 +732,24 @@ capnp::FlatArrayMessageReader* any_reader = nullptr;
 
 // Stack of struct readers so generated code can navigate into sub-structs
 // without persisting opaque handles in JS.
+//
+// Wrapped in a union so the array doesn't trigger default-construction at
+// module init. AnyStruct::Reader has a trivial default ctor, but the
+// compiler still emits a 32-iteration init loop in _initialize for the
+// static array — that's responsible for ~30k instructions, 75% of the
+// slim wasm's code section. The union skips per-element init; the wasm
+// spec already zero-initializes BSS, which matches what the default
+// Reader ctor would have produced. Slots are accessed via `any_stack(i)`.
 constexpr size_t ANY_STACK_DEPTH = 32;
-static capnp::AnyStruct::Reader any_stack[ANY_STACK_DEPTH];
+union AnyStackSlot {
+  AnyStackSlot() {}
+  ~AnyStackSlot() {}
+  capnp::AnyStruct::Reader r;
+};
+static AnyStackSlot any_stack_slots[ANY_STACK_DEPTH];
+static inline capnp::AnyStruct::Reader& any_stack(int i) {
+  return any_stack_slots[i].r;
+}
 static int32_t any_stack_top = -1;
 
 uint32_t cpp_any_open(uint32_t bytes_len) {
@@ -748,22 +764,22 @@ uint32_t cpp_any_open(uint32_t bytes_len) {
       bytes_len / sizeof(capnp::word));
   any_reader = new (any_reader_storage) capnp::FlatArrayMessageReader(words);
   any_stack_top = 0;
-  any_stack[0] = any_reader->getRoot<capnp::AnyPointer>().getAs<capnp::AnyStruct>();
+  any_stack(0) = any_reader->getRoot<capnp::AnyPointer>().getAs<capnp::AnyStruct>();
   // Return data section pointer so the JS Reader can read primitives
   // straight from wasm memory.
-  return reinterpret_cast<uint32_t>(any_stack[0].getDataSection().begin());
+  return reinterpret_cast<uint32_t>(any_stack(0).getDataSection().begin());
 }
 
 // Push the struct at pointer slot `ptr_idx` of the current top onto the stack.
 // Returns 1 on success, 0 if the pointer is null or out of range.
 uint32_t cpp_any_enter_struct(uint32_t ptr_idx) {
   if (any_stack_top < 0 || any_stack_top + 1 >= (int32_t)ANY_STACK_DEPTH) return 0;
-  auto top = any_stack[any_stack_top];
+  auto top = any_stack(any_stack_top);
   auto ptrs = top.getPointerSection();
   if (ptr_idx >= ptrs.size()) return 0;
   auto sub = ptrs[ptr_idx].getAs<capnp::AnyStruct>();
   any_stack_top++;
-  any_stack[any_stack_top] = sub;
+  any_stack(any_stack_top) = sub;
   return 1;
 }
 
@@ -785,7 +801,7 @@ static bool any_list_reader_set = false;
 // AnyStructs. Returns the element count (0 if missing or wrong type).
 uint32_t cpp_any_open_list(uint32_t ptr_idx) {
   if (any_stack_top < 0) return 0;
-  auto ptrs = any_stack[any_stack_top].getPointerSection();
+  auto ptrs = any_stack(any_stack_top).getPointerSection();
   if (ptr_idx >= ptrs.size()) return 0;
   any_list_reader = ptrs[ptr_idx].getAs<capnp::AnyList>();
   any_list_reader_set = true;
@@ -799,7 +815,7 @@ uint32_t cpp_any_enter_list_at(uint32_t i) {
   if (i >= any_list_reader.size()) return 0;
   if (any_stack_top + 1 >= (int32_t)ANY_STACK_DEPTH) return 0;
   any_stack_top++;
-  any_stack[any_stack_top] = any_list_reader.as<capnp::List<capnp::AnyStruct>>()[i];
+  any_stack(any_stack_top) = any_list_reader.as<capnp::List<capnp::AnyStruct>>()[i];
   return 1;
 }
 
@@ -895,7 +911,7 @@ uint32_t cpp_any_list_get_data(uint32_t i) {
 // Copies bytes to cpp_out, returns count. 0 if missing / non-text.
 uint32_t cpp_any_text_at(uint32_t ptr_idx) {
   if (any_stack_top < 0) return 0;
-  auto top = any_stack[any_stack_top];
+  auto top = any_stack(any_stack_top);
   auto ptrs = top.getPointerSection();
   if (ptr_idx >= ptrs.size()) return 0;
   auto text = ptrs[ptr_idx].getAs<capnp::Text>();
@@ -907,7 +923,7 @@ uint32_t cpp_any_text_at(uint32_t ptr_idx) {
 // Read a Data field (raw bytes) from pointer slot `ptr_idx`.
 uint32_t cpp_any_data_at(uint32_t ptr_idx) {
   if (any_stack_top < 0) return 0;
-  auto top = any_stack[any_stack_top];
+  auto top = any_stack(any_stack_top);
   auto ptrs = top.getPointerSection();
   if (ptr_idx >= ptrs.size()) return 0;
   auto data = ptrs[ptr_idx].getAs<capnp::Data>();
@@ -920,7 +936,7 @@ uint32_t cpp_any_data_at(uint32_t ptr_idx) {
 // is XOR'd with the on-wire bits, matching Cap'n Proto's encoding rule.
 int64_t cpp_any_int64_at(uint32_t byte_offset, int64_t default_val) {
   if (any_stack_top < 0) return default_val;
-  auto top = any_stack[any_stack_top];
+  auto top = any_stack(any_stack_top);
   auto data = top.getDataSection();
   if (byte_offset + 8 > data.size()) return default_val;
   int64_t v;
@@ -930,7 +946,7 @@ int64_t cpp_any_int64_at(uint32_t byte_offset, int64_t default_val) {
 
 uint32_t cpp_any_uint32_at(uint32_t byte_offset, uint32_t default_val) {
   if (any_stack_top < 0) return default_val;
-  auto top = any_stack[any_stack_top];
+  auto top = any_stack(any_stack_top);
   auto data = top.getDataSection();
   if (byte_offset + 4 > data.size()) return default_val;
   uint32_t v;
@@ -940,7 +956,7 @@ uint32_t cpp_any_uint32_at(uint32_t byte_offset, uint32_t default_val) {
 
 uint32_t cpp_any_uint16_at(uint32_t byte_offset, uint32_t default_val) {
   if (any_stack_top < 0) return default_val;
-  auto top = any_stack[any_stack_top];
+  auto top = any_stack(any_stack_top);
   auto data = top.getDataSection();
   if (byte_offset + 2 > data.size()) return default_val;
   uint16_t v;
@@ -950,7 +966,7 @@ uint32_t cpp_any_uint16_at(uint32_t byte_offset, uint32_t default_val) {
 
 uint32_t cpp_any_uint8_at(uint32_t byte_offset, uint32_t default_val) {
   if (any_stack_top < 0) return default_val;
-  auto top = any_stack[any_stack_top];
+  auto top = any_stack(any_stack_top);
   auto data = top.getDataSection();
   if (byte_offset >= data.size()) return default_val;
   uint8_t v = data[byte_offset];
@@ -959,7 +975,7 @@ uint32_t cpp_any_uint8_at(uint32_t byte_offset, uint32_t default_val) {
 
 uint32_t cpp_any_bool_at(uint32_t bit_offset, uint32_t default_val) {
   if (any_stack_top < 0) return default_val;
-  auto top = any_stack[any_stack_top];
+  auto top = any_stack(any_stack_top);
   auto data = top.getDataSection();
   uint32_t byte = bit_offset / 8;
   uint32_t bit = bit_offset & 7;
@@ -1002,7 +1018,7 @@ uint32_t cpp_any_batch_read(uint32_t input_len) {
   const size_t request_bytes = 1 + 4;  // u8 kind + u32 offset
   if (input_len < 4 + count * request_bytes) return 0;
 
-  auto top = any_stack[any_stack_top];
+  auto top = any_stack(any_stack_top);
   auto data = top.getDataSection();
   auto ptrs = top.getPointerSection();
 
@@ -2178,11 +2194,11 @@ uint32_t cpp_rpc_finalize() {
 uint32_t cpp_rpc_open_call_params() {
   if (!rpc_reader) return 0;
   auto params = rpc_reader->getRoot<capnp::rpc::Message>().getCall().getParams();
-  any_stack[0] = params.getContent().getAs<capnp::AnyStruct>();
+  any_stack(0) = params.getContent().getAs<capnp::AnyStruct>();
   any_stack_top = 0;
   // Return the data section address so the JS Reader can read primitives
   // straight from wasm memory — no per-field cpp_any_*_at boundary call.
-  return reinterpret_cast<uint32_t>(any_stack[0].getDataSection().begin());
+  return reinterpret_cast<uint32_t>(any_stack(0).getDataSection().begin());
 }
 
 // Open the inbound Return's results.content as an AnyStruct on the reader
@@ -2191,9 +2207,9 @@ uint32_t cpp_rpc_open_return_results() {
   if (!rpc_reader) return 0;
   auto ret = rpc_reader->getRoot<capnp::rpc::Message>().getReturn();
   if (!ret.isResults()) return 0;
-  any_stack[0] = ret.getResults().getContent().getAs<capnp::AnyStruct>();
+  any_stack(0) = ret.getResults().getContent().getAs<capnp::AnyStruct>();
   any_stack_top = 0;
-  return reinterpret_cast<uint32_t>(any_stack[0].getDataSection().begin());
+  return reinterpret_cast<uint32_t>(any_stack(0).getDataSection().begin());
 }
 
 // ---------------------------------------------------------------------------

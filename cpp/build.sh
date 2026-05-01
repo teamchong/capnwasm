@@ -105,6 +105,14 @@ FLAGS=(
   -Wno-unused-parameter
   -Wno-unknown-pragmas
   -Wl,--no-entry
+  # Build in WASI "reactor" mode instead of the default "command" mode.
+  # Command mode auto-links a crt1.o whose _start parses argv, calls
+  # global ctors, calls main, then proc_exits (31k instructions, 76% of
+  # the slim wasm's code section). We never invoke main — JS calls our
+  # cpp_* exports directly. Reactor mode replaces _start with the much
+  # smaller __wasm_call_ctors export that callers invoke if they need
+  # ctors to run, and skips the WASI argv plumbing entirely.
+  -mexec-model=reactor
   -Wl,--export=cpp_in_ptr
   -Wl,--export=cpp_out_ptr
   -Wl,--export=cpp_in_capacity
@@ -193,22 +201,21 @@ FLAGS=(
   # only in bench mode (used by test harness to inject these frames at peers).
   # Production receivers handle the frames; they're not generated locally.
   -Wl,--export=cpp_rpc_get_abort_reason
-  -Wl,--export=cpp_rpc_get_resolve_summary
   -Wl,--export=cpp_rpc_get_resolve_cap_id
   -Wl,--export=cpp_rpc_get_resolve_exception
-  -Wl,--export=cpp_rpc_get_disembargo_summary
   -Wl,--export=cpp_rpc_decode
-  -Wl,--export=cpp_rpc_get_bootstrap_question_id
-  -Wl,--export=cpp_rpc_get_call_summary
-  -Wl,--export=cpp_rpc_get_call_target_kind
+  # Per-message getters that cpp_rpc_decode now writes inline at cpp_out
+  # are no longer exported (JS reads via DataView). Bodies kept in source
+  # for test-only paths; --gc-sections drops them from the production wasm.
+  #   cpp_rpc_get_bootstrap_question_id
+  #   cpp_rpc_get_call_summary, cpp_rpc_get_call_target_kind
+  #   cpp_rpc_get_return_kind, cpp_rpc_get_return_summary
+  #   cpp_rpc_get_finish_question_id
+  #   cpp_rpc_get_release_id, cpp_rpc_get_release_refcount
+  #   cpp_rpc_get_resolve_summary, cpp_rpc_get_disembargo_summary
   -Wl,--export=cpp_rpc_get_call_params
-  -Wl,--export=cpp_rpc_get_return_kind
-  -Wl,--export=cpp_rpc_get_return_summary
   -Wl,--export=cpp_rpc_get_return_results
   -Wl,--export=cpp_rpc_get_return_exception
-  -Wl,--export=cpp_rpc_get_finish_question_id
-  -Wl,--export=cpp_rpc_get_release_id
-  -Wl,--export=cpp_rpc_get_release_refcount
   -Wl,--export=cpp_rpc_build_return_with_caps
   -Wl,--export=cpp_rpc_get_return_cap_kind
   -Wl,--export=cpp_rpc_get_return_cap_id
