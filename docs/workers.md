@@ -1,6 +1,8 @@
 # capnwasm in Cloudflare Workers
 
-The default `capnwasm` package runs in Workers without any new entrypoint or build flag. Three transport shapes work — pick by the request pattern:
+capnwasm runs in Workers via the **slim wasm + precompiled-Module** pattern shown below — Workers blocks dynamic code generation (`WebAssembly.compile(bytes)` at runtime), so the default `import "capnwasm"` entry (which decompresses bytes + compiles them at load time) does NOT work in Workers. Use `import wasmModule from "capnwasm/capnp.slim.wasm"` so Wrangler precompiles the `.wasm` into a `WebAssembly.Module` at deploy time, then pass the module to `CapnCpp.load(module)`.
+
+Three transport shapes work on top of that — pick by the request pattern:
 
 - **HTTP batch** (`capnwasm/http-batch`): stateless POST/response. Cheapest Worker billing, plays with HTTP/2 multiplexing, no upgrade dance. Use this when the browser is making request/response calls. See [transports.md](transports.md).
 - **HTTP stream** (`capnwasm/http-stream`): POST returns a streaming response body the server keeps writing into. Use this for subscriptions and capability streams.
@@ -11,12 +13,9 @@ The WebSocket pattern (the most general):
 ```js
 // worker.js
 import wasmModule from "capnwasm/capnp.slim.wasm";   // wrangler imports as a compiled WebAssembly.Module
-import {
-  CapnCpp,
-  RpcSession,
-  InterfaceRegistry,
-  wsTransport,
-} from "capnwasm";
+import { CapnCpp } from "capnwasm/browser";          // CapnCpp without the inlined wasm blob (saves ~50 KB gz)
+import { RpcSession, InterfaceRegistry } from "capnwasm/rpc";
+import { wsTransport } from "capnwasm/rpc";
 import { MyAPIRegistry, EchoBuilder, EchoReader } from "./my_api.gen.mjs";
 
 // Cache the compiled wasm Instance across requests in the same isolate.
@@ -40,11 +39,13 @@ export default {
 };
 ```
 
-That's it. Same package, same `dist/capnp.slim.wasm`, no special build configuration.
+## Why the precompiled-Module pattern is required
 
-## Why this works
+Workers' V8 isolate disables dynamic code generation. Anything that produces wasm bytes at runtime — fetch + `WebAssembly.compile(bytes)`, `DecompressionStream` + `WebAssembly.compile(bytes)`, base64 → `Uint8Array` → `WebAssembly.compile(bytes)` — is blocked. The only allowed path is to import the `.wasm` file as source, which Wrangler statically bundles AND precompiles into a `WebAssembly.Module` at deploy time. The runtime then hands you that pre-compiled module to `WebAssembly.instantiate(module, imports)`, which is link-only and doesn't trigger the codegen ban.
 
-`CapnCpp.load()` accepts five kinds of source: `Uint8Array`, `ArrayBuffer`, URL/string, `Response`, and `WebAssembly.Module`. Cloudflare Workers' `import wasm from "./x.wasm"` syntax gives you a pre-compiled `WebAssembly.Module` directly (Wrangler bundles the `.wasm` file into the deployment and the runtime hands you the compiled module). That's the same path the `Module` branch of `CapnCpp.load()` takes — sync instantiate, no fetch, no compile, no async wait.
+That's why Workers users **must** use `capnwasm/browser` (which exposes `CapnCpp.load(module)`) plus `import wasmModule from "capnwasm/capnp.slim.wasm"`, not the default `import "capnwasm"` (which inlines the wasm as base64 + decompresses + compiles at runtime — the exact pattern Workers blocks).
+
+`CapnCpp.load()` accepts five kinds of source for non-Workers environments too: `Uint8Array`, `ArrayBuffer`, URL/string, `Response`, and `WebAssembly.Module`. Workers is the one platform that can ONLY use the last form.
 
 For the WebSocket side, `wsTransport(ws)` works against any object that exposes `addEventListener("message")` and `send()` — which is exactly what the `server` half of `new WebSocketPair()` exposes in Workers. No adapter needed.
 

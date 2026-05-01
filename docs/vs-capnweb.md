@@ -68,11 +68,24 @@ All sizes minified-then-gzipped (the `dist/` build that ships in npm).
 
 | scenario | capnweb | capnwasm | ratio |
 |---|---|---|---|
-| Whole library, RPC-ready | **21 KB** (everything in `dist/index.js`) | — | — |
-| Wasm runtime only (read capnp messages) | n/a | **34 KB** | — |
-| WebSocket RPC (transport + sessions + caps) | **21 KB** | **39 KB** | 1.9× |
-| Typed proxy + HTTP-batch transport (typical browser shape) | **21 KB** | **41 KB** | 2.0× |
-| All four transports + typed + dynamic | **21 KB** | **47 KB** | 2.2× |
+Apples-to-apples: both libraries measured at the same compression. Workers
+measures the deploy bundle in **gzip** (1 MB Free / 10 MB Paid limit per
+`wrangler deploy`); browsers receive **brotli** when the host serves it
+(Cloudflare/Vercel/Netlify auto-compress with brotli; GitHub Pages still
+falls back to gzip).
+
+| | capnweb gz / br | capnwasm gz / br | ratio gz / br |
+|---|---|---|---|
+| Whole library, RPC-ready | **21 / 18 KB** | — | — |
+| Wasm runtime only (read capnp messages) | n/a | **34 / 28 KB** | — |
+| WebSocket RPC (transport + sessions + caps) | 21 / 18 KB | **39 / 33 KB** | 1.9× / 1.8× |
+| Typed proxy + HTTP-batch (typical browser shape) | 21 / 18 KB | **41 / 35 KB** | 1.95× / 1.96× |
+| All four transports + typed + dynamic | 21 / 18 KB | **47 / 40 KB** | 2.2× / 2.2× |
+
+Brotli does **not** close the gap meaningfully — capnweb compresses about
+as well with brotli as we do, so the ratios stay roughly constant. The
+absolute on-wire delta (~17 KB at the typical-shape line) is the cost of
+shipping a real wasm runtime.
 
 33 KB of every capnwasm scenario is the wasm runtime — a real Cap'n Proto C++ implementation. The JS code itself is small after two-pass minification (esbuild → terser): rpc.mjs is 5.3 KB gz, each transport is 0.6–1.4 KB gz, the typed proxy is 0.9 KB. The slim browser wasm dropped from 39 → 33 KB across these compounding passes: moving the tape codec out of production, stripping KJ assertion strings (both condition text AND caller-supplied `__VA_ARGS__` messages, which alone shaved 3.9 KB gz), auditing the export list against actual JS callers (10 dead RPC summary getters whose work `cpp_rpc_decode` now does inline), switching to WASI reactor mode, replacing default-constructed AnyStruct::Reader stack with a placement-new union, and turning `KJ_LOG`/`KJ_DBG` into no-ops in the strip header (they reach formatted-logging machinery our wasm has nowhere to send).
 

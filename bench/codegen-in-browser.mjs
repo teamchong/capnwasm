@@ -7,7 +7,12 @@
 // and the generated Reader code works against bytes the runtime decodes.
 
 import { CapnpCompiler } from "/dist/codegen.mjs";
-import { load as loadRuntime } from "/dist/inlined.mjs";
+// Use the universal-compatibility browser entry (slim wasm fetched over
+// HTTP) instead of the default inlined bundle. The inlined entry uses
+// brotli DecompressionStream which only reaches Chrome 124+ / FF 126+ /
+// Safari 18+; the browser entry just calls WebAssembly.instantiateStreaming
+// on a separately-served .wasm and works on any browser back to Chrome 80.
+import { load as loadRuntime } from "/dist/browser.mjs";
 
 const status = document.getElementById("status");
 const results = document.getElementById("results");
@@ -54,13 +59,24 @@ struct Tag {
   // implementations of the same wire format. Use the runtime's
   // any_builder to construct a User with id=42, name="Alice", active=true,
   // then re-open it via cpp_any_open and read each field.
+  //
+  // Writes the data-section primitives (u64, bool) directly to wasm
+  // memory via the cached data_ptr — the same fast path the codegen
+  // builder takes. The slim wasm intentionally doesn't export the
+  // cpp_any_builder_set_int64_lo_hi / set_bool helpers because
+  // production JS doesn't need a wasm boundary call for primitive
+  // writes; only the pointer-section setters (text/data) need the
+  // boundary call to handle layout.
   setStatus("Round-tripping a User via the runtime…");
   cpp._exports.cpp_any_builder_init(2, 1);  // 2 data words (u64+bool), 1 ptr (text)
-  // Write u64 id at byte 0
-  cpp._exports.cpp_any_builder_set_int64_lo_hi(0, 42, 0);
-  // Write bool active=true at bit 64 (byte 8, bit 0)
-  cpp._exports.cpp_any_builder_set_bool(64, 1);
-  // Write text "Alice"
+  const dataPtr = cpp._exports.cpp_any_builder_data_ptr();
+  const dv = new DataView(cpp._u8.buffer);
+  // u64 id at byte 0
+  dv.setBigUint64(dataPtr + 0, 42n, true);
+  // bool active=true at bit 64 (byte 8, bit 0)
+  cpp._u8[dataPtr + 8] |= 1;
+  // Write text "Alice" via the pointer-section helper (still needs a
+  // wasm call because the layout/ptr update is non-trivial).
   const enc = new TextEncoder();
   const nameBytes = enc.encode("Alice");
   const inPtr = cpp._exports.cpp_in_ptr();
