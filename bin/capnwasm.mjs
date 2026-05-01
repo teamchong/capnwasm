@@ -40,6 +40,13 @@ Usage:
       default (override with CAPNWASM_HARNESS_TARGET=ws://...); REST
       methods need CAPNWASM_HARNESS_REST_TARGET=https://... to run.
 
+  npx capnwasm probe <manifest.json> [--target <ws://...>] [--rest-target <https://...>] [-o report.json|-]
+      Drift detector. Exercises every operation against a live target
+      and reports per-operation what the runtime actually did vs what
+      the schema declared. capnp surfaces call/decode success and
+      readable-vs-unreadable declared fields; REST surfaces HTTP status,
+      observed response keys, and JSON-shape diffs.
+
   npx capnwasm build                Rebuild zig-out/capnp_cpp.opt.wasm
   npx capnwasm bench                Run the Playwright bench
   npx capnwasm <file>               Shorthand: dispatches by extension.
@@ -1660,6 +1667,66 @@ async function cmdHarness(argv) {
   console.error(`  ${ifaceCount} capnp interface(s), ${restCount} REST API(s), ${opCount} operation(s) covered`);
 }
 
+/**
+ * Probe a live target against a manifest, report drift.
+ *
+ * Usage:
+ *   npx capnwasm probe <manifest.json>
+ *       [--target <ws://...>]            (capnp interfaces)
+ *       [--rest-target <https://...>]    (REST APIs)
+ *       [-o report.json|-]               (default: stdout)
+ *       [--timeout <ms>]                 (per-operation; default 10000)
+ */
+async function cmdProbe(argv) {
+  let manifestPath = null;
+  let capnpTarget = null;
+  let restTarget = null;
+  let output = "-";
+  let timeoutMs = 10000;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "-o" || a === "--output") output = argv[++i];
+    else if (a === "--target") capnpTarget = argv[++i];
+    else if (a === "--rest-target") restTarget = argv[++i];
+    else if (a === "--timeout") timeoutMs = parseInt(argv[++i], 10);
+    else if (!manifestPath) manifestPath = a;
+  }
+  if (!manifestPath) {
+    console.error("usage: npx capnwasm probe <manifest.json> [--target <ws://...>] [--rest-target <https://...>] [-o report.json|-] [--timeout <ms>]");
+    process.exit(1);
+  }
+  if (!existsSync(manifestPath)) {
+    console.error(`manifest not found: ${manifestPath}`);
+    process.exit(1);
+  }
+
+  const text = await import("node:fs/promises").then((m) => m.readFile(manifestPath, "utf8"));
+  const manifest = JSON.parse(text);
+
+  const { load } = await import("../dist/inlined.mjs");
+  const cpp = await load();
+  const { probe } = await import("../js/probe.mjs");
+  const report = await probe(cpp, manifest, {
+    capnpTarget,
+    restTarget,
+    timeoutMs,
+  });
+
+  const json = JSON.stringify(report, null, 2) + "\n";
+  if (output === "-") {
+    process.stdout.write(json);
+  } else {
+    await writeFile(output, json);
+    console.log(`Wrote ${output}`);
+  }
+
+  // Summary on stderr so the JSON on stdout is consumable by tools.
+  const s = report.summary;
+  console.error(`  ${s.total} operation(s): ${s.ok} ok, ${s.error} error, ${s.drift} with drift`);
+  // Non-zero exit on drift so CI can gate on it.
+  if (s.drift > 0) process.exitCode = 2;
+}
+
 async function cmdGen(argv) {
   const args = parseGenArgs(argv);
   const { structs, interfaces, restApis, typeInterfaces } = await parseSchema(args.schema);
@@ -1914,6 +1981,7 @@ async function main() {
     case "openapi":  await cmdOpenapi(argv.slice(1)); return;
     case "manifest": await cmdManifest(argv.slice(1)); return;
     case "harness":  await cmdHarness(argv.slice(1)); return;
+    case "probe":    await cmdProbe(argv.slice(1)); return;
     case "build":    cmdBuild(); return;
     case "bench":    cmdBench(); return;
     case "-h": case "--help": case "help": topUsage(); return;

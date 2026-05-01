@@ -114,23 +114,25 @@ const charge = await stripe.retrieveCharge("ch_abc123");
 for await (const event of stripe.listEvents()) console.log(event.id);
 ```
 
-**Plus: operation manifest + generated contract test harness** — the same internal model that drives codegen, surfaced as canonical JSON, then chained into a runnable test file that exercises every operation end-to-end:
+**Plus: manifest → contract harness → drift probe** — the same internal model that drives codegen, chained into three CLI commands that close the loop from "schema exists" to "schema is verifiably matched by the runtime":
 
 ```bash
-# 1) Canonical manifest from any input format
+# 1) Canonical manifest from any input format (.capnp, .ts @rest, OpenAPI)
 npx capnwasm manifest user.capnp                  # → user.manifest.json
 
-# 2) Generate a Node --test contract harness from it
+# 2) Generate a Node --test contract harness from it. Capnp methods run
+#    against an in-process mock by default (zero infra); REST methods
+#    need CAPNWASM_HARNESS_REST_TARGET=https://... to run.
 npx capnwasm harness user.manifest.json --gen ./user.gen.mjs
-                                                  # → user.contract.test.mjs
-
-# 3) Run it — capnp methods exercise an in-process mock by default
 node --test user.contract.test.mjs
-# Or point at a real endpoint:
-CAPNWASM_HARNESS_TARGET=ws://staging.example.com/rpc node --test ...
+
+# 3) Probe a live target, report drift between schema and runtime.
+#    Exit code 2 on any drift — CI can gate on it.
+npx capnwasm probe user.manifest.json --target ws://staging/rpc \
+                                       --rest-target https://staging
 ```
 
-The harness asserts each operation is callable and its response decodes against the declared schema — the safety net that catches "you renamed a field and forgot to update an SDK consumer" before code review does. See [Schema truth & conformance](docs/schema-truth-and-conformance.md) for how this fits the broader "schema → all surfaces" pipeline.
+Closes the SDK-isn't-runnable gap (the runnable thing is the harness, not the SDK) and the schema-may-be-lying gap (the probe tells you when the runtime stops matching). See [Schema truth & conformance](docs/schema-truth-and-conformance.md) for the full framing — what this pipeline covers, where the limits are (capnp wire format can't surface "extra fields the runtime sent" because messages are positional), and how it fits the broader "schema → all surfaces" picture.
 
 ---
 

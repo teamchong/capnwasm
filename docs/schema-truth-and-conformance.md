@@ -237,15 +237,48 @@ the consuming app's repo. That keeps the contract surface visible in
 the app's test output (and PR diffs when the schema changes), instead
 of being hidden inside a tooling subprocess.
 
+### Drift probe (today)
+
+```bash
+npx capnwasm manifest user.capnp -o user.manifest.json
+npx capnwasm probe user.manifest.json --target ws://staging/rpc \
+                                       --rest-target https://staging
+```
+
+Reads a manifest and a live target, exercises every operation,
+reports what the runtime actually did vs what the schema declared.
+Output is structured JSON (or stdout via `-o -`), with a per-operation
+record and a summary count. Process exit code is `2` when any
+operation drifts, so CI can gate on it:
+
+```bash
+npx capnwasm probe user.manifest.json --rest-target $STAGING_URL
+# exit 0 → all operations agreed with the schema
+# exit 2 → at least one operation drifted; check the report
+```
+
+What it surfaces:
+
+- **REST**: HTTP status, content-type, observed top-level response
+  keys (or first element's keys for arrays). `outcome="error"` when
+  the server returns 4xx/5xx or the response body fails to JSON-parse.
+- **Capnp**: call success / failure (with the exception message),
+  declared-vs-readable field accounting (which fields the manifest
+  said exist, which actually decoded without throwing), and request
+  + response wire byte counts.
+
+Honest about what capnp drift detection **can't** tell you: capnp
+messages are positional (no field names on the wire), so a field
+that comes back as its zero value is indistinguishable from a field
+the runtime didn't send. Detecting "extra fields the runtime sent
+that the schema doesn't know about" requires either a newer schema
+to compare against or a wire-byte audit beyond the probe's scope.
+For REST the keys are explicit so the diff is full.
+
 ### What capnwasm does NOT provide
 
 Honest list, because pretending it covers more than it does is the
 trap this whole framing is meant to avoid:
-
-- **No drift audit.** capnwasm doesn't compare a `.capnp` schema
-  against a running endpoint and tell you "your `getUser` actually
-  returns an extra field that's not in the schema." That requires a
-  probe-the-runtime layer that doesn't exist here.
 - **No safe-to-test flag.** Operations are typed but not tagged with
   "this is a read-only safe-to-poke endpoint" vs "this mutates
   production." A real audit/probe loop needs this.
@@ -287,23 +320,25 @@ the conformance story:
   Generated tests are runnable with `node --test` and pass against
   the in-process mock today (see `test/harness.test.mjs` for the
   end-to-end smoke).
-- **Round-trip drift probe.** Given a manifest and a live endpoint,
-  `capnwasm probe` calls each operation with synthesized params and
-  reports any reply field the schema doesn't declare, or any expected
-  field the endpoint doesn't return. This is the "schema says X;
-  runtime actually does X?" check, narrowed to one service at a time.
-  Same pattern as the harness: read manifest, exercise each operation,
-  diff observed response shape against `interfaces[].methods[]
-  .resultsStruct` (capnp) or `returnType` (REST). Different goal:
-  the harness asserts "no exception"; the probe reports field-by-field
-  agreement vs disagreement. The harness's mock-server scaffolding
-  is reusable — the probe is mostly its assertion layer rewritten
-  as diff-and-report rather than throw-on-mismatch.
+- ~~**Round-trip drift probe.**~~ **Done** — see `npx capnwasm probe`
+  section above and `js/probe.mjs`. Reads manifest, exercises every
+  operation against the live target, emits per-operation drift report
+  with non-zero exit code on any drift (CI-gateable). REST gets full
+  key-level diff; capnp gets call/decode success and field-readable
+  accounting (with the wire-format limitation called out above).
+  End-to-end coverage in `test/probe.test.mjs`.
 
-Manifest + harness landed as a pair. The probe is the natural third
-beat — once it ships, capnwasm's conformance surface goes from
-"schema generates SDK" to "schema generates SDK and tells you when
-the runtime stops matching it."
+All three schema-truth follow-ups landed: manifest → harness → probe.
+Together they push capnwasm's conformance surface from "schema
+generates SDK" to "schema generates SDK, the SDK is verifiably
+runnable against the schema, and the running endpoint is verifiably
+agreeing with the schema." The chain is one CLI pipeline:
+
+```bash
+npx capnwasm manifest user.capnp -o user.manifest.json
+npx capnwasm harness  user.manifest.json --gen ./user.gen.mjs
+npx capnwasm probe    user.manifest.json --target $RPC_URL
+```
 
 ## Reading this against the rest of the docs
 
