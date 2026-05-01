@@ -9,12 +9,12 @@ Numbers from in-process Node bench (Apple Silicon, M-series, Node 22). Run `node
 | workload | capnwasm | capnweb | win |
 |---|---|---|---|
 | Burst 1000 calls (per-call) | **2.67 µs** | 7.4 µs | 2.8× faster |
-| Burst 100 calls (per-call) | **2.92 µs** | 6.8 µs | 2.3× faster |
-| 64 KB text echo (round-trip) | **93 µs** | 362 µs | 3.9× faster |
-| 4 KB text echo | **17 µs** | 26 µs | 1.5× faster |
-| 256 B text echo | **5.2 µs** | 8.2 µs | 1.6× faster |
-| 16 B text echo | **6.7 µs** | 8.2 µs | 1.2× faster |
-| Single tiny call (u8 echo) | **8.4 µs** | 14 µs | 1.7× faster |
+| Burst 100 calls (per-call) | **2.97 µs** | 6.8 µs | 2.3× faster |
+| 64 KB text echo (round-trip) | **90 µs** | 362 µs | 4.0× faster |
+| 4 KB text echo | **17.9 µs** | 26 µs | 1.5× faster |
+| 256 B text echo | **5.1 µs** | 8.2 µs | 1.6× faster |
+| 16 B text echo | **6.6 µs** | 8.2 µs | 1.2× faster |
+| Single tiny call (u8 echo) | **8.3 µs** | 14 µs | 1.7× faster |
 | Wire bytes, 64 KB binary blob | **65.9 KB** | 468 KB | 7.1× smaller |
 | Wire bytes, 4 KB text | **4.5 KB** | 8.3 KB | 1.9× smaller |
 | Sparse field access (read 3 of 32) | 27 µs | 26 µs | tied (within noise) |
