@@ -8,17 +8,19 @@ Numbers from in-process Node bench (Apple Silicon, M-series, Node 22). Run `node
 
 | workload | capnwasm | capnweb | win |
 |---|---|---|---|
-| Burst 1000 calls (per-call) | **2.9 µs** | 7.4 µs | 2.6× faster |
-| Burst 100 calls (per-call) | **3.4 µs** | 6.8 µs | 2.0× faster |
-| 64 KB text echo (round-trip) | **100 µs** | 381 µs | 3.8× faster |
+| Burst 1000 calls (per-call) | **2.83 µs** | 7.4 µs | 2.6× faster |
+| Burst 100 calls (per-call) | **2.92 µs** | 6.8 µs | 2.3× faster |
+| 64 KB text echo (round-trip) | **93 µs** | 362 µs | 3.9× faster |
 | 4 KB text echo | **17 µs** | 26 µs | 1.5× faster |
-| 256 B text echo | **5.4 µs** | 8.5 µs | 1.6× faster |
-| 16 B text echo | **6.9 µs** | 8.0 µs | 1.2× faster |
+| 256 B text echo | **5.2 µs** | 8.2 µs | 1.6× faster |
+| 16 B text echo | **6.7 µs** | 8.2 µs | 1.2× faster |
 | Single tiny call (u8 echo) | **8.4 µs** | 14 µs | 1.7× faster |
 | Wire bytes, 64 KB binary blob | **65.9 KB** | 468 KB | 7.1× smaller |
 | Wire bytes, 4 KB text | **4.5 KB** | 8.3 KB | 1.9× smaller |
 | Sparse field access (read 3 of 32) | 27 µs | 26 µs | tied (within noise) |
 | Cap-passing (`getChild` + echo) | 13 µs | 12 µs | capnweb 1.1× faster |
+
+**This pass shaved 32% off tiny-call latency.** The compounding boundary-call reductions (cached DataView per session, combined `cpp_rpc_decode` + per-kind summary write, cached aux pointers, `cpp_rpc_begin_call/begin_return` returning the data section pointer instead of just success, empty-params Call frame template caching keyed on (target, ifc, method)) dropped per-RPC wasm crossings from ~9 to ~5. Burst N=1000 dropped 7%. The remaining floor on tight loops is dominated by JS-side Promise scheduling — past microsecond cuts there require either an awaitable-batch API change or skipping `async` framing on sync-handler dispatch.
 
 capnwasm consistently beats capnweb on:
 - **Throughput** — once you batch calls (which most apps do), capnwasm pulls 2-3× ahead.
