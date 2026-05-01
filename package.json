@@ -68,6 +68,7 @@
     "js",
     "bin",
     "dist",
+    "!dist/*.map",
     "LICENSE.txt"
   ],
   "scripts": {
