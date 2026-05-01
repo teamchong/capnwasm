@@ -8,17 +8,17 @@ Numbers from in-process Node bench (Apple Silicon, M-series, Node 22). Run `node
 
 | workload | capnwasm | capnweb | win |
 |---|---|---|---|
-| Burst 1000 calls (per-call) | **2.67 µs** | 7.4 µs | 2.8× faster |
-| Burst 100 calls (per-call) | **2.97 µs** | 6.8 µs | 2.3× faster |
-| 64 KB text echo (round-trip) | **90 µs** | 362 µs | 4.0× faster |
-| 4 KB text echo | **17.9 µs** | 26 µs | 1.5× faster |
-| 256 B text echo | **5.1 µs** | 8.2 µs | 1.6× faster |
-| 16 B text echo | **6.6 µs** | 8.2 µs | 1.2× faster |
-| Single tiny call (u8 echo) | **8.3 µs** | 14 µs | 1.7× faster |
+| Burst 1000 calls (per-call) | **2.67 µs** | 7.47 µs | 2.80× faster |
+| Burst 100 calls (per-call) | **2.97 µs** | 6.8 µs | 2.30× faster |
+| 64 KB text echo (round-trip) | **93.5 µs** | 352 µs | 3.77× faster |
+| 4 KB text echo | **17.2 µs** | 26.8 µs | 1.56× faster |
+| 256 B text echo | **4.84 µs** | 8.05 µs | 1.66× faster |
+| 16 B text echo | **6.52 µs** | 7.91 µs | 1.21× faster |
+| Single tiny call (u8 echo) | **7.93 µs** | 14.17 µs | 1.79× faster |
 | Wire bytes, 64 KB binary blob | **65.9 KB** | 468 KB | 7.1× smaller |
 | Wire bytes, 4 KB text | **4.5 KB** | 8.3 KB | 1.9× smaller |
 | Sparse field access (read 3 of 32) | 27 µs | 26 µs | tied (within noise) |
-| Cap-passing (`getChild` + echo) | 12.7 µs | 12.7 µs | tied (was capnweb 1.1× faster — closed the gap) |
+| Cap-passing (`getChild` + echo) | 12.49 µs | 12.47 µs | tied (was capnweb 1.1× faster — closed the gap) |
 
 **This pass shaved 34% off tiny-call latency, closed the cap-passing gap.** The compounding boundary-call reductions + per-call allocation cleanups:
 

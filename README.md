@@ -157,11 +157,11 @@ Microsecond per-call differences vanish behind any real network. The cases where
 | **Decode 1000 records, read 5 fields each** (sparse access) | 20.4 ms | 1.7 ms | **12× faster** |
 | **5 MB binary asset** over 10 Mbps link | 5.33 s | 4.00 s | **1.33 s saved per asset** (no base64 bloat) |
 | **10K-msg/s telemetry stream decode** | 1.0 M msgs/sec | 3.3 M msgs/sec | **3.2× throughput** |
-| **In-process RPC, 64 KB text echo** | 362 µs | 90 µs | **4.0× faster** |
-| **In-process RPC, 4 KB text echo** | 26 µs | 17.9 µs | **1.5× faster** |
-| **In-process RPC, 256 B text echo** | 8.2 µs | 5.1 µs | **1.6× faster** |
-| **In-process RPC, single tiny call** | 14 µs | 8.3 µs | **1.7× faster** |
-| **In-process RPC, burst 1000 calls (per-call)** | 7.4 µs | 2.67 µs | **2.8× faster** |
+| **In-process RPC, 64 KB text echo** | 352 µs | 93.5 µs | **3.77× faster** |
+| **In-process RPC, 4 KB text echo** | 26.8 µs | 17.2 µs | **1.56× faster** |
+| **In-process RPC, 256 B text echo** | 8.05 µs | 4.84 µs | **1.66× faster** |
+| **In-process RPC, single tiny call** | 14.17 µs | 7.93 µs | **1.79× faster** |
+| **In-process RPC, burst 1000 calls (per-call)** | 7.47 µs | 2.67 µs | **2.80× faster** |
 | **HTTP batch, sequential single call** | 1310 µs | 44 µs | **30× faster** |
 | **HTTP batch, burst of 100 calls** | 20 µs | 18 µs | **1.13× faster** |
 
