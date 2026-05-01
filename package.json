@@ -73,6 +73,7 @@
     "!js/*.gen.d.ts",
     "!js/build_*.mjs",
     "!js/typed_wide_user_data.mjs",
+    "!js/inspect.mjs",
     "LICENSE.txt"
   ],
   "scripts": {
