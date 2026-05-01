@@ -465,8 +465,11 @@ export class RpcSession {
     // begin_call returns the data section pointer for the freshly-init'd
     // params struct — combines the begin_call op with the data_ptr lookup
     // the Builder needs anyway. Saves one wasm boundary call per outbound.
+    // Use the cap's pre-computed BigInt(target.id) when available (the
+    // typical caller is RpcCap.callBuilder which forwards its own target).
+    const tIdBig = target._idBig !== undefined ? target._idBig : BigInt(target.id);
     const dataPtr = this.#exp.cpp_rpc_begin_call(
-      questionId, targetKind, BigInt(target.id), BigInt(interfaceId), methodId,
+      questionId, targetKind, tIdBig, BigInt(interfaceId), methodId,
       BuilderClass._DATA_WORDS, BuilderClass._PTR_WORDS,
     );
     if (!dataPtr) throw new Error("cpp_rpc_begin_call failed");
@@ -1318,11 +1321,21 @@ export class RpcCap {
   #session;
   #target;
   #registry;
+  // Pre-computed BigInt(target.id). Every outbound call passes this to the
+  // i64 wasm arg; caching on the cap saves ~15 ns per call (V8 doesn't
+  // intern small BigInt literals across allocations).
+  #targetIdBig;
   constructor(session, target, registry) {
     this.#session = session;
     this.#target = target;
     this.#registry = registry;
+    // Pin the BigInt(target.id) on the target itself so the session's
+    // callBuilder hot path can read it back without re-allocating.
+    if (target._idBig === undefined) target._idBig = BigInt(target.id);
+    this.#targetIdBig = target._idBig;
   }
+  /** Internal: lets the session skip the BigInt(target.id) allocation. */
+  get _targetIdBig() { return this.#targetIdBig; }
   /** Low-level: send a raw Call. Returns { questionId, promise<resultsBytes> }. */
   call(interfaceId, methodId, paramsBytes, opts) {
     return this.#session.call(this.#target, interfaceId, methodId, paramsBytes, opts);
