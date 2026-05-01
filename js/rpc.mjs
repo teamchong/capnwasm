@@ -439,9 +439,10 @@ export class RpcSession {
     // The pipeline cap lets the caller chain follow-up calls onto this
     // answer before it returns — those Calls go on the wire immediately,
     // with target=promisedAnswer(questionId). The peer holds them until
-    // it resolves the original answer locally.
-    const pipelineCap = new RpcCap(this, { kind: "promise", id: questionId }, this.#registry);
-    return { questionId, promise: d.promise, cap: pipelineCap };
+    // it resolves the original answer locally. Lazy via the same
+    // CallSentResult class callBuilder uses — avoids a per-call RpcCap
+    // allocation when nobody pipelines.
+    return new CallSentResult(this, this.#registry, questionId, d.promise);
   }
 
   // Tie an AbortSignal to either a question (resolve via deferred reject) or
