@@ -69,6 +69,8 @@
     "bin",
     "dist",
     "!dist/*.map",
+    "!js/*.gen.mjs",
+    "!js/*.gen.d.ts",
     "LICENSE.txt"
   ],
   "scripts": {
