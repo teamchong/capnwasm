@@ -169,7 +169,17 @@ cw.inspect(fetch("/api/user.capnp"));   // expandable tree in the console
 
 For browsers, prefer `capnwasm/browser`: a tiny JS shim + a separately-fetched 33 KB `dist/capnp.slim.wasm`. No base64 inflation, and `WebAssembly.instantiateStreaming` compiles the wasm while it's still being downloaded. Add `capnwasm/typed` and one transport (`capnwasm/http-batch`, `capnwasm/http-stream`, `capnwasm/postmessage`, or the WS path via `capnwasm/rpc`) for end-to-end RPC at ~41 KB gz total.
 
-For comparison, capnweb is **21 KB gzip / 18 KB brotli**. Apples-to-apples we're roughly 2× larger on either compression (41 KB gz / 35 KB br for the typical typed-proxy + HTTP-batch shape), because we ship a real Cap'n Proto wasm runtime — that buys us things capnweb structurally can't have (binary wire, zero-copy field access, true sparse-read perf, multi-language interop). Brotli does NOT close the gap meaningfully — capnweb compresses just as well with brotli.
+**On the wire over a brotli-capable host** (Cloudflare Pages/Workers, Vercel, Netlify, AWS CloudFront — they all auto-serve `Content-Encoding: br` to modern browsers):
+
+| | capnwasm | capnweb |
+|---|---|---|
+| Decode capnp messages, no RPC | **28 KB br** | n/a |
+| + RPC (sessions, caps, streaming) | **33 KB br** | 18 KB br |
+| + typed proxy + HTTP-batch (typical browser app) | **35 KB br** | 18 KB br |
+
+That's roughly 2× larger than capnweb in absolute bytes — apples-to-apples (brotli for both, capnweb compresses just as well with brotli as with gzip, so it does not close the gap). The extra ~17 KB buys you a real Cap'n Proto C++ runtime in the browser: binary wire, zero-copy field reads, sparse-access perf, raw bytes for binary blobs (capnweb has to base64-encode → +33% wire bytes per blob), and wire compatibility with C++/Rust/Go peers — things capnweb structurally can't have.
+
+GitHub Pages / plain nginx without brotli fall back to the gzip column in the table below.
 
 ---
 

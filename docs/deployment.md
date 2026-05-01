@@ -115,7 +115,7 @@ location /rpc {
 
 - **Node**: ~1 ms total time-to-first-result on a fresh process. See [`vs-capnweb.md`](vs-capnweb.md). No tuning needed.
 - **Cloudflare Workers**: the wasm Module is cached across requests in the same isolate. First request in an isolate pays ~5 ms; subsequent requests in that isolate skip wasm compile entirely.
-- **Browser fresh tab, empty cache**: ~20 ms to fetch + streaming compile 109 KB of wasm. Cache-Control + immutable URLs make warm reloads ~2–4 ms.
+- **Browser fresh tab, empty cache**: ~20 ms to fetch + streaming compile 82 KB of wasm raw / 28 KB brotli over the wire from a brotli-capable host (Cloudflare Pages, Vercel, Netlify, CloudFront). Cache-Control + immutable URLs make warm reloads ~2–4 ms.
 
 If you serve `dist/capnp.slim.wasm` yourself, set `Cache-Control: public, max-age=31536000, immutable` on the asset and version-hash the URL. The default Vite plugin and the `capnwasm/browser` entrypoint already do the right thing.
 

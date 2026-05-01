@@ -46,13 +46,14 @@ gRPC-Web requires a **proxy** because browsers can't speak HTTP/2 trailers. That
 
 ## Bundle size
 
-| | gzip |
-|---|---|
-| capnwasm/browser (3 KB JS shim + 39 KB wasm) | 42 KB |
-| gRPC-Web (`@grpc/grpc-js` + generated code, typical) | 80–120 KB |
-| capnweb (the lighter capnwasm cousin) | 21 KB |
+| | gzip | brotli (Cloudflare Pages / Vercel / Netlify on-wire) |
+|---|---|---|
+| capnwasm/browser (~1.4 KB JS shim + 33 KB wasm) | 34 KB | **28 KB** |
+| capnwasm + RPC + typed proxy + HTTP-batch | 41 KB | **35 KB** |
+| gRPC-Web (`@grpc/grpc-js` + generated code, typical) | 80–120 KB | 60–90 KB |
+| capnweb (the lighter capnwasm cousin) | 21 KB | 18 KB |
 
-`grpc-web` numbers vary heavily with what you import — strip down to one service and a runtime and it can be smaller, but realistic deployments end up in the 80+ KB range once retry/auth/streaming code lands. capnwasm is fixed at 42 KB regardless of how many services you generate against it (the runtime is shared; codegen output is per-service typed accessors only).
+`grpc-web` numbers vary heavily with what you import — strip down to one service and a runtime and it can be smaller, but realistic deployments end up in the 80+ KB range once retry/auth/streaming code lands. capnwasm is fixed at 35 KB brotli regardless of how many services you generate against it (the runtime is shared; codegen output is per-service typed accessors only).
 
 ## Capabilities
 

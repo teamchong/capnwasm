@@ -226,13 +226,14 @@ In-process bench, both peers in the same Node process via a memory transport pai
 
 | | capnwasm | capnweb |
 |---|---|---|
-| Bundle (gz) | 42 KB | 21 KB |
+| Bundle gz (Workers deploy limit) | 41 KB | 21 KB |
+| Bundle br (browser on-wire via Cloudflare/Vercel/Netlify) | **35 KB** | **18 KB** |
 | Cold start | ~3 ms | ~0.2 ms |
 | Multi-language wire interop | yes | no |
 | OpenAPI client codegen | yes | structurally no |
 | Schema requirement | yes | no |
 
-The frame: **capnweb kept Cap'n Proto's RPC semantics and dropped the wire format. capnwasm keeps both.** For workloads where the wire matters — binary data, cross-language interop, sustained throughput — the original Cap'n Proto wire wins by a lot. For workloads where the wire doesn't matter — small JSON-shaped payloads in a JS-only stack — capnweb's 21 KB bundle and 0.2 ms cold start are unbeatable.
+The frame: **capnweb kept Cap'n Proto's RPC semantics and dropped the wire format. capnwasm keeps both.** For workloads where the wire matters — binary data, cross-language interop, sustained throughput — the original Cap'n Proto wire wins by a lot. For workloads where the wire doesn't matter — small JSON-shaped payloads in a JS-only stack — capnweb's 18 KB brotli bundle and 0.2 ms cold start are unbeatable.
 
 Neither one is wrong. They're optimized for different things. The mistake the framing in capnweb's docs encourages is treating the two halves as equally optional, when in fact dropping the wire format gives away a measurable amount of perf on the workloads that look like 2026 traffic (binary, big, bursty).
 
