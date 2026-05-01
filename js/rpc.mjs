@@ -116,6 +116,19 @@ const deferred = typeof Promise.withResolvers === "function"
 // echo / no-cap loops.
 const EMPTY_CAPS = Object.freeze([]);
 
+// Returned by RpcSession.callBuilder() — exposes the params builder for
+// the caller to mutate, plus a send() that finalizes and dispatches.
+// Class form (vs object-literal + per-call sendFn closure) keeps the
+// hidden class stable across every callBuilder() invocation.
+class CallStarted {
+  constructor(session, questionId, params) {
+    this._session = session;
+    this._questionId = questionId;
+    this.params = params;
+  }
+  send(opts) { return this._session._completeSend(this._questionId, opts); }
+}
+
 // Per-call result object returned by callBuilder().send(). Using a class
 // instead of an object literal with a closure-captured getter lets V8
 // give every instance the same hidden class — better inline-cache hit
@@ -505,35 +518,27 @@ export class RpcSession {
     );
     if (!dataPtr) throw new Error("cpp_rpc_begin_call failed");
     const params = new BuilderClass(this.#cpp, { preinitialized: true, dataPtr });
-    // send() optionally takes { resultsReader, extract } to read the Return
-    // synchronously inside #handleReturn (while rpc_reader still holds the
-    // inbound bytes). The promise then resolves to whatever extract returns
-    // — no intermediate result-bytes Uint8Array. Without these, the promise
-    // resolves to { bytes, caps } as before (caller copies bytes).
-    const sendFn = (opts) => {
-      // cpp_rpc_finalize writes the 4-byte length prefix + Cap'n Proto bytes
-      // straight to cpp_out — no intermediate JS allocation, no frameWrite.
-      const framedLen = this.#exp.cpp_rpc_finalize();
-      if (!framedLen) throw new Error("cpp_rpc_finalize failed");
-      const d = deferred();
-      const hasExtract = !!(opts && opts.extract);
-      const q = makeQ(
-        d, "call", undefined,
-        hasExtract ? opts.resultsReader : undefined,
-        hasExtract ? opts.extract : undefined,
-      );
-      this.#questions.set(questionId, q);
-      this.#sendFromOut(framedLen);
-      if (opts?.signal) this.#wireAbort(opts.signal, questionId, d, "question");
-      // Pipeline cap is lazy: most callers never .cap.call(...). Allocate
-      // RpcCap (and its FinalizationRegistry registration on access) only
-      // if the caller actually reaches for it. Saves ~150 ns + GC pressure
-      // per call on the common no-pipelining path. The class form gives
-      // every instance the same hidden class (vs object-literal+closure),
-      // helping V8's inline caches in tight RPC loops.
-      return new CallSentResult(this, this.#registry, questionId, d.promise);
-    };
-    return { params, send: sendFn };
+    // Class instead of object literal + closure — every CallStarted
+    // shares one hidden class. V8 inline-caches the .params/.send/_session/
+    // _questionId chain monomorphically across hot RPC loops.
+    return new CallStarted(this, questionId, params);
+  }
+  // Internal — completes a callBuilder.send(opts). Pulled out of the
+  // closure so CallStarted instances don't carry per-call function refs.
+  _completeSend(questionId, opts) {
+    const framedLen = this.#exp.cpp_rpc_finalize();
+    if (!framedLen) throw new Error("cpp_rpc_finalize failed");
+    const d = deferred();
+    const hasExtract = !!(opts && opts.extract);
+    const q = makeQ(
+      d, "call", undefined,
+      hasExtract ? opts.resultsReader : undefined,
+      hasExtract ? opts.extract : undefined,
+    );
+    this.#questions.set(questionId, q);
+    this.#sendFromOut(framedLen);
+    if (opts?.signal) this.#wireAbort(opts.signal, questionId, d, "question");
+    return new CallSentResult(this, this.#registry, questionId, d.promise);
   }
 
   /** Send Finish to release the peer's hold on a question's resources. */
