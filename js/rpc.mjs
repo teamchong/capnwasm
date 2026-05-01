@@ -208,6 +208,14 @@ export class RpcSession {
   // settled before flushing the response. See idle() below.
   #inflight = 0;
   #idleDeferreds = [];
+  // Per-(target, ifc, method) cache of empty-params Call frame bytes.
+  // After the first wasm cpp_rpc_build_call for a tuple, subsequent calls
+  // copy the cached bytes and patch the questionId at byte 28 — no wasm
+  // boundary call. Saves ~400 ns + the C++ build cost per tight-loop call.
+  // Only kicks in when paramsBytes.length === 0 (the common echo / noop /
+  // ping shape); calls with params go through wasm as before. Keyed on a
+  // packed string so the Map lookup is monomorphic.
+  #emptyCallTemplates = new Map();
 
   /**
    * @param {object} cpp - loaded CapnCpp instance (from `await load()`)
@@ -348,19 +356,60 @@ export class RpcSession {
     if (this.#closed) throw new Error("RpcSession closed");
     const questionId = this.#allocQuestionId();
     const targetKind = target.kind === "promise" ? TARGET_PROMISED_ANSWER : TARGET_IMPORTED_CAP;
-    this.#stageIn(paramsBytes);
-    const len = this.#exp.cpp_rpc_build_call(
-      questionId,
-      targetKind,
-      BigInt(target.id),
-      BigInt(interfaceId),
-      methodId,
-      paramsBytes.length,
-    );
-    if (!len) throw new Error("cpp_rpc_build_call failed");
+    const isEmpty = paramsBytes.length === 0
+        || (paramsBytes.length === 8 && paramsBytes[0] === 0 && paramsBytes[4] === 0)
+        // emptyAnyPointerMessage shape from below; matches a 1-segment frame
+        // whose root pointer is null.
+        || (paramsBytes.length === 16 && paramsBytes[4] === 1
+            && paramsBytes[0] === 0 && paramsBytes[8] === 0 && paramsBytes[12] === 0);
+    let cacheKey, cached;
+    if (isEmpty) {
+      // Pack the four ids into a single string key for monomorphic Map lookup.
+      // BigInt → string is one allocation; the lookup itself is hash-based.
+      cacheKey = targetKind + ":" + target.id + ":" + interfaceId + ":" + methodId;
+      cached = this.#emptyCallTemplates.get(cacheKey);
+    }
+    let len;
+    if (cached) {
+      // Fast path: clone the cached frame bytes, patch the questionId at
+      // byte 36, queue. No wasm boundary call.
+      // Frame layout: [4 length prefix][4 segCount-1][4 seg0 words]
+      //               [8 root pointer][16 Message struct][16+ Call struct
+      //               where questionId is at offset 0 of Call data].
+      // = 4 + 4 + 4 + 8 + 16 + 0 = 36 bytes before questionId.
+      const buf = new Uint8Array(cached.length);
+      buf.set(cached);
+      const dv = new DataView(buf.buffer);
+      dv.setUint32(36, questionId, true);
+      if (!this.#sendQueue) this.#sendQueue = [];
+      this.#sendQueue.push(buf);
+      this.#sendQueueBytes += buf.length;
+      if (!this.#flushScheduled) {
+        this.#flushScheduled = true;
+        queueMicrotask(this.#flushBound);
+      }
+      len = buf.length;
+    } else {
+      this.#stageIn(paramsBytes);
+      len = this.#exp.cpp_rpc_build_call(
+        questionId,
+        targetKind,
+        BigInt(target.id),
+        BigInt(interfaceId),
+        methodId,
+        paramsBytes.length,
+      );
+      if (!len) throw new Error("cpp_rpc_build_call failed");
+      // Snapshot the just-built frame for the empty-params cache. The
+      // questionId in the snapshot doesn't matter (we patch it on use).
+      if (isEmpty && cacheKey) {
+        const snapshot = this.#mem().slice(this.#outPtr, this.#outPtr + len);
+        this.#emptyCallTemplates.set(cacheKey, snapshot);
+      }
+      this.#sendFromOut(len);
+    }
     const d = deferred();
     this.#questions.set(questionId, makeQ(d, "call", undefined, undefined, undefined));
-    this.#sendFromOut(len);
     if (opts?.signal) this.#wireAbort(opts.signal, questionId, d, "question");
     // The pipeline cap lets the caller chain follow-up calls onto this
     // answer before it returns — those Calls go on the wire immediately,
@@ -579,7 +628,8 @@ export class RpcSession {
   }
 
   #handleBootstrap() {
-    const questionId = this.#exp.cpp_rpc_get_bootstrap_question_id();
+    // questionId already written to cpp_out by cpp_rpc_decode.
+    const questionId = this.#dataView().getUint32(this.#outPtr, true);
     // Register the local bootstrap as an export under local cap id 0, then
     // send Return with empty results. The current minimal wire skips
     // CapDescriptor encoding; instead, the peer addresses the bootstrap as
@@ -605,10 +655,8 @@ export class RpcSession {
     // One wasm call returns all the per-Call accessors we need (saves
     // 4 boundary crossings vs the per-field accessors). Layout matches
     // cpp_rpc_get_call_summary in cpp/wrapper.cpp.
-    if (this.#exp.cpp_rpc_get_call_summary() !== 1) {
-      // Shouldn't happen — we only land here for KIND_CALL — but be defensive.
-      return;
-    }
+    // Summary bytes already written to cpp_out by cpp_rpc_decode (combined
+    // decode + summary write — saves the per-message wasm boundary call).
     const out = this.#outPtr;
     const dv  = this.#dataView();
     const answerId    = dv.getUint32(out + 0,  true);
@@ -791,7 +839,7 @@ export class RpcSession {
     // One wasm call returns answerId + retKind + capCount packed in
     // cpp_out (saves 2-3 boundary crossings per Return). Layout matches
     // cpp_rpc_get_return_summary in cpp/wrapper.cpp.
-    if (this.#exp.cpp_rpc_get_return_summary() !== 1) return;
+    // Summary bytes already written to cpp_out by cpp_rpc_decode.
     const out = this.#outPtr;
     const dv  = this.#dataView();
     const answerId = dv.getUint32(out + 0, true);
@@ -863,7 +911,8 @@ export class RpcSession {
   }
 
   #handleFinish() {
-    const questionId = this.#exp.cpp_rpc_get_finish_question_id();
+    // questionId already written to cpp_out by cpp_rpc_decode.
+    const questionId = this.#dataView().getUint32(this.#outPtr, true);
     this.#answers.delete(questionId);
   }
 
@@ -1042,8 +1091,11 @@ export class RpcSession {
   // doesn't get freed prematurely. When the count hits zero, drop the
   // entry from #localCaps so the JS object can be GC'd by the runtime.
   #handleRelease() {
-    const id = this.#exp.cpp_rpc_get_release_id();
-    const dec = this.#exp.cpp_rpc_get_release_refcount();
+    // id + refcount already written to cpp_out by cpp_rpc_decode.
+    const out = this.#outPtr;
+    const dv = this.#dataView();
+    const id = dv.getUint32(out + 0, true);
+    const dec = dv.getUint32(out + 4, true);
     const entry = this.#localCaps.get(id);
     if (!entry) return;
     entry.refcount = (entry.refcount ?? 1) - dec;
@@ -1089,7 +1141,7 @@ export class RpcSession {
   // capnp-rpc-rust) might. Without this handler the import would silently
   // route to a stale answer.
   #handleResolve() {
-    if (this.#exp.cpp_rpc_get_resolve_summary() !== 1) return;
+    // Summary already written to cpp_out by cpp_rpc_decode.
     const out = this.#outPtr;
     const dv = this.#dataView();
     const promiseId = dv.getUint32(out + 0, true);
@@ -1143,7 +1195,7 @@ export class RpcSession {
   // path is unreachable in practice — but it's wired anyway so a peer
   // doing arbitrary level-1 things lands somewhere correct.
   #handleDisembargo() {
-    if (this.#exp.cpp_rpc_get_disembargo_summary() !== 1) return;
+    // Summary already written to cpp_out by cpp_rpc_decode.
     const out = this.#outPtr;
     const dv = this.#dataView();
     const contextKind = dv.getUint32(out + 0, true);

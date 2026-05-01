@@ -1538,6 +1538,21 @@ uint32_t cpp_rpc_build_release(uint32_t import_id, uint32_t refcount) {
 }
 
 // Decode incoming RPC message in cpp_in[0..len]. Returns the kind code.
+// Combined decode + summary writer. Returns the message kind AND writes
+// the kind-specific summary at cpp_out so JS reads everything it needs
+// from one boundary crossing instead of two (decode + get_*_summary).
+//
+// Layouts written to cpp_out per kind:
+//   CALL:    28 bytes (questionId, targetKind, targetId, interfaceId, methodId)
+//   RETURN:  12 bytes (answerId, retKind, capCount)
+//   FINISH:   4 bytes (questionId)
+//   RELEASE:  8 bytes (id, refcount)
+//   BOOTSTRAP:4 bytes (questionId)
+//   RESOLVE: 12 bytes (promiseId, kind, capDescKind)
+//   DISEMBARGO: 16 bytes (contextKind, embargoId, targetKind, targetId)
+//   ABORT:    0 bytes (reason fetched separately via get_abort_reason)
+//
+// JS callers can drop the separate get_*_summary call.
 int32_t cpp_rpc_decode(uint32_t bytes_len) {
   if (rpc_reader) {
     rpc_reader->~FlatArrayMessageReader();
@@ -1548,15 +1563,92 @@ int32_t cpp_rpc_decode(uint32_t bytes_len) {
       bytes_len / sizeof(capnp::word));
   rpc_reader = new (rpc_reader_storage) capnp::FlatArrayMessageReader(words);
   auto msg = rpc_reader->getRoot<capnp::rpc::Message>();
+  uint32_t* w32 = reinterpret_cast<uint32_t*>(cpp_out);
   switch (msg.which()) {
-    case capnp::rpc::Message::BOOTSTRAP:  return CWR_BOOTSTRAP;
-    case capnp::rpc::Message::CALL:       return CWR_CALL;
-    case capnp::rpc::Message::RETURN:     return CWR_RETURN;
-    case capnp::rpc::Message::FINISH:     return CWR_FINISH;
-    case capnp::rpc::Message::RESOLVE:    return CWR_RESOLVE;
-    case capnp::rpc::Message::RELEASE:    return CWR_RELEASE;
-    case capnp::rpc::Message::DISEMBARGO: return CWR_DISEMBARGO;
-    case capnp::rpc::Message::ABORT:      return CWR_ABORT;
+    case capnp::rpc::Message::CALL: {
+      auto call = msg.getCall();
+      auto t = call.getTarget();
+      uint32_t targetKind = 0; uint64_t targetId = 0;
+      if (t.isImportedCap()) { targetKind = 0; targetId = t.getImportedCap(); }
+      else if (t.isPromisedAnswer()) { targetKind = 1; targetId = t.getPromisedAnswer().getQuestionId(); }
+      uint32_t questionId = call.getQuestionId();
+      uint64_t interfaceId = call.getInterfaceId();
+      uint32_t methodId = call.getMethodId();
+      std::memcpy(cpp_out + 0,  &questionId, 4);
+      std::memcpy(cpp_out + 4,  &targetKind, 4);
+      std::memcpy(cpp_out + 8,  &targetId, 8);
+      std::memcpy(cpp_out + 16, &interfaceId, 8);
+      std::memcpy(cpp_out + 24, &methodId, 4);
+      return CWR_CALL;
+    }
+    case capnp::rpc::Message::RETURN: {
+      auto ret = msg.getReturn();
+      uint32_t answerId = ret.getAnswerId();
+      uint32_t retKind = 0;
+      uint32_t capCount = 0;
+      if (ret.isResults())   { retKind = 0; capCount = ret.getResults().getCapTable().size(); }
+      else if (ret.isException()) retKind = 1;
+      else if (ret.isCanceled())  retKind = 2;
+      else                        retKind = 3;
+      std::memcpy(cpp_out + 0, &answerId, 4);
+      std::memcpy(cpp_out + 4, &retKind, 4);
+      std::memcpy(cpp_out + 8, &capCount, 4);
+      return CWR_RETURN;
+    }
+    case capnp::rpc::Message::FINISH: {
+      uint32_t qid = msg.getFinish().getQuestionId();
+      std::memcpy(cpp_out + 0, &qid, 4);
+      return CWR_FINISH;
+    }
+    case capnp::rpc::Message::RELEASE: {
+      auto rel = msg.getRelease();
+      uint32_t id = rel.getId();
+      uint32_t rc = rel.getReferenceCount();
+      std::memcpy(cpp_out + 0, &id, 4);
+      std::memcpy(cpp_out + 4, &rc, 4);
+      return CWR_RELEASE;
+    }
+    case capnp::rpc::Message::BOOTSTRAP: {
+      uint32_t qid = msg.getBootstrap().getQuestionId();
+      std::memcpy(cpp_out + 0, &qid, 4);
+      return CWR_BOOTSTRAP;
+    }
+    case capnp::rpc::Message::RESOLVE: {
+      auto rr = msg.getResolve();
+      w32[0] = static_cast<uint32_t>(rr.getPromiseId());
+      if (rr.which() == capnp::rpc::Resolve::EXCEPTION) { w32[1] = 1; w32[2] = 0; }
+      else {
+        w32[1] = 0;
+        auto cap = rr.getCap();
+        switch (cap.which()) {
+          case capnp::rpc::CapDescriptor::NONE:               w32[2] = 0; break;
+          case capnp::rpc::CapDescriptor::SENDER_HOSTED:      w32[2] = 1; break;
+          case capnp::rpc::CapDescriptor::SENDER_PROMISE:     w32[2] = 2; break;
+          case capnp::rpc::CapDescriptor::RECEIVER_HOSTED:    w32[2] = 3; break;
+          case capnp::rpc::CapDescriptor::RECEIVER_ANSWER:    w32[2] = 4; break;
+          case capnp::rpc::CapDescriptor::THIRD_PARTY_HOSTED: w32[2] = 5; break;
+        }
+      }
+      return CWR_RESOLVE;
+    }
+    case capnp::rpc::Message::DISEMBARGO: {
+      auto d = msg.getDisembargo();
+      auto ctx = d.getContext();
+      switch (ctx.which()) {
+        case capnp::rpc::Disembargo::Context::SENDER_LOOPBACK:   w32[0] = 0; w32[1] = ctx.getSenderLoopback(); break;
+        case capnp::rpc::Disembargo::Context::RECEIVER_LOOPBACK: w32[0] = 1; w32[1] = ctx.getReceiverLoopback(); break;
+        case capnp::rpc::Disembargo::Context::ACCEPT:            w32[0] = 2; w32[1] = 0; break;
+        default:                                                  w32[0] = 0xff; w32[1] = 0; break;
+      }
+      auto target = d.getTarget();
+      if (target.which() == capnp::rpc::MessageTarget::IMPORTED_CAP) {
+        w32[2] = 0; w32[3] = target.getImportedCap();
+      } else {
+        w32[2] = 1; w32[3] = target.getPromisedAnswer().getQuestionId();
+      }
+      return CWR_DISEMBARGO;
+    }
+    case capnp::rpc::Message::ABORT: return CWR_ABORT;
     default: return CWR_UNKNOWN;
   }
 }
