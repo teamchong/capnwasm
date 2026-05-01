@@ -10,9 +10,44 @@ OUT=zig-out/capnp_cpp.wasm
 mkdir -p zig-out
 
 # Sources we need from kj — keep minimal, no async/io/network.
+# trimSourceFilename in kj/exception.c++ does runtime path canonicalization
+# we don't need (we already pre-strip "cpp/vendor/" via -ffile-prefix-map).
+# Patch the function body to a single `return filename;` so the linker drops
+# the ROOTS lookup table + the loop body. The patched copy lives in
+# zig-out/patched-kj/ alongside symlinks back to the kj headers so its
+# `#include "exception.h"` etc. still resolve.
+mkdir -p zig-out/patched-kj
+PATCHED_EXC=zig-out/patched-kj/exception.c++
+# Refresh symlinks every build so newly added kj headers are visible
+# without explicit re-symlinking.
+for h in "$CAPNP_SRC"/kj/*.h; do
+  ln -sf "$(cd "$(dirname "$h")" && pwd)/$(basename "$h")" "zig-out/patched-kj/$(basename "$h")"
+done
+if [ ! -f "$PATCHED_EXC" ] || [ "$CAPNP_SRC/kj/exception.c++" -nt "$PATCHED_EXC" ]; then
+  python3 - "$CAPNP_SRC/kj/exception.c++" "$PATCHED_EXC" <<'PYEOF'
+import sys, re
+src = open(sys.argv[1]).read()
+m = re.search(r"kj::StringPtr trimSourceFilename\(kj::StringPtr filename\) \{", src)
+if not m:
+    print("trimSourceFilename not found in exception.c++ — skipping patch", file=sys.stderr)
+    open(sys.argv[2], "w").write(src)
+    sys.exit(0)
+start = m.start()
+depth, i = 0, m.end() - 1
+while i < len(src):
+    if src[i] == '{': depth += 1
+    elif src[i] == '}':
+        depth -= 1
+        if depth == 0: end = i + 1; break
+    i += 1
+patched = src[:start] + "kj::StringPtr trimSourceFilename(kj::StringPtr filename) { return filename; }" + src[end:]
+open(sys.argv[2], "w").write(patched)
+PYEOF
+fi
+
 KJ_SOURCES=(
   "$CAPNP_SRC/kj/common.c++"
-  "$CAPNP_SRC/kj/exception.c++"
+  "$PATCHED_EXC"
   "$CAPNP_SRC/kj/debug.c++"
   "$CAPNP_SRC/kj/string.c++"
   "$CAPNP_SRC/kj/source-location.c++"
@@ -101,6 +136,11 @@ FLAGS=(
   -I"$CAPNP_SRC"
   -Icpp
   -include cpp/kj_strip_strings.h
+  # Strip the long "cpp/vendor/" prefix from __FILE__ source paths embedded
+  # by KJ assertion macros at every throw site. Saves ~50 bytes gz; the
+  # relative path within vendor (e.g. "kj/mutex.c++") is enough context
+  # for anyone reading an exception location.
+  -ffile-prefix-map=cpp/vendor/=
   -Wno-deprecated
   -Wno-unused-parameter
   -Wno-unknown-pragmas

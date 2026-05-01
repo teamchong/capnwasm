@@ -63,3 +63,12 @@
 #define KJ_LOG_AT(severity, location, ...) ((void)0)
 #undef KJ_DBG
 #define KJ_DBG(...) ((void)0)
+
+// trimSourceFilename runtime path canonicalization is unnecessary once
+// -ffile-prefix-map=cpp/vendor/= has already stripped the build prefix
+// from `__FILE__` strings — paths arrive as "kj/mutex.c++" which match
+// none of trimSourceFilename's hardcoded ROOTS ("ekam-provider/...",
+// "src/", "tmp/") so the function would just return its input anyway.
+// build.sh sed-patches the body of trimSourceFilename to a single
+// `return filename;` line at compile time — see TRIM_SOURCE_FILENAME
+// section there. The result drops the ROOTS string table and the loop.
