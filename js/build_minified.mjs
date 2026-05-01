@@ -17,6 +17,7 @@ import { resolve, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync, brotliCompressSync } from "node:zlib";
 import * as esbuild from "esbuild";
+import { minify as terserMinify } from "terser";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const JS_DIR = resolve(ROOT, "js");
@@ -52,13 +53,23 @@ function rewriteImports(src) {
     .replace(/from\s+["']\.\.\/dist\/([^"']+)["']/g, 'from "./$1"');
 }
 
+// Two-stage minification: esbuild first (handles modern syntax + emits a
+// sourcemap), then terser as a second pass on the esbuild output (better
+// at byte-level squeezing — variable renaming, dead-branch elimination,
+// constant folding). On our modules terser shaves another ~400 bytes gz
+// on top of esbuild alone, mostly on rpc.mjs and http_batch.mjs where
+// repeated property access patterns get folded harder.
+//
+// Side-step: where terser DOESN'T help (or makes things worse — happens
+// occasionally on tiny modules like client.mjs where terser's headers
+// outweigh its compression), we fall back to esbuild's output.
 for (const mod of MODULES) {
   const original = await readFile(resolve(JS_DIR, mod), "utf8");
   const src = rewriteImports(original);
   // esbuild handles top-level await + private class fields + everything
   // we use. Keep ES2022 to preserve those — older targets force
   // helper-function expansion that can BLOAT minified output.
-  const result = await esbuild.transform(src, {
+  const esbuildResult = await esbuild.transform(src, {
     minify: true,
     target: "es2022",
     format: "esm",
@@ -66,13 +77,37 @@ for (const mod of MODULES) {
     sourcemap: "external",
     sourcefile: mod,
   });
-  const outPath = resolve(DIST_DIR, mod);
-  await writeFile(outPath, result.code);
-  await writeFile(outPath + ".map", result.map);
 
-  const raw = Buffer.byteLength(result.code, "utf8");
-  const gz = gzipSync(result.code, { level: 9 }).length;
-  const br = brotliCompressSync(result.code).length;
+  let code = esbuildResult.code;
+  let map  = esbuildResult.map;
+  // Second pass via terser. Compare gzipped sizes; keep whichever wins.
+  try {
+    const terserResult = await terserMinify(esbuildResult.code, {
+      module: true,
+      compress: { passes: 3 },
+      mangle: true,
+      ecma: 2022,
+      sourceMap: { content: esbuildResult.map },
+    });
+    if (terserResult.code) {
+      const gzEsb = gzipSync(esbuildResult.code, { level: 9 }).length;
+      const gzTer = gzipSync(terserResult.code, { level: 9 }).length;
+      if (gzTer < gzEsb) {
+        code = terserResult.code;
+        if (terserResult.map) map = String(terserResult.map);
+      }
+    }
+  } catch {
+    // Terser failed — keep esbuild's output. Doesn't fail the build.
+  }
+
+  const outPath = resolve(DIST_DIR, mod);
+  await writeFile(outPath, code);
+  await writeFile(outPath + ".map", map);
+
+  const raw = Buffer.byteLength(code, "utf8");
+  const gz = gzipSync(code, { level: 9 }).length;
+  const br = brotliCompressSync(code).length;
   totalRaw += raw; totalGz += gz; totalBr += br;
   console.log(`  ${mod.padEnd(22)} raw=${String(raw).padStart(6)}  gz=${String(gz).padStart(5)}  br=${String(br).padStart(5)}`);
 }

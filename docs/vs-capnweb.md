@@ -69,8 +69,8 @@ All sizes minified-then-gzipped (the `dist/` build that ships in npm).
 | scenario | capnweb | capnwasm | ratio |
 |---|---|---|---|
 | Whole library, RPC-ready | **21 KB** (everything in `dist/index.js`) | — | — |
-| Wasm runtime only (read capnp messages) | n/a | **37 KB** | — |
-| WebSocket RPC (transport + sessions + caps) | **21 KB** | **42 KB** | 2.0× |
+| Wasm runtime only (read capnp messages) | n/a | **38 KB** | — |
+| WebSocket RPC (transport + sessions + caps) | **21 KB** | **43 KB** | 2.0× |
 | Typed proxy + HTTP-batch transport (typical browser shape) | **21 KB** | **45 KB** | 2.1× |
 | All four transports + typed + dynamic | **21 KB** | **51 KB** | 2.4× |
 

@@ -1,6 +1,6 @@
 # capnwasm
 
-Typed RPC for the browser, with a real Cap'n Proto C++ runtime in 37 KB gz (31 KB brotli) for the wasm-only path; **45 KB gz** for the typical typed-proxy + HTTP-batch shape. Talks to non-JS services. Beats capnweb 1.7-3.7× on real workloads, 29× on sequential HTTP-batch calls.
+Typed RPC for the browser, with a real Cap'n Proto C++ runtime in 38 KB gz (32 KB brotli) for the wasm-only path; **45 KB gz** for the typical typed-proxy + HTTP-batch shape. Talks to non-JS services. Beats capnweb 1.7-3.7× on real workloads, 29× on sequential HTTP-batch calls.
 
 ```js
 // 1. Write a schema:           user.capnp
@@ -143,8 +143,8 @@ All entry-point sizes are minified-then-gzipped (the `dist/` build that ships in
 | | what | gzip | brotli |
 |---|---|---|---|
 | `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, base64-inlined wasm) | 68 KB | 63 KB |
-| `import "capnwasm/browser"` | wasm-only path: shim + loader + slim wasm. Read capnp messages, no RPC. | **37 KB** | **31 KB** |
-| `+ "capnwasm/rpc"` | adds the RPC layer (sessions, caps, streaming, all wire-conformance handlers) | **42 KB** | **36 KB** |
+| `import "capnwasm/browser"` | wasm-only path: shim + loader + slim wasm. Read capnp messages, no RPC. | **38 KB** | **32 KB** |
+| `+ "capnwasm/rpc"` | adds the RPC layer (sessions, caps, streaming, all wire-conformance handlers) | **43 KB** | **37 KB** |
 | `+ "capnwasm/typed" + "capnwasm/http-batch"` | typed proxy + HTTP-batch transport — the typical browser app shape | **45 KB** | **38 KB** |
 | All four transports + typed + dynamic | every transport (WS, HTTP-batch, HTTP-stream, postMessage) + typed proxy + dynamic-schema reader | **51 KB** | **43 KB** |
 | `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | 2.6 KB | 2.4 KB |
