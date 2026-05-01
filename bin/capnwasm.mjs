@@ -635,7 +635,9 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`  // Cached request prep — same names hit the WeakMap and skip the encode loop.`);
   lines.push(`  const req = _getPickRequest(fields, names);`);
   lines.push(`  const u8 = cpp._u8;`);
-  lines.push(`  const aux = cpp._exports.cpp_lazy_aux_ptr();`);
+  // _auxPtr is cached at CapnCpp load time (constant after wasm init) — no
+  // per-call boundary crossing to fetch it. Saves ~50-100ns per pick.
+  lines.push(`  const aux = cpp._auxPtr;`);
   lines.push(`  u8.set(req, aux);`);
   lines.push(`  const descs = new Array(names.length);`);
   lines.push(`  for (let i = 0; i < names.length; i++) descs[i] = fields[names[i]];`);

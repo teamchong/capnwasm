@@ -43,7 +43,7 @@ function _capnwasmPick(cpp, fields, names) {
   // Cached request prep — same names hit the WeakMap and skip the encode loop.
   const req = _getPickRequest(fields, names);
   const u8 = cpp._u8;
-  const aux = cpp._exports.cpp_lazy_aux_ptr();
+  const aux = cpp._auxPtr;
   u8.set(req, aux);
   const descs = new Array(names.length);
   for (let i = 0; i < names.length; i++) descs[i] = fields[names[i]];

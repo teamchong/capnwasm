@@ -185,6 +185,11 @@ export class RpcSession {
   // wasm allocates its scratch space at init and never grows.
   #u8;
   #buffer;
+  // Cached DataView covering the wasm memory.buffer. Hot inbound paths
+  // (#handleCall, #handleReturn, #handleResolve, #handleDisembargo)
+  // read summary bytes from cpp_out and used to allocate a new DataView
+  // per call — this caches the view and refreshes only when memory grows.
+  #dv;
   // RpcSession always microtask-batches outbound sends. The cost is
   // ≤ one microtask of first-byte latency (~1µs, invisible behind any
   // network); the win is N→1 transport.send calls when the user makes
@@ -227,6 +232,7 @@ export class RpcSession {
     this.#inCap  = cpp._cap;
     this.#buffer = cpp.memory.buffer;
     this.#u8     = new Uint8Array(this.#buffer);
+    this.#dv     = new DataView(this.#buffer);
     this.#transport = transport;
     this.#registry = registry || new InterfaceRegistry();
     if (options.bootstrap) {
@@ -265,8 +271,14 @@ export class RpcSession {
     if (buf !== this.#buffer) {
       this.#buffer = buf;
       this.#u8 = new Uint8Array(buf);
+      this.#dv = new DataView(buf);
     }
     return this.#u8;
+  }
+  // Returns the cached DataView. Refreshes if memory has grown.
+  #dataView() {
+    if (this.#dv.buffer !== this.#cpp.memory.buffer) this.#mem();
+    return this.#dv;
   }
 
   /** The wasm instance this session uses. Exposed for openPrimitives etc. */
@@ -597,17 +609,16 @@ export class RpcSession {
       // Shouldn't happen — we only land here for KIND_CALL — but be defensive.
       return;
     }
-    const u8  = this.#mem();
     const out = this.#outPtr;
-    const dv  = new DataView(u8.buffer, out, 28);
-    const answerId    = dv.getUint32(0,  true);
-    const targetKind  = dv.getUint32(4,  true);
+    const dv  = this.#dataView();
+    const answerId    = dv.getUint32(out + 0,  true);
+    const targetKind  = dv.getUint32(out + 4,  true);
     // targetId fits in u32 in practice (questionId / importId both u32);
     // u64 in the wire is for forward-compat. Use Number — match the map
     // key type used by #localCaps and #answers.
-    const targetId    = Number(dv.getBigUint64(8,  true));
-    const interfaceId = dv.getBigUint64(16, true);  // stays BigInt — InterfaceId is genuinely u64
-    const methodId    = dv.getUint16(24, true);
+    const targetId    = Number(dv.getBigUint64(out + 8,  true));
+    const interfaceId = dv.getBigUint64(out + 16, true);  // stays BigInt — InterfaceId is genuinely u64
+    const methodId    = dv.getUint16(out + 24, true);
     // Note: we do NOT materialize paramsBytes up front anymore. The handler
     // chooses whether to copy (ctx.paramsBytes()) or to read directly out
     // of rpc_reader (ctx.openParams). Either way, the read must happen
@@ -781,12 +792,11 @@ export class RpcSession {
     // cpp_out (saves 2-3 boundary crossings per Return). Layout matches
     // cpp_rpc_get_return_summary in cpp/wrapper.cpp.
     if (this.#exp.cpp_rpc_get_return_summary() !== 1) return;
-    const u8  = this.#mem();
     const out = this.#outPtr;
-    const dv  = new DataView(u8.buffer, out, 12);
-    const answerId = dv.getUint32(0, true);
-    const retKind  = dv.getUint32(4, true);
-    const capCount = dv.getUint32(8, true);
+    const dv  = this.#dataView();
+    const answerId = dv.getUint32(out + 0, true);
+    const retKind  = dv.getUint32(out + 4, true);
+    const capCount = dv.getUint32(out + 8, true);
     const q = this.#questions.get(answerId);
     if (!q) return;
     this.#questions.delete(answerId);
@@ -1080,11 +1090,11 @@ export class RpcSession {
   // route to a stale answer.
   #handleResolve() {
     if (this.#exp.cpp_rpc_get_resolve_summary() !== 1) return;
-    const u8 = this.#mem();
-    const dv = new DataView(u8.buffer, this.#outPtr, 12);
-    const promiseId = dv.getUint32(0, true);
-    const isException = dv.getUint32(4, true) === 1;
-    const capDescKind = dv.getUint32(8, true);
+    const out = this.#outPtr;
+    const dv = this.#dataView();
+    const promiseId = dv.getUint32(out + 0, true);
+    const isException = dv.getUint32(out + 4, true) === 1;
+    const capDescKind = dv.getUint32(out + 8, true);
 
     if (isException) {
       const len = this.#exp.cpp_rpc_get_resolve_exception();
@@ -1134,12 +1144,12 @@ export class RpcSession {
   // doing arbitrary level-1 things lands somewhere correct.
   #handleDisembargo() {
     if (this.#exp.cpp_rpc_get_disembargo_summary() !== 1) return;
-    const u8 = this.#mem();
-    const dv = new DataView(u8.buffer, this.#outPtr, 16);
-    const contextKind = dv.getUint32(0, true);
-    const embargoId = dv.getUint32(4, true);
-    const targetKind = dv.getUint32(8, true);
-    const targetId = dv.getUint32(12, true);
+    const out = this.#outPtr;
+    const dv = this.#dataView();
+    const contextKind = dv.getUint32(out + 0, true);
+    const embargoId = dv.getUint32(out + 4, true);
+    const targetKind = dv.getUint32(out + 8, true);
+    const targetId = dv.getUint32(out + 12, true);
 
     if (contextKind === 0 /* senderLoopback */) {
       // Echo back. Build a Disembargo with the same target + receiverLoopback.

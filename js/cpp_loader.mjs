@@ -15,6 +15,15 @@ export class CapnCpp {
   #inPtr = 0;
   #outPtr = 0;
   #cap = 0;
+  // The cpp_lazy_aux scratch is a fixed C++ global — its address and
+  // capacity never change after wasm init. Cache once so every pick /
+  // batch-read avoids the wasm boundary call to look them up.
+  #auxPtr = 0;
+  #auxCap = 0;
+  // A cached DataView over memory.buffer. Hot reader paths re-use this
+  // instead of `new DataView(...)` per call. Refreshed on memory growth
+  // via #refreshDv().
+  #dv = null;
 
   static async load(wasmSource) {
     // Inline WASI imports — avoids a cross-module factory call on the cold
@@ -82,7 +91,20 @@ export class CapnCpp {
     cpp.#inPtr = cpp.#exports.cpp_in_ptr();
     cpp.#outPtr = cpp.#exports.cpp_out_ptr();
     cpp.#cap = cpp.#exports.cpp_in_capacity();
+    if (cpp.#exports.cpp_lazy_aux_ptr) {
+      cpp.#auxPtr = cpp.#exports.cpp_lazy_aux_ptr();
+      cpp.#auxCap = cpp.#exports.cpp_lazy_aux_capacity();
+    }
+    cpp.#dv = new DataView(mem.buffer);
     return cpp;
+  }
+
+  /** Refresh the cached DataView if memory has grown since last fetch. */
+  _dv() {
+    if (this.#dv.buffer !== this.#memory.buffer) {
+      this.#dv = new DataView(this.#memory.buffer);
+    }
+    return this.#dv;
   }
 
   get exports() { return this.#exports; }
@@ -108,6 +130,8 @@ export class CapnCpp {
   get _inPtr()   { return this.#inPtr; }
   get _outPtr()  { return this.#outPtr; }
   get _cap()     { return this.#cap; }
+  get _auxPtr()  { return this.#auxPtr; }
+  get _auxCap()  { return this.#auxCap; }
   get _u8()      { return this.#u8(); }
 }
 

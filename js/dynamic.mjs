@@ -775,8 +775,10 @@ function _readList(cpp, desc) {
 // path stays intact for the common pure-primitive case.
 function _batchPick(cpp, fields, names) {
   const u8 = cpp._u8;
-  const dv = new DataView(u8.buffer);
-  const aux = cpp._exports.cpp_lazy_aux_ptr();
+  // _dv() returns a buffer-cached DataView (refresh only on memory growth).
+  // _auxPtr is a wasm-init constant we cache once on CapnCpp load.
+  const dv = cpp._dv();
+  const aux = cpp._auxPtr;
 
   // Build the request: u32 count, then (u8 kind, u32 offset) per field.
   const count = names.length;
