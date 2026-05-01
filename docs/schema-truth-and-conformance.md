@@ -197,6 +197,46 @@ flags, safe-to-test flags, and so on without bumping
 `0x`-prefixed hex strings — not numbers — so JS consumers don't lose
 precision on 64-bit IDs greater than 2^53.
 
+### Generated contract test harness (today)
+
+```bash
+npx capnwasm manifest user.capnp -o user.manifest.json
+npx capnwasm harness user.manifest.json --gen ./user.gen.mjs -o user.contract.test.mjs
+node --test user.contract.test.mjs
+```
+
+Reads a manifest and emits a runnable Node `--test` file. Every capnp
+RPC method gets a test that exercises it end-to-end against an
+in-process mock server (default: paired-memory transport with
+default-response handlers built from the manifest itself — zero
+infrastructure). Override the target to run against a real endpoint:
+
+```bash
+CAPNWASM_HARNESS_TARGET=ws://staging.example.com/rpc \
+  node --test user.contract.test.mjs
+```
+
+REST methods land in the same harness file but need an explicit
+target (a generic mock REST server can't be synthesized from a
+manifest — OpenAPI declares response shapes, not values, and arbitrary
+handler logic is out of scope for a manifest):
+
+```bash
+CAPNWASM_HARNESS_REST_TARGET=https://staging.example.com \
+  node --test user.contract.test.mjs
+```
+
+What the harness asserts: each operation is callable, request encodes,
+response decodes against the declared result schema. What it does
+**not** assert: business semantics. Those belong in your app's own
+tests; the harness is the safety net that catches "you renamed a
+field and forgot to update the SDK consumers" before code review does.
+
+The emitted file is a normal test fixture meant to be checked in to
+the consuming app's repo. That keeps the contract surface visible in
+the app's test output (and PR diffs when the schema changes), instead
+of being hidden inside a tooling subprocess.
+
 ### What capnwasm does NOT provide
 
 Honest list, because pretending it covers more than it does is the
@@ -206,11 +246,6 @@ trap this whole framing is meant to avoid:
   against a running endpoint and tell you "your `getUser` actually
   returns an extra field that's not in the schema." That requires a
   probe-the-runtime layer that doesn't exist here.
-- **No generated contract tests.** Generated SDKs come with type
-  definitions but not with "and here's a runnable test that exercises
-  every method against a mock server generated from the same schema."
-  This is the most direct way capnwasm could close the
-  "SDK-isn't-runnable" gap.
 - **No safe-to-test flag.** Operations are typed but not tagged with
   "this is a read-only safe-to-poke endpoint" vs "this mutates
   production." A real audit/probe loop needs this.
@@ -243,29 +278,32 @@ the conformance story:
 - ~~**Emit the operation manifest as JSON.**~~ **Done** — see the
   `npx capnwasm manifest` section above and `js/manifest.mjs`. One
   shape across `.capnp`, TypeScript `@rest`, and OpenAPI sources;
-  consumed by the next two ideas without re-parsing source schemas.
-- **Generate a contract test harness from the schema.** For each
-  generated method, emit a default "happy-path" round-trip test that
-  the consuming app can wire to a real or mock server. The mock can
-  be generated from the same schema using the dynamic builder (a
-  capability that's already there for the runtime-schema reader).
-  Now that the manifest exists, the harness can be a separate
-  consumer that reads `*.manifest.json`.
-- **Round-trip drift probe.** Given a `.capnp` schema and a live
-  endpoint, `capnwasm probe` could call each method with synthesized
-  params and report any reply field that the schema doesn't declare,
-  or any expected field the endpoint doesn't return. This is the
-  "schema says X; runtime actually does X?" check, narrowed to one
-  service at a time. Same pattern: read manifest, exercise each
-  operation, diff observed response shape against
-  `interfaces[].methods[].resultsStruct` (capnp) or `returnType`
-  (REST).
+  consumed by the harness without re-parsing source schemas.
+- ~~**Generate a contract test harness from the schema.**~~ **Done** —
+  see `npx capnwasm harness` above and `js/harness.mjs`. Capnp RPC
+  methods get an in-process-mock test by default (zero infra), or
+  point at a real WS endpoint via `CAPNWASM_HARNESS_TARGET`. REST
+  methods need a real target via `CAPNWASM_HARNESS_REST_TARGET`.
+  Generated tests are runnable with `node --test` and pass against
+  the in-process mock today (see `test/harness.test.mjs` for the
+  end-to-end smoke).
+- **Round-trip drift probe.** Given a manifest and a live endpoint,
+  `capnwasm probe` calls each operation with synthesized params and
+  reports any reply field the schema doesn't declare, or any expected
+  field the endpoint doesn't return. This is the "schema says X;
+  runtime actually does X?" check, narrowed to one service at a time.
+  Same pattern as the harness: read manifest, exercise each operation,
+  diff observed response shape against `interfaces[].methods[]
+  .resultsStruct` (capnp) or `returnType` (REST). Different goal:
+  the harness asserts "no exception"; the probe reports field-by-field
+  agreement vs disagreement. The harness's mock-server scaffolding
+  is reusable — the probe is mostly its assertion layer rewritten
+  as diff-and-report rather than throw-on-mismatch.
 
-The manifest is the unblocker — both remaining ideas are now
-"consume manifest, do thing X" rather than "re-parse schema, then do
-thing X." That's the right abstraction boundary if the broader
-ecosystem is ever going to build conformance tooling that doesn't
-care which generator produced a given SDK.
+Manifest + harness landed as a pair. The probe is the natural third
+beat — once it ships, capnwasm's conformance surface goes from
+"schema generates SDK" to "schema generates SDK and tells you when
+the runtime stops matching it."
 
 ## Reading this against the rest of the docs
 

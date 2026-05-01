@@ -34,6 +34,12 @@ Usage:
       all input formats; for downstream tools (drift detectors, mock
       generators, doc generators, contract test harnesses).
 
+  npx capnwasm harness <manifest.json> --gen <gen-import> [-o out.test.mjs|-]
+      Emit a Node --test contract harness that exercises every operation
+      from the manifest. capnp methods run against an in-process mock by
+      default (override with CAPNWASM_HARNESS_TARGET=ws://...); REST
+      methods need CAPNWASM_HARNESS_REST_TARGET=https://... to run.
+
   npx capnwasm build                Rebuild zig-out/capnp_cpp.opt.wasm
   npx capnwasm bench                Run the Playwright bench
   npx capnwasm <file>               Shorthand: dispatches by extension.
@@ -1584,6 +1590,76 @@ async function cmdManifest(argv) {
   console.error(`  ${counts.structs} struct(s), ${counts.interfaces} interface(s), ${counts.restApis} REST API(s), ${opCount} operation(s)`);
 }
 
+/**
+ * Emit a Node --test contract harness from a manifest file.
+ *
+ * Usage:
+ *   npx capnwasm harness <manifest.json> --gen <gen-import> [-o out.test.mjs|-]
+ *
+ * Required:
+ *   <manifest.json>     A manifest produced by `npx capnwasm manifest`.
+ *   --gen <import>      Import specifier for the generated codegen
+ *                       module (e.g. "./user.gen.mjs"). Must export the
+ *                       per-struct {Name}Builder/{Name}Reader and the
+ *                       per-API create{Name}Client factory.
+ *
+ * Optional:
+ *   -o <path|->         Output file. Default: <manifest-stem>.contract.test.mjs
+ *                       next to the manifest. Use "-" for stdout.
+ *   --runtime <import>  Import specifier for the capnwasm runtime.
+ *                       Defaults to "capnwasm" (works for npm consumers).
+ */
+async function cmdHarness(argv) {
+  let manifestPath = null;
+  let output = null;
+  let genImport = null;
+  let runtimeImport = null;
+  let rpcImport = null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "-o" || a === "--output") output = argv[++i];
+    else if (a === "--gen") genImport = argv[++i];
+    else if (a === "--runtime") runtimeImport = argv[++i];
+    else if (a === "--rpc-runtime") rpcImport = argv[++i];
+    else if (!manifestPath) manifestPath = a;
+  }
+  if (!manifestPath || !genImport) {
+    console.error("usage: npx capnwasm harness <manifest.json> --gen <gen-import> [-o out.test.mjs|-] [--runtime <import>] [--rpc-runtime <import>]");
+    process.exit(1);
+  }
+  if (!existsSync(manifestPath)) {
+    console.error(`manifest not found: ${manifestPath}`);
+    process.exit(1);
+  }
+  if (output === null) {
+    const stem = basename(manifestPath, extname(manifestPath))
+      .replace(/\.manifest$/, "");
+    output = resolve(dirname(manifestPath), `${stem}.contract.test.mjs`);
+  }
+
+  const text = await import("node:fs/promises").then((m) => m.readFile(manifestPath, "utf8"));
+  const manifest = JSON.parse(text);
+  const { buildHarness } = await import("../js/harness.mjs");
+  const src = buildHarness(manifest, {
+    genImport,
+    ...(runtimeImport ? { runtimeImport } : {}),
+    ...(rpcImport     ? { rpcImport }     : {}),
+  });
+
+  if (output === "-") {
+    process.stdout.write(src);
+  } else {
+    await writeFile(output, src);
+    console.log(`Wrote ${output}`);
+  }
+
+  const ifaceCount = (manifest.interfaces ?? []).length;
+  const restCount  = (manifest.restApis  ?? []).length;
+  const opCount = (manifest.interfaces ?? []).reduce((n, i) => n + (i.methods?.length ?? 0), 0)
+                + (manifest.restApis   ?? []).reduce((n, a) => n + (a.methods?.length ?? 0), 0);
+  console.error(`  ${ifaceCount} capnp interface(s), ${restCount} REST API(s), ${opCount} operation(s) covered`);
+}
+
 async function cmdGen(argv) {
   const args = parseGenArgs(argv);
   const { structs, interfaces, restApis, typeInterfaces } = await parseSchema(args.schema);
@@ -1837,6 +1913,7 @@ async function main() {
     case "gen":      await cmdGen(argv.slice(1)); return;
     case "openapi":  await cmdOpenapi(argv.slice(1)); return;
     case "manifest": await cmdManifest(argv.slice(1)); return;
+    case "harness":  await cmdHarness(argv.slice(1)); return;
     case "build":    cmdBuild(); return;
     case "bench":    cmdBench(); return;
     case "-h": case "--help": case "help": topUsage(); return;

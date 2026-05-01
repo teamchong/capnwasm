@@ -114,15 +114,23 @@ const charge = await stripe.retrieveCharge("ch_abc123");
 for await (const event of stripe.listEvents()) console.log(event.id);
 ```
 
-**Plus: operation manifest export** — the same internal model that drives codegen, surfaced as canonical JSON for downstream tools (drift detectors, mock generators, doc generators, MCP servers, contract test harnesses). One shape whether the source is `.capnp`, TS `@rest`, or OpenAPI:
+**Plus: operation manifest + generated contract test harness** — the same internal model that drives codegen, surfaced as canonical JSON, then chained into a runnable test file that exercises every operation end-to-end:
 
 ```bash
+# 1) Canonical manifest from any input format
 npx capnwasm manifest user.capnp                  # → user.manifest.json
-npx capnwasm manifest stripe.json -o stripe.json  # OpenAPI source
-npx capnwasm manifest api.ts -o -                 # stdout (TS @rest source)
+
+# 2) Generate a Node --test contract harness from it
+npx capnwasm harness user.manifest.json --gen ./user.gen.mjs
+                                                  # → user.contract.test.mjs
+
+# 3) Run it — capnp methods exercise an in-process mock by default
+node --test user.contract.test.mjs
+# Or point at a real endpoint:
+CAPNWASM_HARNESS_TARGET=ws://staging.example.com/rpc node --test ...
 ```
 
-See [Schema truth & conformance](docs/schema-truth-and-conformance.md) for the manifest format + how it fits the broader "schema → all surfaces" pipeline.
+The harness asserts each operation is callable and its response decodes against the declared schema — the safety net that catches "you renamed a field and forgot to update an SDK consumer" before code review does. See [Schema truth & conformance](docs/schema-truth-and-conformance.md) for how this fits the broader "schema → all surfaces" pipeline.
 
 ---
 
