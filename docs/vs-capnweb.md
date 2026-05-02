@@ -167,6 +167,27 @@ The two HTTP transports cover the most common Worker shapes:
 
 For full bidirectional, long-lived RPC where either side can initiate, use WebSocket.
 
+## Operational features
+
+Each row was a real HN-thread concern about capnweb. Both libraries' answers:
+
+| Feature | capnweb | capnwasm |
+|---|---|---|
+| Reconnect with backoff + onReconnect hook | reconstruct manually | `capnwasm/reconnect` |
+| Federation gateway (route by interface ID) | hand-rolled per-method | `capnwasm/router` (`RouterRegistry`) |
+| Sturdyrefs (persistable handles across sessions) | not implemented | `capnwasm/sturdyref` (pluggable store) |
+| Three-party handoff (introduce cap to third party) | not implemented | `capnwasm/handoff` (token + verifier) |
+| Stream flow control (per-stream credits) | unbounded queue | opt-in via `callStream({ windowSize })` |
+| N+1 across `await` (batch dependent calls) | unbatchable across `await` | `capnwasm/pipeline` (explicit batch + splice) |
+| Static batch-shape validation (GraphQL persisted-query analog) | not implemented | `validate()` hook on `registerPipelineHandler` |
+| Per-call observability hook | not implemented | `session.onMetric()` + `capnwasm/metrics` |
+| MCP / LLM tool definitions from schema | n/a | `capnwasm/mcp` (`manifestToTools`) |
+| capnweb-wire compat shim (call capnweb servers from capnwasm) | n/a | `capnwasm/capnweb-wire` (`JsonWireSession`) |
+| Multi-language wire interop | JS-only | proven against upstream `capnp` 1.3.0 (`test/interop.test.mjs`) |
+| Schema evolution (add fields without breaking old peers) | no schema, no evolution | proven both directions of skew (`test/schema_evolution.test.mjs`) |
+
+These are 12 separate gaps capnweb shares but doesn't address. capnwasm shipped fixes for all of them as opt-in subpath imports — they don't bloat the default bundle.
+
 ## Where REST/JSON loses to both
 
 For completeness — neither library is competing with raw `fetch()` on the protocol axis, but it's worth showing what JSON-without-RPC costs:

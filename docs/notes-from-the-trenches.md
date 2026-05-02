@@ -237,17 +237,31 @@ The frame: **capnweb kept Cap'n Proto's RPC semantics and dropped the wire forma
 
 Neither one is wrong. They're optimized for different things. The mistake the framing in capnweb's docs encourages is treating the two halves as equally optional, when in fact dropping the wire format gives away a measurable amount of perf on the workloads that look like 2026 traffic (binary, big, bursty).
 
-## What I'd want next
+## What's been built since this writeup
 
-If I keep working on this:
+The shorter list below was the original "what I'd want next" — it's now mostly built:
 
-1. **Schemaless dynamic reader** (`capnwasm/dynamic`). Cap'n Proto's wire format supports reading without compile-time schema; capnwasm's codegen-only API doesn't yet expose it. That's the gap that makes capnweb feel right for dynamic-data use cases (multi-tenant SaaS, GraphQL fragments, admin tools where users define types at runtime).
+1. **Schemaless dynamic reader** ✅ shipped as `capnwasm/dynamic` (`js/dynamic.mjs`).
+2. **N+1 across `await`** ✅ shipped as `capnwasm/pipeline` — explicit batch composition with byte-level result splicing into later params; one round-trip for N dependent calls. Includes optional `validate()` hook so server can reject batch shapes (the GraphQL-persisted-query analog).
+3. **Capnweb-wire compat shim** ✅ shipped as `capnwasm/capnweb-wire` — `JsonWireSession` speaks capnweb's newline-delimited JSON protocol; tested against the real capnweb dist via MessagePort. Lets a capnwasm client talk to an existing capnweb server unchanged.
 
-2. **Promise-pipelining smarter batching**. Currently we batch sends within a microtask. If we tracked the dependency graph (call B uses promise from call A), we could send both in the same frame even when there's an `await` between them. That's what the original Cap'n Proto pipelining model targets. Real win for chained RPC patterns (`getUser → getOrders → getItems`).
+Plus everything else that came up alongside:
 
-3. **The capnweb-wire compat shim**, so existing capnweb deployments can drop capnwasm in alongside without a flag-day migration. Phase 1 = same speed (we're talking JSON over the wire). Phase 2 = flip the flag, both ends use binary wire, perf wins kick in.
+- **Reconnect** (`capnwasm/reconnect`) — auto-reopen with backoff, `onReconnect` hook.
+- **Federation router** (`capnwasm/router`) — gateway dispatches by interface ID to backend caps.
+- **Sturdyrefs** (`capnwasm/sturdyref`) — persistable handles; pluggable store interface.
+- **Three-party handoff** (`capnwasm/handoff`) — Alice introduces Carol to Bob; Carol calls Bob directly.
+- **Stream flow control** — per-stream credit window via `windowSize` opt-in; STREAM_WINDOW frame.
+- **Metrics** (`capnwasm/metrics`) — `session.onMetric()` event hook + in-memory aggregator.
+- **MCP / Anthropic tool definitions** (`capnwasm/mcp`) — convert a manifest into LLM-ready tool schemas.
+- **Multi-language wire interop** — proven with `test/interop.test.mjs` against the upstream `capnp` 1.3.0 binary.
+- **Schema evolution** — proven with `test/schema_evolution.test.mjs` for both directions of version skew.
 
-4. **A real production deploy** with real workloads, real RTT, and real numbers. The in-process bench is a proxy for "what does the protocol cost"; the real number that matters is "how many MS does my user wait for the page to render."
+What's still open:
+
+1. **Promise-pipelining smarter batching** *across capability chains* — for code like `orders.get(user.get().id)`, capnwasm already pipelines (one frame, one round-trip) when the chained call uses a returned cap. The pipeline-runner approach above handles the scalar-field-dependency case. The remaining gap is automatic detection of pipelinable shapes inside a synchronous expression chain — currently the user has to write the pipelining form explicitly or use `capnwasm/pipeline`.
+
+2. **A real production deploy** with real workloads, real RTT, and real numbers. The in-process bench is a proxy for "what does the protocol cost"; the real number that matters is "how many MS does my user wait for the page to render."
 
 ## Reproducing
 

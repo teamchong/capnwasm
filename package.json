@@ -62,6 +62,9 @@
     "./sturdyref": "./js/sturdyref.mjs",
     "./pipeline": "./js/pipeline.mjs",
     "./handoff": "./js/handoff.mjs",
+    "./mcp": "./js/mcp.mjs",
+    "./capnweb-wire": "./js/capnweb_wire.mjs",
+    "./metrics": "./js/metrics.mjs",
     "./reconnect": {
       "development": "./js/reconnect.mjs",
       "default": "./dist/reconnect.mjs"

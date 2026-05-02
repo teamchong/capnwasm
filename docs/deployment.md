@@ -121,25 +121,40 @@ If you serve `dist/capnp.slim.wasm` yourself, set `Cache-Control: public, max-ag
 
 ## Observability
 
-`RpcSession` emits no metrics today. For a per-request timer the practical pattern is to wrap your handler:
+`session.onMetric(handler)` emits per-event metrics. The handler signature is `(event, data) => void`:
+
+| event | data |
+|---|---|
+| `callStart` | `{ questionId, interfaceId, methodId, startTime }` |
+| `callEnd`   | `{ questionId, interfaceId, methodId, durationMs, status: "ok"\|"err", error? }` |
+| `dispatchStart` | `{ answerId, interfaceId, methodId, startTime }` |
+| `dispatchEnd`   | `{ answerId, interfaceId, methodId, durationMs, status, error? }` |
+| `bytesSent` | `{ bytes }` |
+| `bytesReceived` | `{ bytes }` |
+
+When zero subscribers are registered the hot path skips event construction entirely — no overhead until you wire something up. Returns an unsubscribe function.
 
 ```js
-function instrumented(name, handler) {
-  return async (params, ctx) => {
-    const t0 = performance.now();
-    try {
-      const out = await handler(params, ctx);
-      metrics.histogram(`rpc.${name}.ms`, performance.now() - t0);
-      return out;
-    } catch (e) {
-      metrics.counter(`rpc.${name}.errors`).inc({ type: e.type ?? "FAILED" });
-      throw e;
-    }
-  };
-}
-
-registry.echo(instrumented("echo", echoHandler));
+session.onMetric((event, data) => {
+  if (event === "callEnd") {
+    histogram(`rpc.${data.interfaceId.toString(16)}.${data.methodId}.ms`, data.durationMs);
+    if (data.status === "err") counter("rpc.errors").inc();
+  }
+});
 ```
+
+For a tiny in-memory aggregator (per-method counts + min/avg/max latency + total bytes), use `capnwasm/metrics`:
+
+```js
+import { MetricsAggregator } from "capnwasm/metrics";
+const m = new MetricsAggregator();
+session.onMetric((e, d) => m.record(e, d));
+// ... later
+console.log(m.snapshot());
+// { methods: { "0xabc:1": { calls, errors, avgMs, minMs, maxMs, kind } }, bytesSent, bytesReceived }
+```
+
+For OpenTelemetry / Prometheus, wire `onMetric` directly to your client library — the event shape maps cleanly to spans (start/end pairs) and counters/histograms.
 
 For wire-level inspection — *what bytes are flowing* — load `https://teamchong.github.io/capnwasm/inspect.js` and call `cw.inspect(framedBytes)`. Documented in [`docs/inspect.md`](inspect.md).
 

@@ -156,6 +156,19 @@ The gzip column is what Cloudflare Workers measures against the deploy bundle li
 
 Subpath imports also work standalone (`capnwasm/http-batch` alone is 1.3 KB gz, `capnwasm/postmessage` is 0.6 KB) — pull only what you use.
 
+**Operational add-ons** (each ships as its own subpath; default bundle untouched):
+
+| import | what it does |
+|---|---|
+| `capnwasm/reconnect` | auto-reopen WebSocket on drop, exp backoff, `onReconnect` hook |
+| `capnwasm/router` | gateway dispatches inbound calls by interface ID to backend caps |
+| `capnwasm/sturdyref` | persistable cap handles (`save()` / `restore()`); pluggable store |
+| `capnwasm/handoff` | three-party handoff: introducer mints token, recipient redeems |
+| `capnwasm/pipeline` | batch N dependent calls in one round-trip; optional shape-validator hook |
+| `capnwasm/metrics` | in-memory aggregator for `session.onMetric()` events |
+| `capnwasm/mcp` | convert a manifest into Anthropic / MCP tool definitions |
+| `capnwasm/capnweb-wire` | client that speaks capnweb's JSON wire — drop into existing capnweb deployments |
+
 **Wire inspector** for debugging — not bundled in the package, hosted as a single file. Paste this into DevTools when you want to see decoded capnp bytes ([docs](docs/inspect.md)):
 
 ```js
