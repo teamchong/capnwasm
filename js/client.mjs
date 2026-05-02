@@ -1,9 +1,9 @@
-// High-level client helpers — three small abstractions over the lower-level
+// High-level client helpers. Three small abstractions over the lower-level
 // RPC primitives in js/rpc.mjs:
 //
-//   createClient(url, opts?)      — load wasm + connect WebSocket + bootstrap, one line
-//   subscribeQuery(cap, IFC, METHOD, params)  — wrap callStream with an unsubscribe
-//   optimistic({ apply, send, revert })       — apply-locally-then-send-to-server pattern
+//   createClient(url, opts?)     . Load wasm + connect WebSocket + bootstrap, one line
+//   subscribeQuery(cap, IFC, METHOD, params) . Wrap callStream with an unsubscribe
+//   optimistic({ apply, send, revert })      . Apply-locally-then-send-to-server pattern
 //
 // Each is small enough to read in 20 lines. The point is to make the common
 // shape obvious without forcing every caller through the lower-level RPC
@@ -11,7 +11,7 @@
 
 // Transports are dynamically imported per-call so a bundler only includes
 // the transport modules the user actually reaches. A typed-proxy + HTTP-
-// batch consumer pays for rpc.mjs (foundational) + http_batch.mjs only —
+// batch consumer pays for rpc.mjs (foundational) + http_batch.mjs only -
 // http_stream.mjs and postmessage.mjs stay out of the bundle.
 //
 // Default wasm loader is also dynamic so the heavy inlined-wasm bundle
@@ -35,7 +35,7 @@ async function defaultLoad() {
  *   const { session, cap } = await createClient("wss://api.example.com/rpc");
  *   const result = await cap.call(IFC, METHOD, params).promise;
  *
- * For Node WebSocket, pass `opts.WebSocket` (e.g. from the `ws` package) —
+ * For Node WebSocket, pass `opts.WebSocket` (e.g. from the `ws` package) -
  * Node 22+ has a built-in WebSocket so this is only needed on older runtimes.
  *
  * @param {string} url
@@ -79,7 +79,7 @@ function autoDetect(url) {
 
 /**
  * Wrap a server-driven stream with an idiomatic-feeling pub/sub shape. The
- * underlying transport is `cap.callStream` — the same WebSocket frames a
+ * underlying transport is `cap.callStream`. The same WebSocket frames a
  * Cap'n Proto C++ peer would speak. This helper just adds the unsubscribe.
  *
  *   const sub = subscribeQuery(cap, MESSAGES_IFC, METHOD_WATCH, paramsBytes);
@@ -91,11 +91,11 @@ function autoDetect(url) {
  * (component unmount, route change, etc).
  *
  * Pass `{ maxQueueSize }` to bound the in-memory buffer for slow consumers
- * — see js/rpc.mjs for the semantics. Pass `{ signal }` to abort externally.
+ *. See js/rpc.mjs for the semantics. Pass `{ signal }` to abort externally.
  */
 export function subscribeQuery(cap, interfaceId, methodId, paramsBytes, opts = {}) {
   const ac = new AbortController();
-  // Compose external abort with our own — abort either fires both.
+  // Compose external abort with our own. Abort either fires both.
   if (opts.signal) {
     if (opts.signal.aborted) ac.abort(opts.signal.reason);
     else opts.signal.addEventListener("abort", () => ac.abort(opts.signal.reason), { once: true });
@@ -127,7 +127,7 @@ export function subscribeQuery(cap, interfaceId, methodId, paramsBytes, opts = {
  * so the caller can choose how to surface it (toast, log, retry).
  *
  * If `apply` itself throws, nothing is sent and the original error
- * propagates — the caller's local state never observes a partial mutation.
+ * propagates. The caller's local state never observes a partial mutation.
  */
 export async function optimistic({ apply, send, revert }) {
   const undoToken = apply();
@@ -135,7 +135,7 @@ export async function optimistic({ apply, send, revert }) {
     return await send();
   } catch (err) {
     if (revert) {
-      try { revert(undoToken); } catch { /* swallow — the original error is what mattered */ }
+      try { revert(undoToken); } catch { /* swallow. The original error is what mattered */ }
     }
     throw err;
   }

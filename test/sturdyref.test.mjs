@@ -88,7 +88,7 @@ test("sturdyref: token survives a session reconnect", async () => {
   client1.close();
   server1.server.close();
 
-  // New transport pair, new sessions. Same store + same target object —
+  // New transport pair, new sessions. Same store + same target object -
   // the only durable thing is the store. Token should still resolve.
   const server2 = await makeServer(store, target);
   const { session: client2 } = await makeClient(server2.transport);
@@ -138,7 +138,7 @@ test("sturdyref: forget removes the token", async () => {
 
   const token = await persist(client.bootstrap());
   assert.equal(store.size, 1);
-  // The store payload is the inner bytes — strip the 8-byte frame.
+  // The store payload is the inner bytes. Strip the 8-byte frame.
   const payload = token.subarray(8);
   assert.equal(store.forget(payload), true);
   assert.equal(store.size, 0);

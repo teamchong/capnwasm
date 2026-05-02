@@ -1,5 +1,5 @@
 // Minimal wasi_snapshot_preview1 polyfill for the capnp runtime wasm.
-// The runtime declares only 5 wasi imports — args, fd_write, proc_exit,
+// The runtime declares only 5 wasi imports. Args, fd_write, proc_exit,
 // fd_close. Keeping this separate from the full schema-compiler shim
 // lets RPC-only browser bundles ship just the bytes they need.
 

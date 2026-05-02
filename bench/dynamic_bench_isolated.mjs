@@ -1,6 +1,6 @@
 // Re-runs the dynamic-vs-codegen bench in fresh Node subprocesses, one
 // per test. Each test gets its own V8 heap, JIT state, and inline-cache
-// history — so the order in which we run them doesn't bias the result.
+// history. So the order in which we run them doesn't bias the result.
 //
 // Also forces the read values into a black-hole sink (XOR-summed, printed
 // as a string at the end) so V8 can't eliminate the field accesses as dead

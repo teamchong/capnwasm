@@ -3,7 +3,7 @@
 //
 // Why this exists separately from the default `capnwasm` import:
 //   The default is a single-file inlined bundle (base64-encoded wasm
-//   embedded in the JS) — fine for Node, but in a browser that wastes
+//   embedded in the JS). Fine for Node, but in a browser that wastes
 //   ~20 KB gzipped on base64 padding and forces a synchronous decode
 //   before instantiation. This entrypoint:
 //     - loads dist/capnp.slim.wasm (the production-only wasm, no
@@ -23,7 +23,7 @@ import { CapnCpp } from "./cpp_loader.mjs";
 
 export { CapnCpp };
 
-// Default URL — used when load() is called with no argument. Resolves the
+// Default URL. Used when load() is called with no argument. Resolves the
 // .wasm relative to this module's URL so it works whether the package is
 // imported from node_modules, a CDN, or a local path.
 const DEFAULT_WASM_URL = new URL("../dist/capnp.slim.wasm", import.meta.url);

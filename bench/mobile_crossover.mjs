@@ -2,7 +2,7 @@
 //
 // Capnweb's pitch: tiny bundle, zero init cost, every call is JSON.
 // Capnwasm: 28 KB brotli wasm to compile up front, then every call is
-// fast(er) thereafter. There is a break-even N — make fewer calls than N
+// fast(er) thereafter. There is a break-even N. Make fewer calls than N
 // in your app's lifetime and capnweb is the right pick.
 //
 // This bench measures it on this machine. Run it on a slower CPU
@@ -19,13 +19,13 @@
 import { performance } from "node:perf_hooks";
 import { load as loadCapnwasm } from "../dist/inlined.mjs";
 
-// Lazy-load capnweb only if available — bench is informational, skip
+// Lazy-load capnweb only if available. Bench is informational, skip
 // gracefully when the sibling repo isn't checked out.
 let capnweb;
 try {
   capnweb = await import("../../capnweb/dist/index.js");
 } catch {
-  console.error("capnweb not found at ../../capnweb/dist/index.js — skipping comparison.");
+  console.error("capnweb not found at ../../capnweb/dist/index.js. Skipping comparison.");
   process.exit(0);
 }
 
@@ -48,14 +48,14 @@ for (let i = 0; i < initRuns; i++) {
   // Use a fresh import? Node module-caches modules, so subsequent loads are
   // hot. The honest measurement is a single cold load, then warm thereafter.
   // The "init" we care about for the crossover is what a user pays the
-  // FIRST time their page loads our library — so just measure load() once.
+  // FIRST time their page loads our library. So just measure load() once.
   const t = await timeMs(() => loadCapnwasm());
   wasmInitTimes.push(t);
 }
 const wasmColdInit = wasmInitTimes[0];   // first run is the only "cold" one
 const wasmWarmInit = median(wasmInitTimes.slice(1));
 
-// --- capnweb init cost (none — pure JS) ------------------------------------
+// --- capnweb init cost (none. Pure JS) ------------------------------------
 
 // capnweb has no wasm. The "init" is just import() time, which is dominated
 // by V8 module instantiation. Measure it the same way for fairness.
@@ -153,7 +153,7 @@ const crossoverN = perCallSavings > 0 ? Math.ceil(initDelta / perCallSavings) : 
 
 const cpu = process.arch + " / " + process.platform;
 console.log("");
-console.log("Mobile-class crossover — where wasm init cost stops mattering");
+console.log("Mobile-class crossover. Where wasm init cost stops mattering");
 console.log("=============================================================");
 console.log(`CPU profile:               ${cpu} (Node ${process.versions.node})`);
 console.log("");
@@ -169,7 +169,7 @@ console.log(`  per-call savings         ${perCallSavings.toFixed(2)} µs/call`);
 console.log("");
 console.log("Crossover:");
 if (crossoverN === Infinity) {
-  console.log("  capnwasm is slower per call too — no crossover at all on this hardware.");
+  console.log("  capnwasm is slower per call too. No crossover at all on this hardware.");
 } else if (crossoverN <= 0) {
   console.log("  capnwasm wins immediately (cold-init delta is already negative).");
 } else {

@@ -1,4 +1,4 @@
-// Tests for reconnectingTransport — auto-reconnect with exponential backoff,
+// Tests for reconnectingTransport. Auto-reconnect with exponential backoff,
 // onReconnect callbacks, pending calls reject on drop, caller can resume after.
 //
 // We don't have a fake WebSocket; instead we drive reconnectingTransport with
@@ -16,7 +16,7 @@ import {
 } from "../js/rpc.mjs";
 import { reconnectingTransport } from "../js/reconnect.mjs";
 
-// Cap'n Proto frame holding a null AnyPointer — empty params/results.
+// Cap'n Proto frame holding a null AnyPointer. Empty params/results.
 const EMPTY_MESSAGE = (() => {
   const out = new Uint8Array(16);
   const dv = new DataView(out.buffer);

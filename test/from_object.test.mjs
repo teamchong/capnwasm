@@ -1,9 +1,9 @@
 // Tests for the JSON.stringify-shaped helpers:
 //
-//   PrimitivesBuilder.from(cpp, obj)       — codegen path, static factory
-//   primitivesBuilder.fromObject(obj)      — codegen path, instance method
-//   encodeDynamic(cpp, schema, obj)        — dynamic path, one-call helper
-//   buildDynamic(...).fromObject(obj)      — dynamic path, instance method
+//   PrimitivesBuilder.from(cpp, obj)      . Codegen path, static factory
+//   primitivesBuilder.fromObject(obj)     . Codegen path, instance method
+//   encodeDynamic(cpp, schema, obj)       . Dynamic path, one-call helper
+//   buildDynamic(...).fromObject(obj)     . Dynamic path, instance method
 //
 // Both paths produce the same wire bytes as the corresponding hand-rolled
 // setter loop. We assert that by building the same data three ways
@@ -47,7 +47,7 @@ const GROUND_TRUTH = {
   flag0: true,
   flag1: false,
   flag2: true,
-  text: "Alice — α β γ",
+  text: "Alice. α β γ",
   data: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]),
   emptyText: "",
   emptyData: new Uint8Array([]),
@@ -122,7 +122,7 @@ test("codegen fromObject skips missing keys (leaves defaults)", () => {
 });
 
 test("codegen fromObject ignores unknown keys silently", () => {
-  // Unknown keys must not crash — schema is the contract, extras are noise.
+  // Unknown keys must not crash. Schema is the contract, extras are noise.
   const bytes = PrimitivesBuilder.from(cpp, {
     u8: 1,
     bogus: "should be ignored",
@@ -148,7 +148,7 @@ test("codegen fromObject coerces Number → BigInt for u64/i64 (when safe)", () 
   assert.equal(r.i64, -1234n);
 });
 
-test("codegen Builder.from is a static — works without 'new'", () => {
+test("codegen Builder.from is a static. Works without 'new'", () => {
   const bytes = PrimitivesBuilder.from(cpp, { u8: 99 }).toBytes();
   const r = openPrimitives(cpp, bytes);
   assert.equal(r.u8, 99);
@@ -209,7 +209,7 @@ test("dynamic encodeDynamic round-trips through openDynamic with the same schema
   assert.equal(r.u16, 1234);
   assert.equal(r.u32, 5_000_000);
   // The dynamic reader returns u64/i64 as Number when the value fits;
-  // fall back to BigInt comparison if bigint came back. Either is fine —
+  // fall back to BigInt comparison if bigint came back. Either is fine -
   // the wire bytes are the same; this is a JS-side coercion choice.
   assert.equal(BigInt(r.u64), 9_999_999_999n);
   assert.equal(BigInt(r.i64), -42n);
@@ -269,7 +269,7 @@ test("codegen Builder.from and dynamic encodeDynamic produce wire bytes the OTHE
   assert.equal(dynRead.text, "interop");
   assert.deepEqual(Array.from(dynRead.data), [9, 8, 7]);
 
-  // Build via dynamic, read via codegen — same fields, same wire format.
+  // Build via dynamic, read via codegen. Same fields, same wire format.
   const dynBytes = encodeDynamic(cpp, DynamicPrimitivesSchema, {
     u8: 11, u16: 22, u32: 33, u64: 44n, i64: -55n, f32: 1.5,
     text: "interop", data: new Uint8Array([9, 8, 7]),

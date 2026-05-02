@@ -81,7 +81,7 @@ test("flow control: windowSize=4 pauses the generator until credits replenish", 
   // Yield to the event loop a few times so any pending sends/receives flush.
   for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 5));
 
-  // At this point the server has yielded somewhere between 4 and 6 — it sent
+  // At this point the server has yielded somewhere between 4 and 6. It sent
   // the initial 4-window worth, then on the WINDOW(2) refill another 2.
   // It should NOT have yielded all 20 yet.
   const yielded = fix.getYieldCount();

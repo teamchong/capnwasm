@@ -125,7 +125,7 @@ test("metrics: aggregator snapshots calls + errors + bytes", async () => {
 
   const snap = m.snapshot();
   const key = `0x${IFC.toString(16)}:${METHOD}`;
-  // Both inbound (server) and outbound (client) under same key — last one
+  // Both inbound (server) and outbound (client) under same key. Last one
   // wins on .kind, but call counts are summed.
   assert.ok(snap.methods[key]);
   assert.ok(snap.methods[key].calls >= 3);
@@ -153,6 +153,6 @@ test("metrics: zero-subscriber path adds no observable cost", async () => {
   const { client } = await pair();
   // No onMetric() call.
   await client.bootstrap().call(IFC, METHOD, emptyMessage(), []).promise;
-  // No assertion needed — the test passes if this completes without
+  // No assertion needed. The test passes if this completes without
   // throwing. The early-out path is exercised.
 });

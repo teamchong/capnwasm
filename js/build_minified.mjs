@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Minify each subpath JS module via esbuild, write to dist/. Imports
 // stay as relative ESM paths so the minified files cross-reference each
-// other within dist/ — esbuild's per-file minify mode (no bundling)
+// other within dist/. Esbuild's per-file minify mode (no bundling)
 // preserves tree-shakability for downstream bundlers.
 //
 // What gets minified: every js/*.mjs that's exposed via package.json
@@ -57,19 +57,19 @@ function rewriteImports(src) {
 
 // Two-stage minification: esbuild first (handles modern syntax + emits a
 // sourcemap), then terser as a second pass on the esbuild output (better
-// at byte-level squeezing — variable renaming, dead-branch elimination,
+// at byte-level squeezing. Variable renaming, dead-branch elimination,
 // constant folding). On our modules terser shaves another ~400 bytes gz
 // on top of esbuild alone, mostly on rpc.mjs and http_batch.mjs where
 // repeated property access patterns get folded harder.
 //
-// Side-step: where terser DOESN'T help (or makes things worse — happens
+// Side-step: where terser DOESN'T help (or makes things worse. Happens
 // occasionally on tiny modules like client.mjs where terser's headers
 // outweigh its compression), we fall back to esbuild's output.
 for (const mod of MODULES) {
   const original = await readFile(resolve(JS_DIR, mod), "utf8");
   const src = rewriteImports(original);
   // esbuild handles top-level await + private class fields + everything
-  // we use. Keep ES2022 to preserve those — older targets force
+  // we use. Keep ES2022 to preserve those. Older targets force
   // helper-function expansion that can BLOAT minified output.
   const esbuildResult = await esbuild.transform(src, {
     minify: true,
@@ -100,7 +100,7 @@ for (const mod of MODULES) {
       }
     }
   } catch {
-    // Terser failed — keep esbuild's output. Doesn't fail the build.
+    // Terser failed. Keep esbuild's output. Doesn't fail the build.
   }
 
   const outPath = resolve(DIST_DIR, mod);
@@ -131,7 +131,7 @@ try {
   console.log(`  capnp.slim.wasm.br      ${slimBr.length} B`);
   console.log(`  capnp.slim.wasm.gz      ${slimGz.length} B`);
 } catch (err) {
-  // Slim wasm may not exist yet on a fresh checkout — fine, build:wasm
+  // Slim wasm may not exist yet on a fresh checkout. Fine, build:wasm
   // produces it. Just skip pre-compression in that case.
   if (err.code !== "ENOENT") throw err;
 }

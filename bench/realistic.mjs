@@ -11,7 +11,7 @@
 //   3. Binary blob delivery: client sends/receives 64 KB of binary data.
 //      Cap'n Proto stores raw bytes; capnweb must base64-encode (1.33x
 //      bandwidth + parse cost).
-//   4. Wire bytes: total bytes per message — bandwidth matters on real WANs.
+//   4. Wire bytes: total bytes per message. Bandwidth matters on real WANs.
 //
 // Each is a distinct dimension that DOES translate to user-visible behavior.
 

@@ -73,7 +73,7 @@ test("interop: capnwasm encodes → upstream capnp decodes", { skip }, async () 
   assert.ok(len > 0, "cpp_any_builder_finalize returned a length");
   const bytes = cpp._u8.slice(cpp._outPtr, cpp._outPtr + len);
 
-  // Decode with the upstream Cap'n Proto CLI — different binary, same wire.
+  // Decode with the upstream Cap'n Proto CLI. Different binary, same wire.
   const decoded = capnpDecode(bytes, "User");
   assert.equal(decoded.id, "42");          // capnp emits UInt64 as string
   assert.equal(decoded.age, 30);

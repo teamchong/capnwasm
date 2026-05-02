@@ -19,7 +19,7 @@ const y = reader.timestamp;     // decoded
 
 For primitives this lands as a direct
 [`DataView`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView)
-read against wasm linear memory — no boundary call, no copy. V8/TurboFan
+read against wasm linear memory. No boundary call, no copy. V8/TurboFan
 inlines those DataView calls down to a single load instruction in JIT.
 For text / lists / nested structs we do cross the wasm boundary, which
 adds ~50-100 ns of overhead per call.
@@ -38,15 +38,15 @@ get fieldFoo() {
 ```
 
 `_dataPtr` is set when the Reader was opened via the zero-copy entry
-points — `ctx.openParams(Builder)` server-side, or `cap.callBuilder()`
+points. `ctx.openParams(Builder)` server-side, or `cap.callBuilder()`
 on the client side returning `extract(reader, ...)` callbacks. When set,
-every primitive getter is a `DataView.getX(ptr+off, true)` — no boundary
+every primitive getter is a `DataView.getX(ptr+off, true)`. No boundary
 crossing. This is what makes `bench/realistic.mjs`'s sparse-field test
 tie with capnweb (read 3 of 32 fields ≈ 27 µs/call for both, even though
 capnweb has parsed all 32 by the time you ask).
 
 The slow path exists for the legacy `paramsBytes`/`bytes` route where
-the bytes have been snapshotted out of wasm memory — there's no live
+the bytes have been snapshotted out of wasm memory. There's no live
 `dataPtr` to read from, so we ask the C++ side to walk the message and
 return the value. Still avoids a copy of unrelated fields, but pays a
 wasm call per field.
@@ -57,7 +57,7 @@ wasm call per field.
 |---|---|---|---|
 | Bool | direct | ~0.5 ns | `u8[ptr+off] >> bit & 1` |
 | Int8 / UInt8 | direct | ~1 ns | indexed `Uint8Array` load |
-| Int16-32, UInt16-32 | direct | ~1 ns | `dv.getInt32(ptr+off, true)` — V8 inlines |
+| Int16-32, UInt16-32 | direct | ~1 ns | `dv.getInt32(ptr+off, true)` - V8 inlines |
 | Int64 / UInt64 | direct | ~2 ns | `dv.getBigInt64` (or split lo/hi for safe-int) |
 | Float32 / Float64 | direct | ~1 ns | typed-array reinterpret view |
 | Text | wasm | ~50-100 ns | `cpp_any_text_at(idx)` → walks pointer, returns len |
@@ -84,7 +84,7 @@ Three things let V8 optimize Readers aggressively:
    conditional. After a few calls, V8's branch predictor figures out
    which side a given Reader instance takes and elides the cost.
 
-The codegen explicitly preserves this — `bin/capnwasm.mjs` has a comment
+The codegen explicitly preserves this. `bin/capnwasm.mjs` has a comment
 on `_dv` allocation: "Allocating a DataView is cheap; V8 inlines."
 
 ## The ergonomics question
@@ -97,7 +97,7 @@ console.log(data.user.id);
 ```
 
 `data` is a JS object after `JSON.parse`. Property access is native.
-Nothing exotic — same as `fetch().json()`.
+Nothing exotic. Same as `fetch().json()`.
 
 In capnwasm:
 
@@ -120,7 +120,7 @@ the codegen-emitted class. `.user` returns a nested Reader; `.id` is a
 DataView read.
 
 The cost difference: capnweb has already parsed `result` end-to-end at
-this point. We've parsed nothing — accessing `.user.id` decodes exactly
+this point. We've parsed nothing. Accessing `.user.id` decodes exactly
 those two fields. If you then access `.user.name`, that's another
 DataView read; never a re-parse.
 
@@ -137,20 +137,20 @@ for (let i = 0; i < records.length; i++) {
 ```
 
 If `amount` and `fxRate` are Int64, you pay ~2 ns × 2 × N. For 1000
-records that's ~4 µs — invisible. For 1M records it's ~4 ms.
+records that's ~4 µs. Invisible. For 1M records it's ~4 ms.
 
 If `amount` is text (e.g., "$12.34"): ~50 ns × 1 × N. For 1M records,
 ~50 ms. Avoid text-typed numerics in inner loops.
 
 For the sub-µs regime, capnweb's "everything is already a JS number" wins
-— V8's number-handling for JS doubles is even cheaper than DataView
+- V8's number-handling for JS doubles is even cheaper than DataView
 reads. capnwasm's edge shows up in:
 
-- Sparse access (read 3 of 32) — capnweb pays full parse cost regardless;
+- Sparse access (read 3 of 32). Capnweb pays full parse cost regardless;
   we pay only the 3 fields.
-- Big payloads — JSON's tag-length-value encoding makes parse O(N bytes),
+- Big payloads. JSON's tag-length-value encoding makes parse O(N bytes),
   while we read O(touched fields).
-- Binary data — capnweb base64-encodes, paying ~33% wire overhead and
+- Binary data. Capnweb base64-encodes, paying ~33% wire overhead and
   decode CPU. We pass binary through as a `Uint8Array` view of wasm
   memory.
 
@@ -160,12 +160,12 @@ reads. capnwasm's edge shows up in:
   may be reused for the next inbound message. If you need to keep
   values, copy them out into JS-owned variables before yielding:
   ```js
-  // Wrong — reader bytes may be invalid after await
+  // Wrong. Reader bytes may be invalid after await
   const reader = ctx.openParams(MyParamsReader);
   await someAsyncWork();
   console.log(reader.userId);   // possibly garbage
 
-  // Right — copy what you need first
+  // Right. Copy what you need first
   const reader = ctx.openParams(MyParamsReader);
   const userId = reader.userId;
   await someAsyncWork();
@@ -174,7 +174,7 @@ reads. capnwasm's edge shows up in:
 - **You can't construct a Reader from arbitrary bytes.** The Reader
   expects `dataPtr` to be a position inside the wasm linear memory,
   managed by the session. The legacy `paramsBytes`/`r.bytes` path is
-  what gives you a JS-owned snapshot — those go through the slow path.
+  what gives you a JS-owned snapshot. Those go through the slow path.
 
 ## Encode side (Builder)
 
@@ -195,7 +195,7 @@ allocate the right pointer and walks the layout, then either gives you
 a sub-Builder (you write into it) or copies your bytes in.
 
 `bench/realistic.mjs` shows the build-time cost: at 4 KB text echo we
-spend ~17 µs round-trip — most of which is wire send + receive, not
+spend ~17 µs round-trip. Most of which is wire send + receive, not
 encode/decode work.
 
 ## Reproducing
@@ -208,7 +208,7 @@ node bench/realistic.mjs       # burst, wire bytes, sparse access
 Or look at a real Reader:
 
 ```bash
-cat js/typed_schema.gen.mjs    # text fields only — see the wasm-call shape
+cat js/typed_schema.gen.mjs    # text fields only. See the wasm-call shape
 # For mixed primitive + text, run `npx capnwasm gen` against a richer schema
 # and look at the emitted .gen.mjs.
 ```

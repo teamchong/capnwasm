@@ -191,7 +191,7 @@ before(async () => {
       res.end(JSON.stringify([{ id: 0, name: `match:${q}`, tags: [traceId ?? "no-trace"] }]));
       return;
     }
-    // GET /flaky — returns 503 first 2 attempts, 200 on the 3rd. Tests retry.
+    // GET /flaky. Returns 503 first 2 attempts, 200 on the 3rd. Tests retry.
     if (req.method === "GET" && url.pathname === "/flaky") {
       flakyAttempts++;
       if (flakyAttempts < 3) {
@@ -202,7 +202,7 @@ before(async () => {
       res.end(JSON.stringify({ ok: true }));
       return;
     }
-    // GET /slow — sleeps 200ms. Tests timeout/cancellation.
+    // GET /slow. Sleeps 200ms. Tests timeout/cancellation.
     if (req.method === "GET" && url.pathname === "/slow") {
       setTimeout(() => {
         res.writeHead(200, { "content-type": "application/json" });
@@ -210,7 +210,7 @@ before(async () => {
       }, 200);
       return;
     }
-    // GET /error — returns a structured error body for RestError tests.
+    // GET /error. Returns a structured error body for RestError tests.
     if (req.method === "GET" && url.pathname === "/error") {
       res.writeHead(422, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "validation_failed", details: ["bad name"] }));

@@ -2,7 +2,7 @@
 //
 // The codegen path emits a typed JS class per Cap'n Proto struct. That's the
 // fast, ergonomic path when the schema is known at build time. This module
-// is for cases where the schema is *only* available at runtime — multi-tenant
+// is for cases where the schema is *only* available at runtime. Multi-tenant
 // SaaS where each tenant uploads their own schema, admin tools that need to
 // pretty-print arbitrary messages, GraphQL-style fragment selection.
 //
@@ -58,14 +58,14 @@ const KIND_TABLE = {
   uint64:  { wireKind: 4, offKey: "offset",    type: "uint64" },
   bool:    { wireKind: 5, offKey: "bitOffset", type: "bool" },
   data:    { wireKind: 6, offKey: "slot",      type: "data" },
-  // Floats reuse the integer wireKinds — the wasm boundary returns the raw
+  // Floats reuse the integer wireKinds. The wasm boundary returns the raw
   // bits, JS does the bit-cast through a typed-array view.
   float32: { wireKind: 3, offKey: "offset",    type: "float32" },
   float64: { wireKind: 4, offKey: "offset",    type: "float64" },
   // List-of-primitive types. Reads happen through `cpp_any_open_list` +
   // per-element `cpp_any_list_get_*`, materialized into a JS array. Lists
   // are pointer-typed in the wire format, so they live at a slot index.
-  // Not in cpp_any_batch_read — these go through `_readSingle` even from
+  // Not in cpp_any_batch_read. These go through `_readSingle` even from
   // pick(), which means N+1 wasm calls per list (open + size + N gets);
   // codegen-emitted readers are unchanged and stay faster on hot paths.
   listUint8:   { wireKind: -1, offKey: "slot", type: "list",   element: "uint8" },
@@ -88,17 +88,17 @@ const KIND_TABLE = {
  * mapping field names to `{ kind, slot|offset|bitOffset }` records.
  *
  * Returns an opaque DynamicSchema object that `openDynamic` accepts. Throws
- * synchronously on malformed input — so that schema bugs surface at load
+ * synchronously on malformed input. So that schema bugs surface at load
  * time, not on the first read.
  *
  * Nested structs use `{ kind: "struct", slot: N, schema: <result of
  * defineSchema(...)> }`. The nested schema is materialized eagerly when
- * the field is read, so it returns a plain object — not a sub-reader —
+ * the field is read, so it returns a plain object. Not a sub-reader -
  * since the underlying wasm cursor would be invalidated by any sibling
  * access.
  *
  * For the `buildDynamic` write side, pass `{ dataWords, ptrWords }` as the
- * second argument — the struct's wire-format dimensions. Without these
+ * second argument. The struct's wire-format dimensions. Without these
  * the schema is read-only.
  */
 export function defineSchema(spec, opts) {
@@ -107,7 +107,7 @@ export function defineSchema(spec, opts) {
   for (const [name, raw] of Object.entries(spec)) {
     if (!raw || typeof raw !== "object") throw new TypeError(`field "${name}": expected an object`);
     if (raw.kind === "struct") {
-      // Nested struct — schema is recursive. Validate the nested schema
+      // Nested struct. Schema is recursive. Validate the nested schema
       // shape (must look like the result of defineSchema).
       if (typeof raw.slot !== "number" || raw.slot < 0 || !Number.isInteger(raw.slot)) {
         throw new TypeError(`field "${name}": nested struct missing or invalid "slot"`);
@@ -179,7 +179,7 @@ export function defineSchema(spec, opts) {
  *
  * Supports primitive setters (text/data via wasm boundary, fixed-width
  * integers + floats + bool via direct memory writes). Nested structs and
- * lists aren't in this pass — codegen still wins for those write paths.
+ * lists aren't in this pass. Codegen still wins for those write paths.
  */
 export function buildDynamic(cpp, schema) {
   if (typeof schema?.dataWords !== "number" || typeof schema?.ptrWords !== "number") {
@@ -197,7 +197,7 @@ export function buildDynamic(cpp, schema) {
 /**
  * Builder bound to one in-progress message. Call .set(name, value) to
  * write each field, then .finalize() to produce framed bytes. The builder
- * is single-shot — finalize() invalidates it.
+ * is single-shot. Finalize() invalidates it.
  */
 export class DynamicBuilder {
   constructor(cpp, schema) {
@@ -277,7 +277,7 @@ export class DynamicBuilder {
         return;
       }
       case "text": {
-        // Encode UTF-8 directly into the wasm scratch buffer — encodeInto
+        // Encode UTF-8 directly into the wasm scratch buffer. EncodeInto
         // skips the intermediate Uint8Array that .encode() allocates,
         // matching what the codegen builder does. Saves ~50-100 ns per
         // text field on the bench.
@@ -305,7 +305,7 @@ export class DynamicBuilder {
         exp.cpp_any_builder_set_data(desc.off, value.length);
         return;
       }
-      // Lists — desc.type is "list" with desc.element being the element
+      // Lists. Desc.type is "list" with desc.element being the element
       // kind ("uint32", "text", "data", "bool", etc.). The init+set pair
       // is named after the element kind. Lists of primitives + text + data
       // all live here.
@@ -374,7 +374,7 @@ export class DynamicBuilder {
       // Nested struct: push a nested AnyStruct cursor onto the wasm
       // stack so subsequent setters write into the nested struct, then
       // walk the nested fields and pop. Doesn't allocate a separate
-      // message — wire bytes are exactly what a single end-to-end build
+      // message. Wire bytes are exactly what a single end-to-end build
       // would produce. Save/restore _schema + _dataPtr around the
       // recursion so nested-of-nested works.
       case "struct": {
@@ -456,7 +456,7 @@ export class DynamicBuilder {
    * the wire side: keys match the schema's field names, missing keys are
    * skipped, unknown keys are ignored. Returns `this` for chaining.
    *
-   * Per-field cost is the same as calling `set(name, value)` directly —
+   * Per-field cost is the same as calling `set(name, value)` directly -
    * one switch-on-type and one wasm setter call. The schema's `fields`
    * object is iterated via `Object.keys` once; that's a hash-walk but it
    * happens once per fromObject call, not per field, so it's amortized.
@@ -520,7 +520,7 @@ export function openDynamic(cpp, schema, bytes) {
   if (bytes.length > cpp._cap) throw new Error("input larger than scratch buffer");
   cpp._u8.set(bytes, cpp._inPtr);
   // cpp_any_open returns the data section pointer (or 0 for an empty
-  // struct — that's still a successful open). It only "fails" by
+  // struct. That's still a successful open). It only "fails" by
   // throwing inside the wasm if the bytes are malformed.
   cpp._exports.cpp_any_open(bytes.length);
   return new DynamicReader(cpp, schema);
@@ -556,7 +556,7 @@ export class DynamicReader {
   }
 
   /**
-   * Proxy-style access — `reader.fieldName`. Convenience over .get(). Each
+   * Proxy-style access. `reader.fieldName`. Convenience over .get(). Each
    * access is a separate wasm call; for multiple fields prefer `pick`.
    */
   get fields() {
@@ -581,7 +581,7 @@ export class DynamicReader {
   }
 }
 
-// Single-field read — one wasm call. Use this for the Proxy path, or when
+// Single-field read. One wasm call. Use this for the Proxy path, or when
 // only one field is wanted.
 function _readSingle(cpp, desc) {
   const exp = cpp._exports;
@@ -630,7 +630,7 @@ function _readSingle(cpp, desc) {
 }
 
 // Push the nested struct on the wasm-side stack, eagerly read every field
-// of its schema, then pop. Eager materialization keeps the API safe — a
+// of its schema, then pop. Eager materialization keeps the API safe. A
 // returned sub-reader would silently break the moment the caller touches
 // a sibling field at the parent level (which would re-position the
 // cursor). Nested-of-nested works because each recursion saves and
@@ -638,7 +638,7 @@ function _readSingle(cpp, desc) {
 function _readNestedStruct(cpp, desc) {
   const exp = cpp._exports;
   if (exp.cpp_any_enter_struct(desc.off) !== 1) {
-    // Pointer slot is null or out-of-range — return null, the
+    // Pointer slot is null or out-of-range. Return null, the
     // wire-format-correct interpretation of "field not present".
     return null;
   }
@@ -689,7 +689,7 @@ function _readListOfStructs(cpp, desc) {
 
 // Materialize a list-of-primitive into a JS array. The wasm exposes a
 // single any_list_reader slot (last list opened), so opening another list
-// invalidates this one — readers materialize the whole list before
+// invalidates this one. Readers materialize the whole list before
 // returning, rather than handing back a lazy iterator that could outlive
 // the underlying state.
 function _readList(cpp, desc) {
@@ -766,7 +766,7 @@ function _readList(cpp, desc) {
   }
 }
 
-// Batched pick — single wasm call returning all requested fields in order.
+// Batched pick. Single wasm call returning all requested fields in order.
 // Mirrors the codegen-generated `_capnwasmPick` helper but reads the field
 // list from the dynamic schema instead of a baked _FIELDS object.
 //

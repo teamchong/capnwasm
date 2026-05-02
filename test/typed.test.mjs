@@ -98,7 +98,7 @@ test("typed proxy: result is a plain JS object usable across awaits", async () =
   const cap = client.bootstrap();
   const echo = typed(cap, mod.Echo_INTERFACE);
 
-  // Two sequential calls — r1 must remain valid after r2 runs.
+  // Two sequential calls. R1 must remain valid after r2 runs.
   // (The reader is live against wasm scratch memory; toObject materializes.)
   const r1 = await echo.echo({ text: "first" });
   const r2 = await echo.echo({ text: "second" });
@@ -109,7 +109,7 @@ test("typed proxy: result is a plain JS object usable across awaits", async () =
 
 test("interface ID survives round-trip without precision loss", async () => {
   const { mod } = await setup();
-  // 0xeeeeeeeeeeeeeeee = 17216961135462248174 — well over 2^53.
+  // 0xeeeeeeeeeeeeeeee = 17216961135462248174. Well over 2^53.
   assert.equal(mod.Echo_INTERFACE.id, 17216961135462248174n);
   assert.equal(typeof mod.Echo_INTERFACE.id, "bigint");
 });

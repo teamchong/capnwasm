@@ -1,4 +1,4 @@
-// Generated from profile_v1.capnp by capnwasm-gen — do not edit by hand.
+// Generated from profile_v1.capnp by capnwasm-gen. Do not edit by hand.
 
 const SHARED_TEXT_DECODER = new TextDecoder();
 const SHARED_ENCODER = new TextEncoder();
@@ -40,7 +40,7 @@ function _getPickRequest(fields, names) {
 }
 
 function _capnwasmPick(cpp, fields, names) {
-  // Cached request prep — same names hit the WeakMap and skip the encode loop.
+  // Cached request prep. Same names hit the WeakMap and skip the encode loop.
   const req = _getPickRequest(fields, names);
   const u8 = cpp._u8;
   const aux = cpp._auxPtr;

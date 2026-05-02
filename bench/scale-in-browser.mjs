@@ -3,15 +3,15 @@
 // accumulated work crosses into the 100ms-1s range. Each workload here
 // is a realistic-shape scenario that gets there.
 //
-// Workload 1 — DASHBOARD BOOTSTRAP: server returns 1000 records, each a
+// Workload 1. DASHBOARD BOOTSTRAP: server returns 1000 records, each a
 // 32-field metadata struct. Client renders 5 fields per record. Mirrors
 // "load a list view with 1000 entries."
 //
-// Workload 2 — BINARY ASSET TRANSFER: server returns a 5 MB binary blob
+// Workload 2. BINARY ASSET TRANSFER: server returns a 5 MB binary blob
 // (image / dataset / model weights). On a slow link, the wire-bytes ratio
 // determines transfer wall-time directly.
 //
-// Workload 3 — STREAMING DECODE: 10,000 small messages parsed sequentially
+// Workload 3. STREAMING DECODE: 10,000 small messages parsed sequentially
 // (the kind of pattern you see for telemetry / log streams / replay).
 
 import { CapnCpp } from "/js/cpp_loader.mjs";
@@ -63,7 +63,7 @@ function ourEncodeOne(record) {
 }
 
 // ============================================================
-// Workload 1 — Many big records: ITER × BigUser (256 fields, read 5)
+// Workload 1. Many big records: ITER × BigUser (256 fields, read 5)
 // ============================================================
 setStatus("W1: many big records…");
 
@@ -137,7 +137,7 @@ log(`  difference between sluggish and snappy on a slow device.`);
 log(``);
 
 // ============================================================
-// Workload 2 — Binary asset transfer (5 MB)
+// Workload 2. Binary asset transfer (5 MB)
 // ============================================================
 setStatus("W2: binary asset transfer…");
 log(`══ Workload 2: binary asset transfer (5 MB raw bytes) ══`);
@@ -178,7 +178,7 @@ log(`    capnp:  ${(oursWireSize / (1.25 * 1024 * 1024)).toFixed(2)} s   ← use
 log(``);
 
 // ============================================================
-// Workload 3 — Streaming decode (10K small messages)
+// Workload 3. Streaming decode (10K small messages)
 // ============================================================
 setStatus("W3: streaming decode…");
 log(`══ Workload 3: streaming decode (10,000 messages × 32 fields, read 3) ══`);

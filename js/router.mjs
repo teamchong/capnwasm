@@ -1,4 +1,4 @@
-// Federation router — drop-in replacement for InterfaceRegistry on a gateway
+// Federation router. Drop-in replacement for InterfaceRegistry on a gateway
 // session. Maps inbound interface IDs to a backend RpcCap, forwards each call
 // verbatim. The gateway holds outbound sessions to each backend service; the
 // router decides which backend gets the inbound traffic.
@@ -12,8 +12,8 @@
 //     .routeFallback(catchallCap);
 //   const session = new RpcSession(cpp, transport, router, { bootstrap: ... });
 //
-// Stream methods need `routeStream()` explicitly — `route()` only forwards
-// regular calls. Methods returning capabilities throw — translating cap
+// Stream methods need `routeStream()` explicitly. `route()` only forwards
+// regular calls. Methods returning capabilities throw. Translating cap
 // exports across two RPC sessions needs a hand-written handler.
 
 function u64(x) { return BigInt.asUintN(64, BigInt(x)); }

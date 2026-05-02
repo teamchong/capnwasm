@@ -6,7 +6,7 @@ import { createClient } from "./client.mjs";
 //
 // Two entry points:
 //
-// `typedClient(url, MyApi_INTERFACE, opts?)` — one-line, like capnweb:
+// `typedClient(url, MyApi_INTERFACE, opts?)`. One-line, like capnweb:
 //
 //   import { typedClient } from "capnwasm/typed";
 //   import { MyApi_INTERFACE } from "./my_api.gen.mjs";
@@ -14,7 +14,7 @@ import { createClient } from "./client.mjs";
 //   const api = await typedClient("https://api.example.com/rpc", MyApi_INTERFACE);
 //   const result = await api.someMethod({ arg: 1 });
 //
-// `typed(cap, MyApi_INTERFACE)` — wrap an already-bootstrapped cap (when you
+// `typed(cap, MyApi_INTERFACE)`. Wrap an already-bootstrapped cap (when you
 // need the lower-level session for streams or shared sessions across
 // multiple interfaces):
 //
@@ -23,7 +23,7 @@ import { createClient } from "./client.mjs";
 //   const auth  = typed(cap, Auth_INTERFACE);   // share one session
 //
 // What the proxy does per call:
-//   1. new Params(cpp).fromObject(args)  — uses the codegen-emitted builder
+//   1. new Params(cpp).fromObject(args) . Uses the codegen-emitted builder
 //   2. cap.call(meta.id, method.id, paramsBytes)
 //   3. wrap the returned bytes in `new Results(cpp, bytes)` and return it
 //
@@ -59,7 +59,7 @@ export function typed(cap, meta) {
     }
     const openResults = method.openResults;
     if (typeof openResults !== "function") {
-      throw new Error(`typed: method ${name} on ${meta.name} is missing openResults — regenerate with the latest capnwasm`);
+      throw new Error(`typed: method ${name} on ${meta.name} is missing openResults. Regenerate with the latest capnwasm`);
     }
     proxy[name] = function (args) {
       const builder = new Params(cpp);
@@ -72,7 +72,7 @@ export function typed(cap, meta) {
       return sent.promise.then(({ bytes, caps }) => {
         // Materialize to a plain JS object eagerly. The Reader reads
         // straight out of wasm scratch memory, which gets clobbered by
-        // the next call — so a Reader returned to the caller is only
+        // the next call. So a Reader returned to the caller is only
         // valid until the next await. toObject() copies the field values
         // out, which is safe to hold across calls. Users who want
         // zero-copy can call cap.call directly with their own opener.

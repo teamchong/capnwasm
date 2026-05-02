@@ -7,7 +7,7 @@
 //
 // costs 2 round-trips even though the server could do both back-to-back.
 // Cap'n Proto's promise pipelining already covers the case where call B
-// uses a *capability* returned by call A — but for scalar field deps
+// uses a *capability* returned by call A. But for scalar field deps
 // across an `await`, JS gives no async-context hook to auto-batch.
 //
 // Pipeline is the explicit composition: build a batch on the client,
@@ -36,7 +36,7 @@ const SHARED_ENCODER = new TextEncoder();
 export const PIPELINE_INTERFACE_ID = 0xcafe5e5d51e7e1f1n;
 export const PIPELINE_METHOD_RUN = 0;
 
-// Wire format — hand-coded so the pipeline runner doesn't need a separate
+// Wire format. Hand-coded so the pipeline runner doesn't need a separate
 // codegen step. All multi-byte ints are little-endian.
 //
 // Batch (params of run):
@@ -145,7 +145,7 @@ function decodeResults(bytes) {
 }
 
 // Wrap the batch payload in a Cap'n Proto frame holding it as a single Data
-// (byte list) field. Mirrors the sturdyref module — keeps us off the codegen
+// (byte list) field. Mirrors the sturdyref module. Keeps us off the codegen
 // path for one small helper.
 function frameBytesPayload(payload) {
   const dataWords = Math.ceil(payload.length / 8);
@@ -177,7 +177,7 @@ function unframeBytesPayload(framed) {
  * dispatches each call in the batch through the SAME registry, so all
  * regularly-registered handlers are reachable through pipelining.
  *
- * @param {object} registry — InterfaceRegistry-shaped
+ * @param {object} registry. InterfaceRegistry-shaped
  * @param {object} [opts]
  * @param {(batch: Array<{ifcId: bigint, methodId: number, paramsLen: number, spliceCount: number}>) => void | Promise<void>} [opts.validate]
  *   Called once per inbound batch before any call dispatches. Throw to

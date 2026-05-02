@@ -1,7 +1,7 @@
 // Vite plugin for capnwasm.
 //
 // Drop into vite.config.ts and your `.capnp` schemas (or `.ts` interfaces
-// with @rest directives, or OpenAPI specs) get codegen'd at build time —
+// with @rest directives, or OpenAPI specs) get codegen'd at build time -
 // no separate `npx capnwasm gen` step, no committed gen files in the repo.
 // Hot-reloads when a schema changes in dev mode.
 //
@@ -27,12 +27,12 @@ import { fileURLToPath } from "node:url";
 
 // We use Node 22+'s stable `fs/promises.glob` for both auto-discovery and
 // glob expansion of `schemas: ["foo/*.capnp"]`. Older Node would need a
-// shim — capnwasm itself already requires Node >= 22 for tests.
+// shim. Capnwasm itself already requires Node >= 22 for tests.
 import { glob as fsGlob } from "node:fs/promises";
 
 // Codegen API is loaded dynamically. The CLI script (`bin/capnwasm.mjs`)
-// has a `#!/usr/bin/env node` shebang, which esbuild — used by Vite to
-// bundle vite.config.* — treats as a syntax error if it follows a static
+// has a `#!/usr/bin/env node` shebang, which esbuild. Used by Vite to
+// bundle vite.config.*. Treats as a syntax error if it follows a static
 // import. Dynamic `import()` is opaque to the bundler: esbuild never tries
 // to read the file at config-load time, so the shebang stays where it
 // belongs (on the bin entry) and the plugin still gets a real ESM module.
@@ -48,7 +48,7 @@ async function getApi() {
 
 /**
  * Default extensions the plugin recognises as schema sources. `.ts` is
- * handled gracefully — only files that contain `interface ... { @rest ...`
+ * handled gracefully. Only files that contain `interface ... { @rest ...`
  * or capnp interface markers actually emit; others are ignored at parse
  * time. So auto-discovering `.ts` would be too noisy. We auto-discover
  * `.capnp` only; `.ts` and `.yaml`/`.json` (OpenAPI) must be listed
@@ -90,7 +90,7 @@ const DEFAULT_IGNORE_DIRS = new Set([
  *   declarations). The leading `.` is significant.
  * @property {boolean} [failOnError]
  *   If true (the default), a codegen error during `buildStart` aborts
- *   the build. Set to false to log errors but continue — useful when
+ *   the build. Set to false to log errors but continue. Useful when
  *   one schema is broken and you want the rest to still rebuild.
  * @property {boolean} [verbose]
  *   Emit one log line per generated file. Defaults to `true` in dev,
@@ -99,7 +99,7 @@ const DEFAULT_IGNORE_DIRS = new Set([
 
 /**
  * Vite plugin that runs capnwasm codegen at build start and on schema
- * changes during dev. Returns a single Plugin object — pass it directly
+ * changes during dev. Returns a single Plugin object. Pass it directly
  * to Vite's `plugins` array.
  *
  * @param {CapnwasmPluginOptions} [options]
@@ -127,18 +127,18 @@ export function capnwasm(options = {}) {
       isDev = resolvedConfig.command === "serve";
     },
 
-    // buildStart runs before any module is loaded — both in `vite dev` and
+    // buildStart runs before any module is loaded. Both in `vite dev` and
     // `vite build`. This is where we do the initial generation pass so
     // every subsequent `import "./user.capnp.gen.mjs"` finds a fresh file.
     async buildStart() {
       knownSchemas = new Set(await discoverSchemas(opts, projectRoot));
       if (knownSchemas.size === 0) {
         if (opts.schemas !== undefined) {
-          // User explicitly listed schemas but nothing matched — that's
+          // User explicitly listed schemas but nothing matched. That's
           // almost certainly a config bug worth surfacing.
           logger.warn(`[capnwasm] no schemas matched: ${JSON.stringify(opts.schemas)}`);
         }
-        // Auto-discover with no matches is silent — many projects don't
+        // Auto-discover with no matches is silent. Many projects don't
         // have any .capnp files yet, and the plugin shouldn't shout at
         // them.
         return;
@@ -177,7 +177,7 @@ export function capnwasm(options = {}) {
 
       // The same schema may produce multiple bundle entries (e.g. .gen.mjs
       // is imported by several pages). A `full-reload` is the safest HMR
-      // signal — it picks up the new gen output everywhere.
+      // signal. It picks up the new gen output everywhere.
       server.watcher.on("change", async (changedPath) => {
         const abs = resolve(changedPath);
         if (!knownSchemas.has(abs)) return;
@@ -221,7 +221,7 @@ export function capnwasm(options = {}) {
     // Make the generated files invisible to Vite's optimizer by ignoring
     // them when they're emitted into the schema's source dir. (Vite re-
     // bundles changed deps; gen files change on every save and we don't
-    // want optimizer thrash.) This is a soft hint — tree-shaking and HMR
+    // want optimizer thrash.) This is a soft hint. Tree-shaking and HMR
     // still work normally.
     config() {
       return {
@@ -289,7 +289,7 @@ async function discoverSchemas(opts, projectRoot) {
         if (existsSync(abs)) {
           out.add(abs);
         } else {
-          // Bad path is a config error worth surfacing — but throwing
+          // Bad path is a config error worth surfacing. But throwing
           // here would break `vite build` for the whole project. Let
           // buildStart's per-file error handler report it instead by
           // including the path in the set.
@@ -375,7 +375,7 @@ async function writeIfChanged(path, contents) {
       const existing = await readFile(path, "utf8");
       if (existing === contents) return;
     } catch {
-      // Permissions / read error — fall through and try to write.
+      // Permissions / read error. Fall through and try to write.
     }
   }
   await writeFile(path, contents);
@@ -391,7 +391,7 @@ function describeMeta(meta) {
 
 function logCodegenError(logger, err, schemaPath) {
   const where = schemaPath ? ` (${schemaPath})` : "";
-  // Duck-type the codegen error class — `instanceof` would force us to
+  // Duck-type the codegen error class. `instanceof` would force us to
   // import the class statically, which breaks esbuild on the bin shebang.
   const isCodegen = err && typeof err === "object" && err.name === "CapnwasmCodegenError";
   if (isCodegen) {

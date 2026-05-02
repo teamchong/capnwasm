@@ -39,7 +39,7 @@ async function makeBob(store, target) {
   registerHandoffHandlers(registry, store);
   const { a: aliceConn, b: bobAlice } = createMemoryTransportPair();
   const { a: carolConn, b: bobCarol } = createMemoryTransportPair();
-  // Bob runs two sessions — one per peer. Real deployments would be one
+  // Bob runs two sessions. One per peer. Real deployments would be one
   // ws-server with one session per accepted connection.
   const cppForAlice = await loadWasm();
   const cppForCarol = await loadWasm();
@@ -64,7 +64,7 @@ test("handoff: alice introduces carol to bob, carol calls bob directly", async (
   assert.ok(token instanceof Uint8Array);
   assert.equal(store.size, 1);
 
-  // Carol redeems with her bootstrap on Bob — gets a cap on the same target.
+  // Carol redeems with her bootstrap on Bob. Gets a cap on the same target.
   const carolBootstrap = carolSession.bootstrap();
   const carolCap = await redeem(carolBootstrap, token, "carol");
   await carolCap.call(IFC, METHOD, emptyMessage(), []).promise;
@@ -102,7 +102,7 @@ test("handoff: consumeOnRedeem makes token one-shot", async () => {
 
   const token = await introduce(aliceSession.bootstrap(), "carol");
   await redeem(carolSession.bootstrap(), token, "carol");
-  // Second redemption fails — entry was consumed.
+  // Second redemption fails. Entry was consumed.
   await assert.rejects(
     redeem(carolSession.bootstrap(), token, "carol"),
     /not redeemable/,

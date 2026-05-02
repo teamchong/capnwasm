@@ -35,7 +35,7 @@ wss.on("connection", (ws, req) => {
 });
 ```
 
-The `bootstrap` value is per-connection. Use it to thread auth context (user id, tenant id, role) into your handlers — the registry handler signature is `(params, ctx) => {...}` where `ctx.bootstrap` is whatever you returned here.
+The `bootstrap` value is per-connection. Use it to thread auth context (user id, tenant id, role) into your handlers. The registry handler signature is `(params, ctx) => {...}` where `ctx.bootstrap` is whatever you returned here.
 
 ### Per-call auth (token in params)
 
@@ -49,11 +49,11 @@ struct EchoRequest {
 }
 ```
 
-Less efficient — the token rides on every Call — but works behind transports that don't carry connection-time metadata (gRPC-Web bridges, raw HTTP).
+Less efficient. The token rides on every Call. But works behind transports that don't carry connection-time metadata (gRPC-Web bridges, raw HTTP).
 
 ## Backpressure
 
-The streaming chunk queue (`cap.callStream`) accepts a `maxQueueSize` cap. When the cap is exceeded the iterator rejects with `stream queue overflow` — a memory safety valve, not real flow control:
+The streaming chunk queue (`cap.callStream`) accepts a `maxQueueSize` cap. When the cap is exceeded the iterator rejects with `stream queue overflow`. A memory safety valve, not real flow control:
 
 ```js
 const r = cap.callStream(IFC, METHOD, params, { maxQueueSize: 256 });
@@ -66,7 +66,7 @@ try {
 }
 ```
 
-Pick `maxQueueSize` so worst-case memory (`maxQueueSize × max chunk size`) stays within budget. There is no protocol-level flow control yet — server-side keeps sending until it sees the resulting Finish, so chunks already in flight at overflow time will arrive after the iterator has rejected; they're silently dropped.
+Pick `maxQueueSize` so worst-case memory (`maxQueueSize × max chunk size`) stays within budget. There is no protocol-level flow control yet. Server-side keeps sending until it sees the resulting Finish, so chunks already in flight at overflow time will arrive after the iterator has rejected; they're silently dropped.
 
 Until per-stream credits land, design streaming methods around bounded result sets:
 
@@ -75,7 +75,7 @@ Until per-stream credits land, design streaming methods around bounded result se
 
 ## Error handling
 
-`InterfaceRegistry` handlers can throw. The thrown error becomes a Cap'n Proto `exception` Return; on the client, the awaited promise rejects with an `Error` carrying the original message. **Server-side stack traces are not shipped** — only the message string and the exception type code (FAILED, OVERLOADED, DISCONNECTED, UNIMPLEMENTED).
+`InterfaceRegistry` handlers can throw. The thrown error becomes a Cap'n Proto `exception` Return; on the client, the awaited promise rejects with an `Error` carrying the original message. **Server-side stack traces are not shipped**. Only the message string and the exception type code (FAILED, OVERLOADED, DISCONNECTED, UNIMPLEMENTED).
 
 Use the type code to drive client retry behavior:
 
@@ -93,7 +93,7 @@ try {
 }
 ```
 
-Map your domain errors to these four types in the handler — don't leak internal exceptions across the wire.
+Map your domain errors to these four types in the handler. Don't leak internal exceptions across the wire.
 
 ## Reverse proxy / load balancer
 
@@ -132,7 +132,7 @@ If you serve `dist/capnp.slim.wasm` yourself, set `Cache-Control: public, max-ag
 | `bytesSent` | `{ bytes }` |
 | `bytesReceived` | `{ bytes }` |
 
-When zero subscribers are registered the hot path skips event construction entirely — no overhead until you wire something up. Returns an unsubscribe function.
+When zero subscribers are registered the hot path skips event construction entirely. No overhead until you wire something up. Returns an unsubscribe function.
 
 ```js
 session.onMetric((event, data) => {
@@ -154,9 +154,9 @@ console.log(m.snapshot());
 // { methods: { "0xabc:1": { calls, errors, avgMs, minMs, maxMs, kind } }, bytesSent, bytesReceived }
 ```
 
-For OpenTelemetry / Prometheus, wire `onMetric` directly to your client library — the event shape maps cleanly to spans (start/end pairs) and counters/histograms.
+For OpenTelemetry / Prometheus, wire `onMetric` directly to your client library. The event shape maps cleanly to spans (start/end pairs) and counters/histograms.
 
-For wire-level inspection — *what bytes are flowing* — load `https://teamchong.github.io/capnwasm/inspect.js` and call `cw.inspect(framedBytes)`. Documented in [`docs/inspect.md`](inspect.md).
+For wire-level inspection. *what bytes are flowing*. Load `https://teamchong.github.io/capnwasm/inspect.js` and call `cw.inspect(framedBytes)`. Documented in [`docs/inspect.md`](inspect.md).
 
 ## What can go wrong
 

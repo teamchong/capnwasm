@@ -119,7 +119,7 @@ test("Resolve(exception) drops the import and doesn't crash the session", async 
   const r0 = await cap.call(IFC, 0, emptyParams()).promise;
   assert.equal(r0.bytes.length, 16);
 
-  // Inject a Resolve(promiseId=99, exception="bang") — promiseId 99 isn't
+  // Inject a Resolve(promiseId=99, exception="bang"). PromiseId 99 isn't
   // tracked anywhere, so this must be a no-op and not throw.
   const reasonBytes = new TextEncoder().encode("promise broke");
   new Uint8Array(cppB.memory.buffer).set(reasonBytes, cppB._inPtr);
@@ -149,7 +149,7 @@ test("Resolve(senderHosted) remaps an import id to the resolved cap id", async (
   await cap.call(IFC, 0, emptyParams()).promise;
   assert.equal(invocationCount, 1);
 
-  // Send Resolve(promiseId=0, cap=senderHosted(0)) — alias the bootstrap
+  // Send Resolve(promiseId=0, cap=senderHosted(0)). Alias the bootstrap
   // import to itself. Should be a no-op for routing.
   const len = cppB._exports.cpp_rpc_build_resolve_cap(0, 0);
   b.send(snapshotOut(cppB, len));
@@ -170,10 +170,10 @@ test("Disembargo senderLoopback: receiver echoes back as receiverLoopback with t
   // Tap the client's outbound channel (which is a.send → b receives).
   // In our paired transport, b.peer === a, so messages from b to peer
   // (i.e., the client side) come via b.peer (= a). What we want is to
-  // observe what the client emits back to the server — that's a.send.
+  // observe what the client emits back to the server. That's a.send.
   const { a } = await (async () => ({ a: undefined, b: undefined }))();
   // We already have b from setup; we need its peer to tap. Tapping `a`
-  // captures what the CLIENT sends (which is what we care about — the
+  // captures what the CLIENT sends (which is what we care about. The
   // echo).  Easier: tap the client's transport `a` exposed via setup.
   const setup2 = await setup({ bootstrap: {} });
   const realASend = setup2.a.send.bind(setup2.a);
@@ -219,7 +219,7 @@ test("Disembargo senderLoopback: receiver echoes back as receiverLoopback with t
 
   // Stage that frame into the server-side wasm and read the context out.
   // cpp_rpc_decode writes the disembargo summary (16 bytes: ctxKind,
-  // embargoId, targetKind, targetId) inline at cpp_out — the standalone
+  // embargoId, targetKind, targetId) inline at cpp_out. The standalone
   // getter that used to do this is no longer exported.
   const dembBytes = dembFrames[0];
   new Uint8Array(setup2.cppB.memory.buffer).set(dembBytes, setup2.cppB._inPtr);
@@ -239,7 +239,7 @@ test("Disembargo receiverLoopback (no pending embargo): no-op, doesn't crash", a
   const { client, b, cppB } = await setup({ bootstrap: {} });
 
   // Build a receiverLoopback Disembargo and inject. Client has no pending
-  // outbound embargoes so this is just a no-op — the test is a
+  // outbound embargoes so this is just a no-op. The test is a
   // "doesn't throw / session stays healthy" assertion.
   const len = cppB._exports.cpp_rpc_build_disembargo_receiver_loopback(0, 5, 1234);
   b.send(snapshotOut(cppB, len));

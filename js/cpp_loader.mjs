@@ -1,7 +1,7 @@
 // Loads the C++ capnproto wasm module (built via cpp/build.sh from upstream
 // capnproto sources statically linked through zig cc).
 //
-// CapnCpp itself only depends on the wasi shim — it doesn't pull in
+// CapnCpp itself only depends on the wasi shim. It doesn't pull in
 // tape_codec.mjs. The capnweb-shape tape codec lives in js/tape_serializer.mjs
 // as free functions; bundles that don't use it (e.g. RPC-only browser clients)
 // drop tape_codec entirely.
@@ -15,7 +15,7 @@ export class CapnCpp {
   #inPtr = 0;
   #outPtr = 0;
   #cap = 0;
-  // The cpp_lazy_aux scratch is a fixed C++ global — its address and
+  // The cpp_lazy_aux scratch is a fixed C++ global. Its address and
   // capacity never change after wasm init. Cache once so every pick /
   // batch-read avoids the wasm boundary call to look them up.
   #auxPtr = 0;
@@ -26,7 +26,7 @@ export class CapnCpp {
   #dv = null;
 
   static async load(wasmSource) {
-    // Inline WASI imports — avoids a cross-module factory call on the cold
+    // Inline WASI imports. Avoids a cross-module factory call on the cold
     // path. Only the two imports the slim wasm actually declares
     // (fd_write + fd_close). The reactor-mode build dropped the
     // command-mode crt1, so args_get / args_sizes_get / proc_exit are
@@ -54,7 +54,7 @@ export class CapnCpp {
 
     // Dispatch carefully: do NOT touch `Response`, `Request`, or `URL` on the
     // bytes/Module fast paths. In Node, those globals come from undici and
-    // lazy-init at first reference (~10 ms). Duck-type instead — Response and
+    // lazy-init at first reference (~10 ms). Duck-type instead. Response and
     // Request both expose .arrayBuffer + .headers; URL has .href.
     let instance;
     if (typeof wasmSource === "string") {
@@ -64,11 +64,11 @@ export class CapnCpp {
       instance = await WebAssembly.instantiate(wasmSource, importObj);
     } else if (wasmSource && typeof wasmSource === "object"
                && typeof wasmSource.arrayBuffer === "function" && wasmSource.headers) {
-      // Response / Request — duck-typed, no `instanceof Response`.
+      // Response / Request. Duck-typed, no `instanceof Response`.
       instance = (await WebAssembly.instantiateStreaming(wasmSource, importObj)).instance;
     } else if (wasmSource && typeof wasmSource === "object"
                && typeof wasmSource.href === "string") {
-      // URL — duck-typed.
+      // URL. Duck-typed.
       instance = (await WebAssembly.instantiateStreaming(fetch(wasmSource), importObj)).instance;
     } else {
       // Uint8Array / ArrayBuffer / typed array.
@@ -162,7 +162,7 @@ export class LazyReader {
     return SHARED_DECODER.decode(u8.subarray(this.#cpp._outPtr, this.#cpp._outPtr + len));
   }
 
-  /** Batched fetch — N fields in one wasm boundary call. */
+  /** Batched fetch. N fields in one wasm boundary call. */
   fieldsText(names) {
     if (names.length === 0) return [];
     if (names.length > 256) throw new Error("fieldsText limit is 256 names");

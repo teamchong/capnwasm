@@ -71,7 +71,7 @@ test("Builder produces same bytes as native cpp_conformance_serialize for matchi
   const cBytes = cpp._u8.slice(cpp._exports.cpp_out_ptr(), cpp._exports.cpp_out_ptr() + len);
 
   // Decode both, compare logical values (byte-equality is a stronger claim
-  // that depends on default-value handling — same logical value is the
+  // that depends on default-value handling. Same logical value is the
   // wire-conformance property we care about).
   const r1 = openPrimitives(cpp, jsBytes);
   const r2 = openPrimitives(cpp, cBytes);

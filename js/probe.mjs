@@ -7,9 +7,9 @@
 // Capnp drift detection is bounded by the wire format: capnp messages
 // are positional (no field names on the wire), so a field that comes
 // back as its zero value is indistinguishable from a field the runtime
-// didn't send. The probe surfaces what it CAN observe — call success,
+// didn't send. The probe surfaces what it CAN observe. Call success,
 // decode success, declared-vs-readable field accounting, response
-// byte counts — and labels what it can't. For richer drift detection
+// byte counts. And labels what it can't. For richer drift detection
 // (extra fields the runtime sent that the schema doesn't know about),
 // you need either a newer schema to compare against, or a wire-byte
 // audit of the response that's beyond this probe's scope.
@@ -122,7 +122,7 @@ async function probeCapnpMethod(cpp, root, iface, method, manifest, timeoutMs) {
       const reader = openDynamic(cpp, schema, bytes);
       for (const f of resultsStruct.fields) {
         try {
-          // Touch the field — for primitives this returns a value, for
+          // Touch the field. For primitives this returns a value, for
           // pointers it returns a (possibly empty) wrapper. Either way
           // the wasm decode path runs and throws if the wire bytes
           // can't be interpreted as the declared type.
@@ -180,7 +180,7 @@ async function probeRestMethod(baseUrl, fetchFn, method, _manifest, timeoutMs) {
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
           result.observedKeys = Object.keys(parsed);
         } else if (Array.isArray(parsed)) {
-          // Array response — observedKeys reflects the FIRST element's
+          // Array response. ObservedKeys reflects the FIRST element's
           // keys (representative of the row shape) so the report can
           // still surface field-level drift on list endpoints.
           result.observedKeys = parsed.length > 0 && parsed[0] && typeof parsed[0] === "object"
@@ -230,7 +230,7 @@ function synthesizeFieldValue(f, manifest) {
   if (t.startsWith("List(")) {
     const inner = t.slice(5, -1);
     if (PRIMITIVE_KIND[inner] || inner === "Text" || inner === "Data") return [];
-    return [];   // List(Struct), List(List(...)) — empty list is valid
+    return [];   // List(Struct), List(List(...)). Empty list is valid
   }
   if (/^[A-Z]/.test(t) && !PRIMITIVE_KIND[t]) return undefined;
   return DEFAULT_VALUE[t];
@@ -262,7 +262,7 @@ function manifestFieldToDescriptor(f, manifest) {
     // List<Struct>: recurse into the element struct's manifest entry.
     const elemStruct = lookupStruct(inner, manifest);
     if (!elemStruct) {
-      throw new Error(`probe: List(${inner}) — element struct missing from manifest`);
+      throw new Error(`probe: List(${inner}). Element struct missing from manifest`);
     }
     return {
       kind: "listStruct",

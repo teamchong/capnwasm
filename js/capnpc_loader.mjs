@@ -1,4 +1,4 @@
-// JS shim around zig-out/capnpc.opt.wasm — the upstream Cap'n Proto schema
+// JS shim around zig-out/capnpc.opt.wasm. The upstream Cap'n Proto schema
 // compiler statically linked into wasm. Lets us compile any .capnp source
 // to a binary CodeGeneratorRequest with no external `capnp` binary. The
 // compiler's version is locked to whatever vendor/ we shipped, so there's
@@ -39,7 +39,7 @@ export class CapnpCompiler {
   static async load(wasmPath) {
     // Three sources, in order of preference:
     //   1. wasmPath argument (caller knows where the wasm lives)
-    //   2. dist/capnpc.wasm.gz (gzipped, shipped in npm — gunzip on load
+    //   2. dist/capnpc.wasm.gz (gzipped, shipped in npm. Gunzip on load
     //      saves 460 KB of unpacked package weight vs raw .wasm; sub-ms
     //      gunzip cost is invisible behind WebAssembly.compile that
     //      follows)
@@ -126,7 +126,7 @@ export class CapnpCompiler {
 
     // raw is [{ name, id, dataWords, ptrWords, fields: [{name, ordinal, codeOrder, slot:{offset,type}}] }]
     // Translate types and compute bitOffsets so the existing codegen consumes it.
-    // Translate each top-level struct (skipping raw group entries — those
+    // Translate each top-level struct (skipping raw group entries. Those
     // are referenced via parent.field.group lookups during translateField
     // and re-synthesized with parent-prefixed names so they don't clash
     // with user types). Then lift the synthesized group-Reader structs
@@ -145,7 +145,7 @@ export class CapnpCompiler {
 
   /**
    * Extract interface metadata from the most recently compiled request.
-   * Must be called *after* compileToModel — they share the same buffered
+   * Must be called *after* compileToModel. They share the same buffered
    * CodeGeneratorRequest in capnpc_in. Returns a list of:
    *   { name, id, methods: [{ id, name, paramStructId, resultStructId }] }
    * Empty array if the schema declares no interfaces.
@@ -262,7 +262,7 @@ function translateField(f, byId, parentName, synthAccum) {
     if (!groupNode) return [];
     // Synthesize a nested Reader/Builder class for the group. Its name is
     // `<Parent>_<groupField>` so it doesn't collide with any user type.
-    // It shares wire storage with the parent — its field offsets are
+    // It shares wire storage with the parent. Its field offsets are
     // already absolute inside the containing struct (capnp's group layout
     // rule), so generated getters work unchanged.
     const synthName = `${parentName}_${f.name}`;

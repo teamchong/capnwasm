@@ -1,7 +1,7 @@
 // Reconnecting transport / WebSocket. Auto-reopens on close with exponential
 // backoff; exposes an onReconnect hook so the caller can re-fetch the
 // bootstrap and re-establish subscriptions. Pending calls on the dropped
-// session reject — caller decides whether to retry, since this helper has
+// session reject. Caller decides whether to retry, since this helper has
 // no idea which calls are idempotent.
 //
 //   import { reconnectingWebSocket } from "capnwasm/reconnect";

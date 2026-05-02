@@ -1,4 +1,4 @@
-// Tests for js/inspect.mjs — the standalone wire inspector hosted at
+// Tests for js/inspect.mjs. The standalone wire inspector hosted at
 // `<docs site>/inspect.js`.
 //
 // Two paths to verify:
@@ -36,7 +36,7 @@ test("inspect: schemaless walk reports segment + root struct shape correctly", a
   assert.equal(out.segments.length, 1, "single-segment message");
   assert.equal(out.root.kind, "struct");
   // The User struct has UInt64 id, Text name, Text email, UInt64 joinedAtMs,
-  // Bool active, Data avatar — that's 17 bytes of data + 3 pointers
+  // Bool active, Data avatar. That's 17 bytes of data + 3 pointers
   // (rounded up to 3 data words + 3 ptr words by Cap'n Proto's word-
   // aligned layout).
   assert.ok(out.root.dataWords >= 2, "data section non-empty");
@@ -47,7 +47,7 @@ test("inspect: schemaless walk reports segment + root struct shape correctly", a
 test("inspect: schemaless walk decodes Text pointers as strings", async () => {
   const bytes = buildSampleUser();
   const out = await inspect(bytes, { log: false });
-  // Find the text pointers under root.pointers — at least one should
+  // Find the text pointers under root.pointers. At least one should
   // decode to "Alice" or "alice@example.com".
   const textPointers = out.root.pointers.filter((p) => p && p.kind === "text");
   assert.ok(textPointers.length >= 1, "expected at least one text pointer");

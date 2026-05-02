@@ -1,6 +1,6 @@
 // Verify nested group accessors:
 //   r.parent.child  /  b.parent.child = ...
-// Groups share storage with the parent — accessing them is the same wasm
+// Groups share storage with the parent. Accessing them is the same wasm
 // cost as accessing a flat field, but the API mirrors the schema's shape.
 
 import { test, before } from "node:test";

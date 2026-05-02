@@ -10,7 +10,7 @@ function capnpManifest() {
     {
       structs: [
         // Method param/result structs are named "<method>$Params" / "$Results"
-        // by the manifest builder — match capnpc's convention.
+        // by the manifest builder. Match capnpc's convention.
         {
           name: "getUser$Params",
           dataWords: 1,

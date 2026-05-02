@@ -95,7 +95,7 @@ test("bootstrap + call: server method runs and result reaches client", async () 
   const { bytes, caps } = await promise;
 
   assert.ok(bytes instanceof Uint8Array);
-  // Echoed empty AnyPointer — 1-segment, 1-word frame = 16 bytes after rebuild.
+  // Echoed empty AnyPointer. 1-segment, 1-word frame = 16 bytes after rebuild.
   assert.equal(bytes.length, 16);
   assert.deepEqual(caps, [], "no caps in echo reply");
   assert.equal(serverSawTarget, serverImpl, "handler should run on the bootstrap target");
@@ -151,7 +151,7 @@ test("pipelined call: server defers second handler until first resolves; both Ca
 
   const cap = client.bootstrap();
   const r1 = cap.call(IFC, METHOD_FIRST, emptyMessage());
-  // r2 is sent immediately after r1 — its target = promisedAnswer(r1.questionId).
+  // r2 is sent immediately after r1. Its target = promisedAnswer(r1.questionId).
   const r2 = r1.cap.call(IFC, METHOD_SECOND, emptyMessage());
   await Promise.all([r1.promise, r2.promise]);
 
@@ -159,7 +159,7 @@ test("pipelined call: server defers second handler until first resolves; both Ca
     "pipelined call must wait for its target answer to resolve");
 
   // Wire-level proof of pipelining: the server's first three receives are
-  // Bootstrap, Call, Call — both Calls arrived before any client-side
+  // Bootstrap, Call, Call. Both Calls arrived before any client-side
   // round-trip completed. Without pipelining, the client would have had to
   // await Call#1's Return before sending Call#2, so we'd see a Finish (or
   // any other client→server frame) interleaved between the two Calls.
@@ -217,7 +217,7 @@ test("end-to-end zero-copy: callBuilder writes params into rpc_builder; openPara
   const IFC = 0xc0ffeec0ffeec0ffn;
   const METHOD = 0;
 
-  // Server reads params via openParams (zero-copy receive) — every field
+  // Server reads params via openParams (zero-copy receive). Every field
   // access is a wasm load against the live rpc_reader. No params bytes
   // were ever materialized in JS or copied into a separate buffer.
   const seen = {};
@@ -227,13 +227,13 @@ test("end-to-end zero-copy: callBuilder writes params into rpc_builder; openPara
     seen.u8 = p.u8;
     seen.u32 = p.u32;
     seen.text = p.text;
-    // Build the response via beginResults (zero-copy send) — the wasm-side
+    // Build the response via beginResults (zero-copy send). The wasm-side
     // any_builder writes straight into the rpc_builder's Return.results.content.
     const reply = ctx.beginResults(PrimitivesBuilder);
     reply.u8 = (p.u8 + 1) & 0xff;
     reply.u32 = (p.u32 + 1) >>> 0;
     reply.text = "ack: " + p.text;
-    // No return value needed — beginResults flagged the rpc_builder for
+    // No return value needed. BeginResults flagged the rpc_builder for
     // direct finalization in the dispatcher.
   });
   const { client } = await setupSessions({ bootstrap: {}, registry });
@@ -253,7 +253,7 @@ test("end-to-end zero-copy: callBuilder writes params into rpc_builder; openPara
   assert.equal(seen.text, "zero-copy params");
 
   // The reply bytes can still be opened by the application Reader on the
-  // client side (using openPrimitives — separate from the zero-copy path
+  // client side (using openPrimitives. Separate from the zero-copy path
   // since the call promise resolved on a microtask after rpc_reader was
   // potentially overwritten by a Finish message).
   const { openPrimitives } = await import("../js/conformance_schema.gen.mjs");
@@ -287,7 +287,7 @@ test("send({extract}) reads results synchronously from rpc_reader; promise resol
 
   // Pass an extractor: it runs inside #handleReturn against the live
   // rpc_reader and returns whatever shape the caller wants. The promise
-  // resolves to that value directly — no { bytes, caps } envelope, no
+  // resolves to that value directly. No { bytes, caps } envelope, no
   // intermediate Uint8Array.
   const { promise } = r.send({
     resultsReader: PrimitivesReader,
@@ -305,7 +305,7 @@ test("send({extract}) reads results synchronously from rpc_reader; promise resol
 test("deep pipelining: 3-level chain (root → child → grandchild) all hit the wire before any Return", async () => {
   // Each cap holds a name; getChild returns a sub-cap with name = parent + ".child".
   // We fire root.getChild() then chain a getChild() on its pipeline cap, then
-  // chain again — all three calls are issued back-to-back, before the first
+  // chain again. All three calls are issued back-to-back, before the first
   // Return is received. Server sees the inbound order and resolves them in
   // dependency order.
   const IFC = 0xababababababababn;
@@ -328,7 +328,7 @@ test("deep pipelining: 3-level chain (root → child → grandchild) all hit the
     return { caps: [makeImpl(target.name + ".child")] };
   });
 
-  // Pre-resolve the import so the call chain is fully synchronous —
+  // Pre-resolve the import so the call chain is fully synchronous -
   // any `await` between calls would yield microtasks and let the
   // bootstrap's Return + Finish interleave before Call#3 reaches the wire.
   const { PrimitivesBuilder } = await import("../js/conformance_schema.gen.mjs");
@@ -440,7 +440,7 @@ test("auto-release: dropping imported RpcCap sends Release; server drops its exp
 
   // For every Release the client sent, the server should have dropped the
   // corresponding export. Probe each id; count how many are no longer
-  // reachable. That count must equal `releases` — proving the round-trip:
+  // reachable. That count must equal `releases`. Proving the round-trip:
   // client GC → Release → server drop.
   let serverDropped = 0;
   for (let i = 1; i <= N; i++) {
@@ -499,7 +499,7 @@ test("pipelined call's exception propagates to its own promise without hanging",
 test("peer disconnect: server-side close propagates to client; pending question rejects", async () => {
   // Server registers a slow handler so the call is still in flight when the
   // server tears down. Without onClose propagation, the client's question
-  // would hang forever — a real-world session leak.
+  // would hang forever. A real-world session leak.
   const IFC = 0xdeadbeefdeadbeefn;
   const registry = new InterfaceRegistry();
   let serverClose;
@@ -515,7 +515,7 @@ test("peer disconnect: server-side close propagates to client; pending question 
   while (!serverClose) await new Promise(r => setImmediate(r));
 
   server.close();
-  // Client must observe the disconnect — its in-flight call rejects.
+  // Client must observe the disconnect. Its in-flight call rejects.
   await assert.rejects(r.promise, /session closed/);
   client.close();
 });
@@ -529,7 +529,7 @@ test("peer disconnect: client-side close propagates to server; server.close() is
   await client.bootstrap().call(IFC, 0, emptyMessage()).promise;
 
   // Tear down the client side. The server must observe the disconnect
-  // through the in-process transport pair's onClose hook — not just keep
+  // through the in-process transport pair's onClose hook. Not just keep
   // its #questions/#answers around indefinitely.
   client.close();
   // Drain microtasks so the propagated close has a chance to run.
@@ -541,7 +541,7 @@ test("peer disconnect: client-side close propagates to server; server.close() is
 
 test("abort: pre-aborted signal short-circuits the call without ever sending it", async () => {
   // The call still allocates a question id and sends bytes (we can't unsend
-  // those once cpp_rpc_finalize has flushed) — but the deferred rejects
+  // those once cpp_rpc_finalize has flushed). But the deferred rejects
   // synchronously and Finish is dispatched to release the peer's hold.
   const IFC = 0xa110a110a110a110n;
   const registry = new InterfaceRegistry();
@@ -589,7 +589,7 @@ test("abort: late server Return after abort doesn't unhandled-reject", async () 
   while (!serverGate) await new Promise(r => setImmediate(r));
   ac.abort(new Error("cancelled"));
   await assert.rejects(r.promise, /cancelled/);
-  // Server completes its work — the question is already gone, the Return
+  // Server completes its work. The question is already gone, the Return
   // bytes arrive and get silently dropped (no second rejection, no throw).
   serverGate();
   await new Promise(r => setImmediate(r));
@@ -679,7 +679,7 @@ test("close: eagerly fans out Release for live imports", async () => {
   await new Promise(r => setImmediate(r));
   const releasesAfter = aTap.sentKinds.filter(k => k === RELEASE).length;
   // Bootstrap (id 0) + 2 returned caps = 3 imports the client knows about.
-  // Eager fan-out on close should send one Release per — at minimum more
+  // Eager fan-out on close should send one Release per. At minimum more
   // than zero, regardless of whether GC has fired in this tick.
   assert.ok(
     releasesAfter > releasesBefore,

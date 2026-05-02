@@ -60,7 +60,7 @@ const RET_CANCELED  = 2;
 // then that many bytes of Cap'n Proto framed message. Lets us pull one
 // message at a time off a stream without re-parsing partial reads.
 //
-// On the send side we don't allocate a JS Uint8Array for framing — the
+// On the send side we don't allocate a JS Uint8Array for framing. The
 // C++ wrappers write the prefix + payload into cpp_out and we hand the
 // transport a subarray view into wasm memory. The transport (or its
 // underlying WebSocket) is responsible for copying if it needs to retain.
@@ -75,7 +75,7 @@ class FrameReader {
   next() {
     if (this.#total < 4) return null;
     const buf = this.#flatten();
-    // Read u32 LE inline — saves a DataView allocation per next() call,
+    // Read u32 LE inline. Saves a DataView allocation per next() call,
     // which fires on every inbound frame (8% of CPU in tight RPC loops).
     const len = (buf[0] | (buf[1] << 8) | (buf[2] << 16) | (buf[3] << 24)) >>> 0;
     const end = 4 + len;
@@ -85,7 +85,7 @@ class FrameReader {
       return null;
     }
     const payload = buf.subarray(4, end);
-    // Skip the rest subarray when the buffer ends here — the common case.
+    // Skip the rest subarray when the buffer ends here. The common case.
     if (buf.length === end) {
       this.#chunks.length = 0;
       this.#total = 0;
@@ -118,12 +118,12 @@ const deferred = typeof Promise.withResolvers === "function"
       return { promise, resolve, reject };
     };
 
-// Shared frozen empty array — every zero-cap Return resolves with this
+// Shared frozen empty array. Every zero-cap Return resolves with this
 // instead of allocating a new `[]`. Saves a per-call alloc on tight
 // echo / no-cap loops.
 const EMPTY_CAPS = Object.freeze([]);
 
-// Returned by RpcSession.callBuilder() — exposes the params builder for
+// Returned by RpcSession.callBuilder(). Exposes the params builder for
 // the caller to mutate, plus a send() that finalizes and dispatches.
 // Class form (vs object-literal + per-call sendFn closure) keeps the
 // hidden class stable across every callBuilder() invocation.
@@ -138,7 +138,7 @@ class CallStarted {
 
 // Per-call result object returned by callBuilder().send(). Using a class
 // instead of an object literal with a closure-captured getter lets V8
-// give every instance the same hidden class — better inline-cache hit
+// give every instance the same hidden class. Better inline-cache hit
 // rates in tight RPC loops. Per-iteration allocation count: one
 // CallSentResult vs. one closure + one object literal previously.
 class CallSentResult {
@@ -147,7 +147,7 @@ class CallSentResult {
     this.promise = promise;
     this._session = session;
     this._registry = registry;
-    this._cap = null;   // lazy — only allocated on .cap access
+    this._cap = null;   // lazy. Only allocated on .cap access
   }
   get cap() {
     if (!this._cap) {
@@ -164,7 +164,7 @@ class CallSentResult {
 // Factory + freelist for question records. Keeps a single hidden class
 // (V8 monomorphic) AND reuses objects across calls so burst workloads
 // don't churn the GC. Profiling 1000-call bursts showed GC at 16% of
-// CPU — q-records are the highest-rate allocation in the hot path.
+// CPU. Q-records are the highest-rate allocation in the hot path.
 const Q_POOL = [];
 function makeQ(deferred, kind, bootstrapCap, resultsReader, extract) {
   const q = Q_POOL.pop();
@@ -214,16 +214,16 @@ export class RpcSession {
   #localBootstrap = null;
   // FinalizationRegistry tracks GC of imported RpcCap handles. When a cap
   // becomes unreachable in JS, send Release(importId) so the peer can drop
-  // the corresponding export entry. Critical for long-running sessions —
+  // the corresponding export entry. Critical for long-running sessions -
   // without this, every cap-passing Call would leak peer-side state.
   #importRefs;
   // Cached reference to the wasm exports object. V8 inlines call sites
-  // more aggressively when the access chain is short and monomorphic —
+  // more aggressively when the access chain is short and monomorphic -
   // `this.#exp.fn()` is a single hidden-class lookup vs the original
   // `this.#cpp._exports.fn()` which walks two property chains per call.
   #exp;
   // The wasm scratch buffer offsets are constants (set once at C++ init)
-  // — call them once at construction and cache. Saves a wasm-boundary
+  //. Call them once at construction and cache. Saves a wasm-boundary
   // call per send (cpp_in_ptr/cpp_in_capacity/cpp_out_ptr were being
   // looked up on every #stageIn / #sendFromOut / #snapshotOut).
   #inPtr  = 0;
@@ -238,12 +238,12 @@ export class RpcSession {
   // Cached DataView covering the wasm memory.buffer. Hot inbound paths
   // (#handleCall, #handleReturn, #handleResolve, #handleDisembargo)
   // read summary bytes from cpp_out and used to allocate a new DataView
-  // per call — this caches the view and refreshes only when memory grows.
+  // per call. This caches the view and refreshes only when memory grows.
   #dv;
   // RpcSession always microtask-batches outbound sends. The cost is
   // ≤ one microtask of first-byte latency (~1µs, invisible behind any
   // network); the win is N→1 transport.send calls when the user makes
-  // multiple calls in the same tick. There is no "no-batch mode" — the
+  // multiple calls in the same tick. There is no "no-batch mode". The
   // tradeoff is one-sided.
   #sendQueue = null;
   #sendQueueBytes = 0;
@@ -262,16 +262,16 @@ export class RpcSession {
   #inflight = 0;
   #idleDeferreds = [];
   // Stateless mode: peer's session is ephemeral (HTTP batch). Skip
-  // generating Finish/Release frames — they'd just be wasted bytes
+  // generating Finish/Release frames. They'd just be wasted bytes
   // (and would force the http-batch transport to filter them).
   #stateless = false;
-  // Metrics subscribers — registered via session.onMetric(fn). Empty by
+  // Metrics subscribers. Registered via session.onMetric(fn). Empty by
   // default; #emitMetric early-outs when no listeners so the hot path
   // pays nothing when metrics aren't in use.
   #metricSubscribers = null;
   // Per-(target, ifc, method) cache of empty-params Call frame bytes.
   // After the first wasm cpp_rpc_build_call for a tuple, subsequent calls
-  // copy the cached bytes and patch the questionId at byte 28 — no wasm
+  // copy the cached bytes and patch the questionId at byte 28. No wasm
   // boundary call. Saves ~400 ns + the C++ build cost per tight-loop call.
   // Only kicks in when paramsBytes.length === 0 (the common echo / noop /
   // ping shape); calls with params go through wasm as before. Keyed on a
@@ -286,7 +286,7 @@ export class RpcSession {
    * @param {object} [options.bootstrap] - object exposed when peer requests Bootstrap
    *
    * Multiple sends made in the same tick are always coalesced into one
-   * transport.send at the next microtask boundary — there is no
+   * transport.send at the next microtask boundary. There is no
    * "no-batch" mode because the latency cost is invisible. If you need
    * to force a send before the microtask boundary, call session.flush().
    */
@@ -313,7 +313,7 @@ export class RpcSession {
       // doing the same on the answering side eagerly makes the
       // stateless-HTTP-batch case work (client sends Bootstrap once over
       // its lifetime; subsequent batches contain only Calls against
-      // importedCap(0) — which on the server is whatever cap is sitting
+      // importedCap(0). Which on the server is whatever cap is sitting
       // at localCaps[0]).
       this.#localCaps.set(0, { target: this.#localBootstrap, refcount: 1 });
       if (this.#nextLocalCapId === 0) this.#nextLocalCapId = 1;
@@ -335,7 +335,7 @@ export class RpcSession {
 
   // Returns a Uint8Array over wasm memory. Re-fetches the view if memory
   // has grown (rare; only happens if the wasm calls memory.grow). The
-  // buffer-identity check is cheap — it's just a reference compare.
+  // buffer-identity check is cheap. It's just a reference compare.
   #mem() {
     const buf = this.#cpp.memory.buffer;
     if (buf !== this.#buffer) {
@@ -357,7 +357,7 @@ export class RpcSession {
   /**
    * Resolves once all inbound handlers have settled and the outbound send
    * queue has drained. Useful when you need to know "the server has
-   * finished servicing everything currently in flight" — the HTTP batch
+   * finished servicing everything currently in flight". The HTTP batch
    * handler uses this to decide when to flush the response.
    *
    * If new inbound frames arrive while idle() is awaited, idle() will keep
@@ -399,7 +399,7 @@ export class RpcSession {
    *
    * Returns an unsubscribe function. Multiple subscribers are supported.
    * When zero subscribers are registered, the hot path skips event
-   * construction entirely — wire to OpenTelemetry / Prometheus / your
+   * construction entirely. Wire to OpenTelemetry / Prometheus / your
    * own histogram only when you actually need it.
    */
   onMetric(fn) {
@@ -508,7 +508,7 @@ export class RpcSession {
     const d = deferred();
     this.#questions.set(questionId, makeQ(d, "call", undefined, undefined, undefined));
     if (opts?.signal) this.#wireAbort(opts.signal, questionId, d, "question");
-    // Metrics: only attach the timing wrapper when subscribers exist —
+    // Metrics: only attach the timing wrapper when subscribers exist -
     // otherwise this hot path skips the Date.now + then() allocation.
     if (this.#metricSubscribers && this.#metricSubscribers.length > 0) {
       const startTime = performance.now();
@@ -528,10 +528,10 @@ export class RpcSession {
       );
     }
     // The pipeline cap lets the caller chain follow-up calls onto this
-    // answer before it returns — those Calls go on the wire immediately,
+    // answer before it returns. Those Calls go on the wire immediately,
     // with target=promisedAnswer(questionId). The peer holds them until
     // it resolves the original answer locally. Lazy via the same
-    // CallSentResult class callBuilder uses — avoids a per-call RpcCap
+    // CallSentResult class callBuilder uses. Avoids a per-call RpcCap
     // allocation when nobody pipelines.
     return new CallSentResult(this, this.#registry, questionId, d.promise);
   }
@@ -539,7 +539,7 @@ export class RpcSession {
   // Tie an AbortSignal to either a question (resolve via deferred reject) or
   // a stream (end the iterator with the abort reason). Best-effort sends a
   // Finish so the peer can drop server-side state. The listener self-removes
-  // — both branches check that the in-flight entry still exists, so spurious
+  //. Both branches check that the in-flight entry still exists, so spurious
   // late aborts after a natural Return are a no-op.
   #wireAbort(signal, questionId, dOrStream, kind) {
     const abortNow = () => {
@@ -566,7 +566,7 @@ export class RpcSession {
    * Zero-copy Call: instead of pre-building params bytes and copying them
    * into the RPC message, this points the wasm-side any_builder at the
    * Call.params.content slot directly. The application's Builder writes
-   * straight into the rpc_builder's arena — no intermediate buffer.
+   * straight into the rpc_builder's arena. No intermediate buffer.
    *
    * Returns `{ params, send }`. The caller fills `params` (a Builder
    * instance), then invokes `send()` to finalize and dispatch. `send()`
@@ -580,13 +580,13 @@ export class RpcSession {
     const questionId = this.#allocQuestionId();
     const targetKind = target.kind === "promise" ? TARGET_PROMISED_ANSWER : TARGET_IMPORTED_CAP;
     // begin_call returns the data section pointer for the freshly-init'd
-    // params struct — combines the begin_call op with the data_ptr lookup
+    // params struct. Combines the begin_call op with the data_ptr lookup
     // the Builder needs anyway. Saves one wasm boundary call per outbound.
     // Use the cap's pre-computed BigInt(target.id) when available (the
     // typical caller is RpcCap.callBuilder which forwards its own target).
     const tIdBig = target._idBig !== undefined ? target._idBig : BigInt(target.id);
     // typeof check is cheaper than the BigInt() coercion call when the
-    // user already passed a BigInt (the typical case — interfaceId is a
+    // user already passed a BigInt (the typical case. InterfaceId is a
     // schema constant emitted as `0x…n`).
     const ifcBig = typeof interfaceId === "bigint" ? interfaceId : BigInt(interfaceId);
     const dataPtr = this.#exp.cpp_rpc_begin_call(
@@ -595,12 +595,12 @@ export class RpcSession {
     );
     if (!dataPtr) throw new Error("cpp_rpc_begin_call failed");
     const params = new BuilderClass(this.#cpp, { preinitialized: true, dataPtr });
-    // Class instead of object literal + closure — every CallStarted
+    // Class instead of object literal + closure. Every CallStarted
     // shares one hidden class. V8 inline-caches the .params/.send/_session/
     // _questionId chain monomorphically across hot RPC loops.
     return new CallStarted(this, questionId, params);
   }
-  // Internal — completes a callBuilder.send(opts). Pulled out of the
+  // Internal. Completes a callBuilder.send(opts). Pulled out of the
   // closure so CallStarted instances don't carry per-call function refs.
   _completeSend(questionId, opts) {
     const framedLen = this.#exp.cpp_rpc_finalize();
@@ -621,12 +621,12 @@ export class RpcSession {
   /** Send Finish to release the peer's hold on a question's resources. */
   finish(questionId) {
     if (this.#closed) return;
-    // In stateless mode, skip Finish entirely — the peer's session is
+    // In stateless mode, skip Finish entirely. The peer's session is
     // ephemeral (see HTTP batch handler). Saves per-call frame
     // allocation AND lets the http-batch transport drop its
     // filterFrames pass altogether.
     if (this.#stateless) return;
-    // Skip the wasm boundary call — Finish frames are fixed-shape (44 B,
+    // Skip the wasm boundary call. Finish frames are fixed-shape (44 B,
     // questionId at byte 36 LE u32). buildFinishFrame patches a JS-side
     // template. Saves a wasm crossing + a MallocMessageBuilder cycle on
     // every successful RPC reply.
@@ -662,7 +662,7 @@ export class RpcSession {
 
   close() {
     if (this.#closed) return;
-    // Drain queued sends before tearing down — otherwise a call right
+    // Drain queued sends before tearing down. Otherwise a call right
     // before close() could be dropped.
     this.#flush();
     // Eager Release fan-out, BEFORE flipping #closed: #sendRelease bails out
@@ -671,7 +671,7 @@ export class RpcSession {
     // without waiting for our FinalizationRegistry callbacks to fire on the
     // next major GC, which can be seconds or longer.
     if (this.#imports.size && !this.#closed) {
-      // Snapshot keys — #sendRelease mutates #imports as we iterate.
+      // Snapshot keys. #sendRelease mutates #imports as we iterate.
       const ids = Array.from(this.#imports.keys());
       for (const id of ids) this.#sendRelease(id, 1);
       this.#flush();
@@ -691,7 +691,7 @@ export class RpcSession {
     // unwind instead of hanging on a chunk that will never arrive.
     for (const stream of this.#streamQuestions.values()) stream.end(closeErr);
     this.#streamQuestions.clear();
-    // The remaining tables hold no awaitable state — clear them now so a
+    // The remaining tables hold no awaitable state. Clear them now so a
     // long-lived process churning sessions doesn't accumulate Map entries
     // until the next major GC. The application-supplied cap targets in
     // #localCaps and the answer-record snapshots in #answers become eligible
@@ -716,7 +716,7 @@ export class RpcSession {
   }
 
   #dispatch(payload) {
-    // Stream extension frames hijack byte 0 of the payload — see
+    // Stream extension frames hijack byte 0 of the payload. See
     // STREAM_CHUNK_BYTE / STREAM_END_BYTE definitions at top of file.
     if (payload.length > 0 && payload[0] === STREAM_CHUNK_BYTE) {
       this.#handleStreamChunk(payload);
@@ -764,7 +764,7 @@ export class RpcSession {
       this.#localCaps.set(0, { target: this.#localBootstrap, refcount: 1 });
       if (this.#nextLocalCapId === 0) this.#nextLocalCapId = 1;
     }
-    // Empty results body — a single null pointer message. The peer's handle
+    // Empty results body. A single null pointer message. The peer's handle
     // just needs the answer to arrive; the cap is addressed by import id 0.
     const empty = emptyAnyPointerMessage();
     this.#stageIn(empty);
@@ -778,16 +778,16 @@ export class RpcSession {
     // 4 boundary crossings vs the per-field accessors). Layout matches
     // cpp_rpc_get_call_summary in cpp/wrapper.cpp.
     // Summary bytes already written to cpp_out by cpp_rpc_decode (combined
-    // decode + summary write — saves the per-message wasm boundary call).
+    // decode + summary write. Saves the per-message wasm boundary call).
     const out = this.#outPtr;
     const dv  = this.#dataView();
     const answerId    = dv.getUint32(out + 0,  true);
     const targetKind  = dv.getUint32(out + 4,  true);
     // targetId fits in u32 in practice (questionId / importId both u32);
-    // u64 in the wire is for forward-compat. Use Number — match the map
+    // u64 in the wire is for forward-compat. Use Number. Match the map
     // key type used by #localCaps and #answers.
     const targetId    = Number(dv.getBigUint64(out + 8,  true));
-    const interfaceId = dv.getBigUint64(out + 16, true);  // stays BigInt — InterfaceId is genuinely u64
+    const interfaceId = dv.getBigUint64(out + 16, true);  // stays BigInt. InterfaceId is genuinely u64
     const methodId    = dv.getUint16(out + 24, true);
     const metricsActive = this.#metricSubscribers && this.#metricSubscribers.length > 0;
     const dispatchStart = metricsActive ? performance.now() : 0;
@@ -865,7 +865,7 @@ export class RpcSession {
     // Build a context the handler can opt into for zero-copy receive +
     // zero-copy build. ctx.openParams reads directly from rpc_reader;
     // ctx.beginResults writes directly into rpc_builder. The handler must
-    // call openParams synchronously (before any await) — once it yields,
+    // call openParams synchronously (before any await). Once it yields,
     // the next inbound message can overwrite rpc_reader.
     let beginResultsUsed = false;
     const ctx = {
@@ -876,7 +876,7 @@ export class RpcSession {
       },
       openParams: (ReaderClass) => {
         // open_call_params returns the data section pointer of the
-        // params AnyStruct — Reader uses it for direct-memory primitive
+        // params AnyStruct. Reader uses it for direct-memory primitive
         // reads (no per-field cpp_any_*_at boundary call).
         const dataPtr = this.#exp.cpp_rpc_open_call_params();
         if (!dataPtr) throw new Error("cpp_rpc_open_call_params failed");
@@ -898,7 +898,7 @@ export class RpcSession {
       },
     };
     // Synchronous-handler fast path: if the handler returns a non-thenable,
-    // we don't await — saves a microtask per inbound call. For async
+    // we don't await. Saves a microtask per inbound call. For async
     // handlers we await the promise as before.
     let handlerResult;
     try {
@@ -912,11 +912,11 @@ export class RpcSession {
       return;
     }
     // Handlers can satisfy a Call in one of four ways:
-    //   1. ctx.beginResults(Builder) was used — results are already built
+    //   1. ctx.beginResults(Builder) was used. Results are already built
     //      in the rpc_builder's arena; just finalize and send.
-    //   2. Returned Uint8Array — raw results bytes (legacy / generic path).
-    //   3. Returned { caps: [target, ...] } — capabilities to export back.
-    //   4. Returned null/undefined — empty reply.
+    //   2. Returned Uint8Array. Raw results bytes (legacy / generic path).
+    //   3. Returned { caps: [target, ...] }. Capabilities to export back.
+    //   4. Returned null/undefined. Empty reply.
     let resultsBytes = null;
     let capTargets = null;
     if (handlerResult instanceof Uint8Array) {
@@ -979,7 +979,7 @@ export class RpcSession {
     let a = this.#answers.get(answerId);
     if (a) return a;
     const d = deferred();
-    // Attach a default catch so an unawaited rejection (the common case —
+    // Attach a default catch so an unawaited rejection (the common case -
     // nothing pipelines off most calls) doesn't surface as unhandledRejection.
     // Real awaiters still see the rejection when they `await readyPromise`.
     d.promise.catch(() => {});
@@ -1002,7 +1002,7 @@ export class RpcSession {
     if (!q) return;
     this.#questions.delete(answerId);
     if (retKind === RET_RESULTS) {
-      // Most Returns carry zero caps — skip even allocating the empty
+      // Most Returns carry zero caps. Skip even allocating the empty
       // array in that case. The non-bootstrap zero-extract path returns
       // { bytes, caps } where `caps` is the same shared empty array.
       let caps;
@@ -1033,7 +1033,7 @@ export class RpcSession {
         // Zero-copy result read: point the reader stack at the inbound
         // Return.results.content and run the caller's extractor here, while
         // rpc_reader is still live. The promise resolves with whatever the
-        // extractor returns — no result-bytes Uint8Array allocated, no
+        // extractor returns. No result-bytes Uint8Array allocated, no
         // wasm-to-JS copy of the payload.
         const dataPtr = this.#exp.cpp_rpc_open_return_results();
         if (!dataPtr) {
@@ -1146,7 +1146,7 @@ export class RpcSession {
       },
       end(err) {
         // If we already terminated with a failure (e.g., maxQueueSize
-        // overflow), keep that — a late natural StreamEnd shouldn't
+        // overflow), keep that. A late natural StreamEnd shouldn't
         // override it. Only the first end() call decides the outcome.
         if (done) return;
         done = true;
@@ -1191,7 +1191,7 @@ export class RpcSession {
         return this.#snapshotOut(len);
       },
     };
-    // Per-stream credit state — only constrains the generator if the client
+    // Per-stream credit state. Only constrains the generator if the client
     // opts in by sending a STREAM_WINDOW frame. `enabled` flips on first
     // window arrival; until then the loop runs at full speed (back-compat).
     const credits = { enabled: false, available: 0, waiters: [] };
@@ -1214,7 +1214,7 @@ export class RpcSession {
       this.#sendStreamEnd(answerId);
     } catch (err) {
       // STREAM_END carries the error message so the client iterator
-      // rejects on next(). No regular Exception Return is sent — the
+      // rejects on next(). No regular Exception Return is sent. The
       // streaming wire model is end-only.
       this.#sendStreamEnd(answerId, String(err?.message ?? err));
     } finally {
@@ -1257,7 +1257,7 @@ export class RpcSession {
     dv.setUint32(1, questionId, true);
     dv.setUint32(5, chunk.length, true);
     out.set(chunk, head);
-    // Streaming bypasses the cpp_out scratch — we own this buffer.
+    // Streaming bypasses the cpp_out scratch. We own this buffer.
     this.#transport.send(this.#frameAround(out));
   }
 
@@ -1328,14 +1328,14 @@ export class RpcSession {
 
   // Abort: peer hit a fatal protocol error and is tearing down. Reject
   // every pending question/answer/stream with the reason and close the
-  // session — receiving an Abort means the wire is gone, so any later
+  // session. Receiving an Abort means the wire is gone, so any later
   // sends would fail anyway and any pending awaits would hang forever.
   #handleAbort() {
     const len = this.#exp.cpp_rpc_get_abort_reason();
     const reason = len ? textDecode(this.#snapshotOut(len)) : "peer aborted";
     const err = new Error(`peer aborted: ${reason}`);
     for (const [, q] of this.#questions) {
-      // Attach a swallow before rejecting — bootstrap promises and other
+      // Attach a swallow before rejecting. Bootstrap promises and other
       // questions that nobody awaited shouldn't surface as unhandled
       // rejections when the connection dies. Real awaiters (`await call.promise`)
       // still see the rejection when they reach their await.
@@ -1358,8 +1358,8 @@ export class RpcSession {
   // a senderPromise has now resolved to a different cap (or to an exception).
   // The id is one of OUR import ids; rebind it to the resolved cap.
   //
-  // capnwasm doesn't generate Resolves itself — we don't pass senderPromise
-  // capDescriptors out — but real Cap'n Proto peers (the C++ runtime,
+  // capnwasm doesn't generate Resolves itself. We don't pass senderPromise
+  // capDescriptors out. But real Cap'n Proto peers (the C++ runtime,
   // capnp-rpc-rust) might. Without this handler the import would silently
   // route to a stale answer.
   #handleResolve() {
@@ -1377,14 +1377,14 @@ export class RpcSession {
       // "no capability at target" exception, which is what you want for a
       // broken promise.
       this.#imports.delete(promiseId);
-      // Wake anyone holding a deferred on this promise (currently none —
-      // we don't attach awaiters to plain imports — but kept here so the
+      // Wake anyone holding a deferred on this promise (currently none -
+      // we don't attach awaiters to plain imports. But kept here so the
       // future promise-handle path can plug in).
       return;
     }
     // Cap kinds 1=senderHosted (peer-hosted) and 3=receiverHosted (us-hosted)
     // are the level-1 cases. For senderHosted, we just remap our import
-    // entry to the new id — same Map slot, different routing target.
+    // entry to the new id. Same Map slot, different routing target.
     // receiverHosted means the resolved cap is one of OUR exports; in
     // that case the import is fundamentally a loopback and the right
     // semantics is "drop the import; future calls go to the local cap."
@@ -1414,7 +1414,7 @@ export class RpcSession {
   //
   // capnwasm doesn't generate senderLoopbacks of its own (we don't have
   // the multi-vat routing that would need them), so the receiverLoopback
-  // path is unreachable in practice — but it's wired anyway so a peer
+  // path is unreachable in practice. But it's wired anyway so a peer
   // doing arbitrary level-1 things lands somewhere correct.
   #handleDisembargo() {
     // Summary already written to cpp_out by cpp_rpc_decode.
@@ -1438,13 +1438,13 @@ export class RpcSession {
       // embargoes (we never send senderLoopback), so no action needed.
       return;
     }
-    // accept (level 3) or unknown — silently drop, matches the
+    // accept (level 3) or unknown. Silently drop, matches the
     // permissive-receiver pattern.
   }
 
   #sendException(answerId, reason) {
     // If anything is waiting to pipeline off this answer, fail them with
-    // the same reason — otherwise they'd hang on a promise that never settles.
+    // the same reason. Otherwise they'd hang on a promise that never settles.
     const a = this.#answers.get(answerId);
     if (a && !a.resolved) a.readyDeferred.reject(new Error(reason));
     const enc = textEncode(reason);
@@ -1473,7 +1473,7 @@ export class RpcSession {
   // this pulls our latency way under what individual sends could ever do.
   //
   // We have to copy because cpp_out gets reused on the next wasm call.
-  // The copy is into a JS-owned buffer — the transport sees one final
+  // The copy is into a JS-owned buffer. The transport sees one final
   // concatenated Uint8Array, no memory aliasing surprises.
   // Queue cpp_out bytes; flush all queued sends at the next microtask
   // boundary as one transport.send. We slice (not subarray) into JS-owned
@@ -1488,7 +1488,7 @@ export class RpcSession {
     }
   }
 
-  /** Force any queued frames out NOW. Rarely needed — the microtask
+  /** Force any queued frames out NOW. Rarely needed. The microtask
    *  boundary already does this. Useful when about to close the session. */
   flush() { this.#flush(); }
 
@@ -1578,7 +1578,7 @@ export class RpcCap {
   /**
    * Zero-copy Call: returns `{ params, send }`. Fill `params` then call
    * `send()` to finalize and dispatch. The application's Builder writes
-   * directly into the rpc_builder's Call.params.content arena — no
+   * directly into the rpc_builder's Call.params.content arena. No
    * intermediate copy of the params bytes.
    */
   callBuilder(interfaceId, methodId, BuilderClass) {
@@ -1586,7 +1586,7 @@ export class RpcCap {
   }
   /** Used by typed wrappers to look up the method handler for an inbound call. */
   get _target() { return this.#target; }
-  /** Wasm instance the cap's session uses — needed by typed proxies that
+  /** Wasm instance the cap's session uses. Needed by typed proxies that
    *  build params/result Builder/Reader instances. */
   get cpp() { return this.#session.cpp; }
 }
@@ -1641,7 +1641,7 @@ export class InterfaceRegistry {
     if (!methods) return null;
     return methods.get(methodId) ?? null;
     // Returns the bare handler. Caller invokes as `handler(target, ctx)`.
-    // Removed the per-call binding closure that wrapped fn — eliminates
+    // Removed the per-call binding closure that wrapped fn. Eliminates
     // an alloc per inbound dispatch on the hot RPC loop.
   }
 }
@@ -1675,7 +1675,7 @@ export function wsTransport(ws) {
     else if (ev.data instanceof Blob) ev.data.arrayBuffer().then(b => cb(new Uint8Array(b)));
     else if (typeof ev.data === "string") cb(new TextEncoder().encode(ev.data));
   });
-  // Either a normal close or an error tears down the session. Fires once —
+  // Either a normal close or an error tears down the session. Fires once -
   // the session's close() is idempotent so repeats are harmless, but we
   // null out the callback to avoid retaining the closure after teardown.
   const fire = () => { const c = closeCb; closeCb = null; if (c) c(); };
@@ -1684,7 +1684,7 @@ export function wsTransport(ws) {
   return {
     send(bytes) {
       // ws.send copies the bytes into its own send queue, so handing it a
-      // subarray view of wasm memory is safe — the WS implementation doesn't
+      // subarray view of wasm memory is safe. The WS implementation doesn't
       // retain the view past the call.
       ws.send(bytes);
     },
@@ -1749,7 +1749,7 @@ function makeEnd() {
       // Defer delivery so handlers run on a clean stack frame, matching
       // how a real socket would surface incoming data. The bytes coming
       // in are already JS-owned (RpcSession#sendFromOut slices from wasm
-      // memory before calling us), so no defensive copy is needed —
+      // memory before calling us), so no defensive copy is needed -
       // saves a 64KB memcpy on every big round-trip.
       const peer = this.peer;
       queueMicrotask(() => peer._cb?.(bytes));
@@ -1757,7 +1757,7 @@ function makeEnd() {
     close() {
       this._cb = null;
       // Notify the peer side asynchronously so this side's close() returns
-      // before the peer's session.close() runs — matches WebSocket semantics
+      // before the peer's session.close() runs. Matches WebSocket semantics
       // where a remote close arrives after a microtask boundary.
       const peer = this.peer;
       queueMicrotask(() => {
@@ -1795,12 +1795,12 @@ function emptyAnyPointerMessage() { return EMPTY_ANY_POINTER.slice(); }
 // Pre-built Finish frame template. The Finish message is fixed-shape:
 // every Finish for any question is the same 44 bytes except for the
 // questionId at offset 36 (little-endian u32). Skip the wasm boundary
-// call and the wasm-side MessageBuilder placement-new — patch the
+// call and the wasm-side MessageBuilder placement-new. Patch the
 // template in JS and queue the bytes directly. Saves a wasm crossing
 // per Finish on the hot RPC path.
 // 44 bytes: 4 length prefix + 8 segment table + 32 segment data
 // (1 segment of 4 words = 32 bytes). The questionId lives at byte 36
-// inside this frame as a little-endian u32 — that's the only byte
+// inside this frame as a little-endian u32. That's the only byte
 // span that varies between Finish messages.
 const FINISH_TEMPLATE = new Uint8Array([
   0x28, 0x00, 0x00, 0x00,                         // length prefix: 40 (LE u32)

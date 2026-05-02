@@ -8,7 +8,7 @@ A concrete walkthrough: schema → codegen → server → client → live call. 
 npm i capnwasm ws
 ```
 
-`ws` is the WebSocket server library; you can use any other transport that exposes `send()` and `addEventListener("message")` — see [`docs/workers.md`](workers.md) for the Cloudflare Workers variant.
+`ws` is the WebSocket server library; you can use any other transport that exposes `send()` and `addEventListener("message")`. See [`docs/workers.md`](workers.md) for the Cloudflare Workers variant.
 
 ## 2. Define the schema
 
@@ -32,7 +32,7 @@ interface Echo {
 }
 ```
 
-The interface ID (`@0xfe9c8e...`) and method ordinals (`@0` on `echo`) are part of the wire format. Once written and shipped, don't change them — only add new fields and methods.
+The interface ID (`@0xfe9c8e...`) and method ordinals (`@0` on `echo`) are part of the wire format. Once written and shipped, don't change them. Only add new fields and methods.
 
 ## 3. Generate the typed client and server
 
@@ -42,9 +42,9 @@ npx capnwasm gen echo.capnp -o echo.gen.mjs
 
 This produces `echo.gen.mjs` with:
 
-- `EchoRequestReader` / `EchoRequestBuilder` — typed accessors for the request struct
-- `EchoResponseReader` / `EchoResponseBuilder` — same for the response
-- `EchoRegistry` — an `InterfaceRegistry` you register your handler on
+- `EchoRequestReader` / `EchoRequestBuilder`. Typed accessors for the request struct
+- `EchoResponseReader` / `EchoResponseBuilder`. Same for the response
+- `EchoRegistry`. An `InterfaceRegistry` you register your handler on
 - The interface ID and method ordinals as named constants
 
 You don't have to commit `echo.gen.mjs`. The Vite plugin (`capnwasm/vite-plugin`) regenerates it on save, and a `prepare` script can do the same in CI. Treat `echo.capnp` as the source of truth.
@@ -68,13 +68,13 @@ registry.echo(async (params) => {
     b.message = `you said: ${params.message}`;
     b.receivedAt = BigInt(Date.now());
   });
-  return out;  // bytes — capnwasm ships them as the Return frame
+  return out;  // bytes. Capnwasm ships them as the Return frame
 });
 
 const wss = new WebSocketServer({ port: 8765 });
 wss.on("connection", (ws) => {
   // Each connection gets its own RpcSession. The bootstrap target is the
-  // capability the peer sees when it calls session.bootstrap() — here it's
+  // capability the peer sees when it calls session.bootstrap(). Here it's
   // a plain `{}` because the only thing we expose is the Echo interface,
   // which the registry routes by interface ID.
   new RpcSession(cpp, wsTransport(ws), registry, { bootstrap: {} });
@@ -99,7 +99,7 @@ const session = await connectWebSocket(cpp, "ws://127.0.0.1:8765");
 const cap = session.bootstrap();
 
 // callBuilder lets you write parameters directly into the wasm memory the
-// frame will be sent from — no intermediate JS object, no extra serialize.
+// frame will be sent from. No intermediate JS object, no extra serialize.
 const r = cap.callBuilder(ECHO_INTERFACE_ID, ECHO_METHODS.echo, EchoRequestBuilder);
 r.params.message = "hello";
 
@@ -138,12 +138,12 @@ client                                                      server
                               '------------------------'
 ```
 
-One TCP write per direction. Cap'n Proto's wire format is the bytes you see going over the socket — same as a C++ or Rust peer would send for the same schema. If you wireshark the connection you can decode the bytes with any other Cap'n Proto reader, including [`/inspect.js`](https://teamchong.github.io/capnwasm/inspect.js) in DevTools.
+One TCP write per direction. Cap'n Proto's wire format is the bytes you see going over the socket. Same as a C++ or Rust peer would send for the same schema. If you wireshark the connection you can decode the bytes with any other Cap'n Proto reader, including [`/inspect.js`](https://teamchong.github.io/capnwasm/inspect.js) in DevTools.
 
 ## 7. From here
 
 - **Multiple methods**: add more `interface`s and `methods`; the codegen produces one register-handler per method.
 - **Capabilities (interface returned from a method)**: `interface` types are first-class in Cap'n Proto. Return one from a method, the client gets a typed handle and can call it back. See [`test/rpc.test.mjs`](../test/rpc.test.mjs) for a worked example.
-- **Streaming responses**: see `cap.callStream()` and `registry.registerStream()` — async generators on the server, async iterables on the client.
+- **Streaming responses**: see `cap.callStream()` and `registry.registerStream()`. Async generators on the server, async iterables on the client.
 - **Browser client**: replace `connectWebSocket` with the same call against your hosted server's wss:// endpoint. The wasm fetches as a separate asset (42 KB gzip).
 - **REST instead of RPC**: write a TypeScript interface with `@rest` directives and use `npx capnwasm gen` against it. See the [REST runtime section](../README.md#rest-runtime-details).

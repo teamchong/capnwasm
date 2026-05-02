@@ -2,8 +2,8 @@
 //
 // In a production deployment this file would be emitted by a `capnp compile
 // -ojs` plugin (analogous to capnp's existing C++/Rust/Go plugins). It is
-// hand-written here as the demonstration of what users *would* write —
-// or generate — to access the wasm at full Cap'n Proto speed.
+// hand-written here as the demonstration of what users *would* write -
+// or generate. To access the wasm at full Cap'n Proto speed.
 //
 // The shape is: integer-indexed wasm calls (no string lookups) wrapped in
 // real JS getters (no Proxy traps). Each `.field0` access is a normal
@@ -32,7 +32,7 @@ const FIELD_COUNT = 32;
  *
  * Each property getter is hand-written here; a codegen plugin would emit
  * the same shape from typed_schema.capnp. The cost per access is one wasm
- * call by integer index — no string compare, no Proxy trap.
+ * call by integer index. No string compare, no Proxy trap.
  */
 export class WideUserDataReader {
   #cpp;

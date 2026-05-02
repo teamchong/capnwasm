@@ -14,14 +14,14 @@ export interface CapnwasmPluginOptions {
    * `.turbo`, and `.git`.
    *
    * `.ts` files (with `@rest` directives) and OpenAPI specs (`.yaml` /
-   * `.json`) must be listed explicitly — they are not auto-discovered
+   * `.json`) must be listed explicitly. They are not auto-discovered
    * because most files with those extensions are not capnwasm schemas.
    */
   schemas?: string | string[];
 
   /**
    * Directory to write generated files into. By default outputs land
-   * next to each schema source — `schemas/user.capnp` produces
+   * next to each schema source. `schemas/user.capnp` produces
    * `schemas/user.capnp.gen.mjs` and `schemas/user.capnp.gen.d.ts`.
    *
    * Resolved relative to Vite's project root.
@@ -40,7 +40,7 @@ export interface CapnwasmPluginOptions {
   /**
    * If `true` (the default), a codegen failure during the initial
    * `buildStart` pass aborts the build with a single error listing every
-   * schema that failed. Set to `false` to log errors but continue —
+   * schema that failed. Set to `false` to log errors but continue -
    * useful when one schema in a monorepo is broken and you want the
    * rest to still build.
    *

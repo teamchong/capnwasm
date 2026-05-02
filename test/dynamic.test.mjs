@@ -3,7 +3,7 @@
 //
 // The schema descriptor for the dynamic reader is hand-written from the same
 // `Primitives` shape that conformance_schema.gen.mjs codegens. The dynamic
-// API has no codegen step — schema lives as plain data, the wasm runtime
+// API has no codegen step. Schema lives as plain data, the wasm runtime
 // stays the same.
 
 import { test, before } from "node:test";
@@ -40,7 +40,7 @@ before(async () => {
 });
 
 // Mirror PrimitivesReader._FIELDS in dynamic-friendly form. Built by hand to
-// prove the dynamic API is usable without codegen — every entry is what a
+// prove the dynamic API is usable without codegen. Every entry is what a
 // schema-as-data consumer would write.
 const PrimitivesSchema = defineSchema({
   u8:        { kind: "uint8",   offset: 0   },
@@ -136,7 +136,7 @@ test("dynamic schema can be derived from the codegen _FIELDS shape", () => {
   assert.equal(got.text, "hello");
 });
 
-// Hand-crafted Post message with scores=[10, 20, 30] — same bytes
+// Hand-crafted Post message with scores=[10, 20, 30]. Same bytes
 // list.test.mjs uses to verify codegen list reads. We use them here to
 // verify the dynamic reader's list-of-primitive support produces the
 // same array.
@@ -297,9 +297,9 @@ function buildItemList() {
   // Format = struct ptr with B=element count. dataWords=1, ptrWords=0.
   dv.setUint32(24, 2 << 2, true);   // B = count = 2 (two elements)
   dv.setUint32(28, 1, true);         // dataWords=1, ptrWords=0
-  // Word 3 (bytes 32-39): element 0 data — uint32 id = 1.
+  // Word 3 (bytes 32-39): element 0 data. Uint32 id = 1.
   dv.setUint32(32, 1, true);
-  // Word 4 (bytes 40-47): element 1 data — uint32 id = 2.
+  // Word 4 (bytes 40-47): element 1 data. Uint32 id = 2.
   dv.setUint32(40, 2, true);
   return bytes.subarray(0, 48);  // segSize 5 = bytes 8..47, frame 0..47
 }
@@ -404,7 +404,7 @@ test("buildDynamic: data fields take Uint8Array, reject other types", () => {
   assert.deepEqual(Array.from(r.get("body")), [1, 2, 3, 4]);
 });
 
-test("buildDynamic: finalize is one-shot — second call throws", () => {
+test("buildDynamic: finalize is one-shot. Second call throws", () => {
   const b = buildDynamic(cpp, UserSchemaWithDims);
   b.set("active", false);
   b.set("name", "");

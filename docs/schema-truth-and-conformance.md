@@ -1,7 +1,7 @@
 # Schema truth and conformance: where capnwasm fits
 
 > Long-term thinking on schemas, generated SDKs, and runtime
-> conformance — and an honest read on which pieces capnwasm provides,
+> conformance. And an honest read on which pieces capnwasm provides,
 > which it doesn't, and which gaps still need someone to build.
 
 ## The long-term shape
@@ -62,7 +62,7 @@ What that audit loop has to surface, per operation:
 - "This operation's runtime response shape has drifted from the schema."
 - "This generated surface differs from the canonical operation manifest."
 
-This isn't a generation problem. It's a **conformance** problem —
+This isn't a generation problem. It's a **conformance** problem -
 "the schema says X; does the runtime actually do X?" Conformance is
 what makes the rest of the pipeline trustworthy.
 
@@ -101,11 +101,11 @@ bin/capnwasm.mjs (CLI)
    └─► (planned: contract test harness)
 ```
 
-The `.ts` and OpenAPI inputs feed the same model — REST clients
+The `.ts` and OpenAPI inputs feed the same model. REST clients
 generate from `@rest`-annotated TypeScript interfaces or from OpenAPI
 YAML, with the same internal representation as `.capnp`-derived RPC
 methods. The "manifest" in the long-term plan above maps almost 1:1
-onto capnwasm's internal struct model — codegen, codegen, codegen, all
+onto capnwasm's internal struct model. Codegen, codegen, codegen, all
 from one source of truth.
 
 ### Wire-format conformance (today)
@@ -126,7 +126,7 @@ That's a different kind of guarantee than "this SDK was generated
 from a schema and we hope it agrees with the runtime." For
 **capnwasm-generated clients talking to any Cap'n Proto peer**, the
 schema, the wire format, the decoder, and the encoder are all
-descended from the same source — by construction, not by audit.
+descended from the same source. By construction, not by audit.
 
 ### Operation manifest export (today)
 
@@ -138,7 +138,7 @@ npx capnwasm manifest api.ts -o -                 # stdout (TS @rest source)
 
 One canonical JSON envelope across all three input formats. Same
 shape whether the source is `.capnp`, a `@rest`-annotated TypeScript
-interface, or an OpenAPI spec — downstream tools (drift detectors,
+interface, or an OpenAPI spec. Downstream tools (drift detectors,
 mock generators, doc generators, MCP servers, contract test
 harnesses) only ever have to implement one parser:
 
@@ -194,7 +194,7 @@ harnesses) only ever have to implement one parser:
 @-directives can plumb owner team, repo URL, examples, deprecation
 flags, safe-to-test flags, and so on without bumping
 `manifestVersion`. Interface IDs are normalized to lowercase
-`0x`-prefixed hex strings — not numbers — so JS consumers don't lose
+`0x`-prefixed hex strings. Not numbers. So JS consumers don't lose
 precision on 64-bit IDs greater than 2^53.
 
 ### Generated contract test harness (today)
@@ -208,7 +208,7 @@ node --test user.contract.test.mjs
 Reads a manifest and emits a runnable Node `--test` file. Every capnp
 RPC method gets a test that exercises it end-to-end against an
 in-process mock server (default: paired-memory transport with
-default-response handlers built from the manifest itself — zero
+default-response handlers built from the manifest itself. Zero
 infrastructure). Override the target to run against a real endpoint:
 
 ```bash
@@ -218,7 +218,7 @@ CAPNWASM_HARNESS_TARGET=ws://staging.example.com/rpc \
 
 REST methods land in the same harness file but need an explicit
 target (a generic mock REST server can't be synthesized from a
-manifest — OpenAPI declares response shapes, not values, and arbitrary
+manifest. OpenAPI declares response shapes, not values, and arbitrary
 handler logic is out of scope for a manifest):
 
 ```bash
@@ -287,7 +287,7 @@ trap this whole framing is meant to avoid:
   language-portable (the upstream toolchain has C++/Rust/Go/Python
   generators), but capnwasm doesn't bundle those. If your platform
   needs four SDKs, you use capnwasm for the JS one and the upstream
-  generators for the others — both backed by the same `.capnp`.
+  generators for the others. Both backed by the same `.capnp`.
 
 ## Where this points
 
@@ -298,8 +298,8 @@ generation step (one schema → typed clients, runtime, dynamic readers)
 and the conformance guarantee (the same C++ runtime everywhere, no
 schema/runtime drift by construction).
 
-The first third — making the upstream schemas truthful, building the
-audit loop, generating runnable contract tests — is where the
+The first third. Making the upstream schemas truthful, building the
+audit loop, generating runnable contract tests. Is where the
 ecosystem still needs work. The schema-as-truth thesis only pays off
 when the schemas actually are true; until then you need the audit
 layer to surface the lies and a contract harness to keep new
@@ -308,11 +308,11 @@ generations honest.
 For capnwasm specifically, the obvious next steps that would tighten
 the conformance story:
 
-- ~~**Emit the operation manifest as JSON.**~~ **Done** — see the
+- ~~**Emit the operation manifest as JSON.**~~ **Done**. See the
   `npx capnwasm manifest` section above and `js/manifest.mjs`. One
   shape across `.capnp`, TypeScript `@rest`, and OpenAPI sources;
   consumed by the harness without re-parsing source schemas.
-- ~~**Generate a contract test harness from the schema.**~~ **Done** —
+- ~~**Generate a contract test harness from the schema.**~~ **Done** -
   see `npx capnwasm harness` above and `js/harness.mjs`. Capnp RPC
   methods get an in-process-mock test by default (zero infra), or
   point at a real WS endpoint via `CAPNWASM_HARNESS_TARGET`. REST
@@ -320,7 +320,7 @@ the conformance story:
   Generated tests are runnable with `node --test` and pass against
   the in-process mock today (see `test/harness.test.mjs` for the
   end-to-end smoke).
-- ~~**Round-trip drift probe.**~~ **Done** — see `npx capnwasm probe`
+- ~~**Round-trip drift probe.**~~ **Done**. See `npx capnwasm probe`
   section above and `js/probe.mjs`. Reads manifest, exercises every
   operation against the live target, emits per-operation drift report
   with non-zero exit code on any drift (CI-gateable). REST gets full
@@ -346,7 +346,7 @@ npx capnwasm probe    user.manifest.json --target $RPC_URL
   how to use it, where it wins and loses on perf.
 - [vs-capnweb](vs-capnweb.md) is the per-workload comparison with the
   end-to-end render bench appended.
-- This doc is the long-term framing — what an honest schema-as-truth
+- This doc is the long-term framing. What an honest schema-as-truth
   pipeline looks like and which pieces capnwasm provides today.
 
 The point of writing all three is the same: don't oversell, don't

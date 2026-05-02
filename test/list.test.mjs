@@ -55,7 +55,7 @@ test("List<UInt32>: length + at(i) + iteration over a hand-crafted message", () 
   // The simplest approach: use the wasm Builder via cpp_any_builder to
   // build the parent struct, then patch in the list bytes directly.
   // Honest cost: this test cheats slightly because we don't ship a list
-  // builder yet — the test focuses on the READ path which is what the
+  // builder yet. The test focuses on the READ path which is what the
   // codegen for List<X> emits.
   //
   // Hand-craft the bytes (1 segment):
@@ -129,7 +129,7 @@ test("List<UInt32>: length + at(i) + iteration over a hand-crafted message", () 
 test("List<Struct>: length + at(i) returns typed Reader", async () => {
   // Use the capnp compiler in wasm to produce a real Post with tags.
   // We don't have a list-Builder yet, so we produce the bytes via
-  // cpp_conformance_serialize style — but conformance schema isn't ours.
+  // cpp_conformance_serialize style. But conformance schema isn't ours.
   // Instead, we just verify that the empty-list case works correctly
   // (length === 0, at(0) returns undefined). Real list-of-struct
   // construction comes online with the list-Builder follow-up.
@@ -186,7 +186,7 @@ test("List<Struct>: at(i) reads correct fields for every element, not just at(0)
   const t1 = tags.at(1); assert.equal(t1.name, "beta");  assert.equal(t1.weight, 20);
   const t2 = tags.at(2); assert.equal(t2.name, "gamma"); assert.equal(t2.weight, 30);
 
-  // for..of iteration uses the same at() — should also walk correctly.
+  // for..of iteration uses the same at(). Should also walk correctly.
   const collected = [];
   for (const t of tags) collected.push({ name: t.name, weight: t.weight });
   assert.deepEqual(collected, [

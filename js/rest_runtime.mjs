@@ -2,7 +2,7 @@
 //
 // The `gen` command emits a small per-method dispatch shim; this module is
 // the engine those shims call into. Everything is opt-in and configurable
-// — the generated client passes a `cfg` snapshot built from the user's
+//. The generated client passes a `cfg` snapshot built from the user's
 // constructor options. No global state.
 //
 // Supports:
@@ -150,7 +150,7 @@ function isPassthroughBody(b) {
 function encodeBody(body, encoding) {
   if (body === undefined || body === null) return { body: null, contentType: null };
   if (encoding === "raw" || isPassthroughBody(body)) {
-    // Native body type — fetch handles content-type for FormData/URLSearchParams.
+    // Native body type. Fetch handles content-type for FormData/URLSearchParams.
     return { body, contentType: null };
   }
   if (encoding === "form") {
@@ -192,7 +192,7 @@ async function decodeResponse(res, decode) {
   return await res.text();
 }
 
-/** Try to parse an error response body — JSON if possible, else text. */
+/** Try to parse an error response body. JSON if possible, else text. */
 async function readErrorBody(res) {
   try {
     const ct = res.headers.get("content-type") ?? "";
@@ -236,7 +236,7 @@ function shouldRetry(retries, err, response, attempt) {
 
 /**
  * Issue one HTTP call with the full pipeline: auth, headers, body encoding,
- * timeout, retries, interceptors, response decoding. Internal — generated
+ * timeout, retries, interceptors, response decoding. Internal. Generated
  * code calls this with a `cfg` (frozen client opts) and `req` (per-method
  * descriptor). End users should only see typed methods on the client.
  */
@@ -343,7 +343,7 @@ function joinUrl(base, path) {
  *           "next_cursor"); opts.itemsField names the array field.
  *
  *   page:   opts.pageRequestParam ("page"), opts.itemsField ("items"),
- *           opts.totalField ("total") — increments page until items is empty
+ *           opts.totalField ("total"). Increments page until items is empty
  *           or page > total.
  *
  * For full control, callers can drop down to `_restCall` directly.

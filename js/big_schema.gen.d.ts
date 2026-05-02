@@ -1,4 +1,4 @@
-// Generated from big_schema.capnp by capnwasm-gen — do not edit by hand.
+// Generated from big_schema.capnp by capnwasm-gen. Do not edit by hand.
 
 import type { CapnCpp } from "capnwasm";
 

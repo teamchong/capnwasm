@@ -10,7 +10,7 @@
 //   console.log(m.snapshot());
 //
 // For real production, plug session.onMetric directly into your
-// OTel/Prometheus client instead — this is a learning aid, not a
+// OTel/Prometheus client instead. This is a learning aid, not a
 // production aggregator. (No percentiles, no histograms, no decay.)
 
 export class MetricsAggregator {

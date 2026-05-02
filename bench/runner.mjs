@@ -121,7 +121,7 @@ async function main() {
     console.log(row.map((c) => String(c).padStart(10)).join(""));
   }
 
-  // Typed-schema bench — the realistic Cap'n Proto deployment shape.
+  // Typed-schema bench. The realistic Cap'n Proto deployment shape.
   if (browserResults.typed) {
     const t = browserResults.typed;
     console.log("\n" + sep);
@@ -138,13 +138,13 @@ async function main() {
     console.log(`  wire bytes:                   ${String(t.cpp_bytes).padStart(10)}  ${String(t.cwb_bytes).padStart(10)}`);
   }
 
-  // Lazy access table — only fixtures where it makes sense.
+  // Lazy access table. Only fixtures where it makes sense.
   const lazyRows = Object.entries(browserResults.perf ?? {})
     .filter(([, p]) => p.lazy_supported);
   if (lazyRows.length > 0) {
     console.log("\n" + sep);
     console.log("LAZY ACCESS  (decode + read 3 named fields)");
-    console.log("This is the access pattern Cap'n Proto's wire format is designed for —");
+    console.log("This is the access pattern Cap'n Proto's wire format is designed for -");
     console.log("read what you need, skip what you don't. capnweb still pays full JSON.parse.");
     console.log(sep);
     const head2 = ["fixture", "cpp lazy3", "cwb (decode+3)", "speedup"];

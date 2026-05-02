@@ -36,7 +36,7 @@ before(async () => {
   gen = await import(pathToFileURL(join(tmp, "contact.gen.mjs")).href);
 });
 
-// Helper: build a Contact via raw capnp bytes — write directly into cpp_in.
+// Helper: build a Contact via raw capnp bytes. Write directly into cpp_in.
 // Layout: 1-segment frame, root struct (1 data word for discriminant + name ptr).
 // Easier: use the codegen's Builder.
 function buildContactBytes(setUnion) {
@@ -68,7 +68,7 @@ test("union: is<Variant>() guards exist for all variants", () => {
 });
 
 test("union: writing a variant via the Builder auto-sets the discriminant", () => {
-  // No more raw wasm calls — the Builder's setter for `email` writes the
+  // No more raw wasm calls. The Builder's setter for `email` writes the
   // discriminant automatically before writing the value.
   const b = new gen.ContactBuilder(cpp);
   b.name = "Alice";

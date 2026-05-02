@@ -7,7 +7,7 @@
 //
 //   - The generated `.gen.mjs` and `.gen.d.ts` show up next to each
 //     schema (default behaviour, no `outDir`).
-//   - The generated module is reachable from the user's entry — it ends
+//   - The generated module is reachable from the user's entry. It ends
 //     up in the build output.
 //   - Re-running the build is idempotent (writeIfChanged actually skips
 //     the rewrite, so file mtimes don't churn).
@@ -28,14 +28,14 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
 
-// Vite lives under web/node_modules — that's where the docs site
+// Vite lives under web/node_modules. That's where the docs site
 // installed it. Resolve to its programmatic API directly so this test
 // doesn't need a top-level vite dep.
 let vite;
 try {
   vite = await import(resolve(ROOT, "web/node_modules/vite/dist/node/index.js"));
 } catch (e) {
-  console.error("could not import Vite from web/node_modules — run `npm install` in web/", e);
+  console.error("could not import Vite from web/node_modules. Run `npm install` in web/", e);
   throw e;
 }
 
@@ -106,7 +106,7 @@ globalThis.__capnwasm_test = { TagReader, AuthorReader };
 `;
 
 const ENTRY_NO_GEN = `
-// Plain entry — used when we expect the plugin to not produce gen files.
+// Plain entry. Used when we expect the plugin to not produce gen files.
 globalThis.__capnwasm_test = { ok: true };
 `;
 
@@ -187,7 +187,7 @@ export default ({
     "main.mjs": ENTRY_THAT_IMPORTS_GEN,
     "schemas/tag.capnp": VALID_SCHEMA,
     "schemas/author.capnp": VALID_SCHEMA_2,
-    // .capnp file OUTSIDE the glob — explicit list should NOT pick it up.
+    // .capnp file OUTSIDE the glob. Explicit list should NOT pick it up.
     "other/extra.capnp": VALID_SCHEMA,
   });
   try {
@@ -205,7 +205,7 @@ test("vite-plugin: skips node_modules and other ignored dirs in auto-discovery",
   const dir = await makeProject({
     "vite.config.mjs": VITE_CONFIG,
     "main.mjs": ENTRY_NO_GEN,
-    // A schema buried inside node_modules — the plugin must not regenerate
+    // A schema buried inside node_modules. The plugin must not regenerate
     // someone else's package.
     "node_modules/some-pkg/inner.capnp": VALID_SCHEMA,
     "dist/old.capnp": VALID_SCHEMA,

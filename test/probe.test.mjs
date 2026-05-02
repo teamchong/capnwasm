@@ -1,4 +1,4 @@
-// Drift probe — manifest-vs-runtime conformance check.
+// Drift probe. Manifest-vs-runtime conformance check.
 //
 // End-to-end: spin up real capnp + REST mocks, probe them, assert the
 // report content matches what we sent back.

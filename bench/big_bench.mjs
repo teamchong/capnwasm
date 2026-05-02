@@ -1,4 +1,4 @@
-// Properly-measured bench using BigUser (256 fields) — workloads are big
+// Properly-measured bench using BigUser (256 fields). Workloads are big
 // enough that timings are in tens of microseconds, well above timer noise.
 //
 // Methodology:
@@ -83,7 +83,7 @@ async function run() {
     return v.field0.length + v.field63.length + v.field127.length +
            v.field191.length + v.field255.length;
   };
-  // Raw wasm calls — does NOT materialize JS strings. Useful as a lower bound
+  // Raw wasm calls. Does NOT materialize JS strings. Useful as a lower bound
   // showing how much of the time is JS-side string materialization vs wasm.
   const cppRead5 = () => {
     cpp_any_open(cppBytes.length);
@@ -113,7 +113,7 @@ async function run() {
   };
 
   // JSON-emit path: wasm walks all fields and writes a JSON object string.
-  // JS does one TextDecoder + JSON.parse — V8's hottest object-construction
+  // JS does one TextDecoder + JSON.parse. V8's hottest object-construction
   // path. Goal: actually beat capnweb on full materialization too.
   const cpp_big_user_emit_json = exp.cpp_big_user_emit_json;
   const SHARED_TEXT_DECODER = new TextDecoder();

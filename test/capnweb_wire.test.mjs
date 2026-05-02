@@ -2,7 +2,7 @@
 // Stand up a capnweb RpcSession in-process, point our JsonWireSession at
 // it via a MessageChannel pair, and verify a method call round-trips.
 //
-// Skips if the local capnweb sibling repo isn't built — the test relies
+// Skips if the local capnweb sibling repo isn't built. The test relies
 // on the dist/ output being present at ../capnweb/dist/index.js.
 
 import { test } from "node:test";

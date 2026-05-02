@@ -95,7 +95,7 @@ function toHex(bytes) {
  *   in signature/cert verification (e.g. verify a JWT signed by a key
  *   that proves the holder is `expected`).
  * @param {boolean} [opts.consumeOnRedeem=false] Drop the entry after
- *   successful redemption — turns the token into a one-shot.
+ *   successful redemption. Turns the token into a one-shot.
  */
 export class InMemoryHandoffStore {
   #map = new Map();

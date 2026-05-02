@@ -80,12 +80,12 @@ const dynamicAll = timeIt("dynamic openDynamic + read 13 fields", N_READ, () => 
     void r.get(k);
   }
 });
-const dynamicPick = timeIt("dynamic pick(13 names) — batched", N_READ, () => {
+const dynamicPick = timeIt("dynamic pick(13 names). Batched", N_READ, () => {
   const r = openDynamic(cpp, PrimitivesSchema, FIXTURE);
   r.pick(["u8","i8","u16","i16","u32","i32","u64","i64","f32","f64","flag0","text","data"]);
 });
 
-console.log("\n=== Read path (open + read 3 fields — sparse access) ===");
+console.log("\n=== Read path (open + read 3 fields. Sparse access) ===");
 const N_PICK = 100_000;
 const codegen3 = timeIt("codegen pick(['u32','flag0','text'])", N_PICK, () => {
   const r = openPrimitives(cpp, FIXTURE);

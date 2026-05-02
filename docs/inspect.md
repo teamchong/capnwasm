@@ -1,6 +1,6 @@
 # Wire inspector
 
-A standalone Cap'n Proto wire inspector hosted as a single file on the docs site. **Not part of the npm package** — you don't pay for it in production. Paste one line into DevTools when you need to debug what's actually on the wire.
+A standalone Cap'n Proto wire inspector hosted as a single file on the docs site. **Not part of the npm package**. You don't pay for it in production. Paste one line into DevTools when you need to debug what's actually on the wire.
 
 ## One line
 
@@ -75,14 +75,14 @@ For most apps the dynamic-import form works fine. GitHub Pages serves with `Acce
 
 ## Why it's not in the npm package
 
-- Production users never need it — debug-only weight shouldn't ship in `capnwasm`.
+- Production users never need it. Debug-only weight shouldn't ship in `capnwasm`.
 - A hosted single file is more discoverable from a stack trace ("paste this URL into your console").
-- Versioning is implicit — the docs-site URL always serves the latest source.
+- Versioning is implicit. The docs-site URL always serves the latest source.
 
 If you want the file in your repo for offline use, copy it from `web/public/inspect.js` (it's checked in alongside the docs site assets) or grab it from the public URL once and commit it locally.
 
 ## Source
 
-`js/inspect.mjs` in the main repo. Pure JS, no dependencies, ~17 KB / 5.5 KB gz. Walks the Cap'n Proto wire format directly — no wasm needed for the schemaless path. The schema-aware path delegates to whatever generated reader you pass in, which uses the wasm runtime you've already loaded.
+`js/inspect.mjs` in the main repo. Pure JS, no dependencies, ~17 KB / 5.5 KB gz. Walks the Cap'n Proto wire format directly. No wasm needed for the schemaless path. The schema-aware path delegates to whatever generated reader you pass in, which uses the wasm runtime you've already loaded.
 
 11 tests in `test/inspect.test.mjs` cover schemaless walk, schema-aware decode, every input shape, malformed input rejection, and the depth guard.

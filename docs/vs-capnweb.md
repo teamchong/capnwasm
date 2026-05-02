@@ -18,7 +18,7 @@ Numbers from in-process Node bench (Apple Silicon, M-series, Node 22). Run `node
 | Wire bytes, 64 KB binary blob | **65.9 KB** | 468 KB | 7.1× smaller |
 | Wire bytes, 4 KB text | **4.5 KB** | 8.3 KB | 1.9× smaller |
 | Sparse field access (read 3 of 32) | 27 µs | 26 µs | tied (within noise) |
-| Cap-passing (`getChild` + echo) | 12.49 µs | 12.47 µs | tied (was capnweb 1.1× faster — closed the gap) |
+| Cap-passing (`getChild` + echo) | 12.49 µs | 12.47 µs | tied (was capnweb 1.1× faster - closed the gap) |
 
 **This pass shaved 34% off tiny-call latency, closed the cap-passing gap.** The compounding boundary-call reductions + per-call allocation cleanups:
 
@@ -33,16 +33,16 @@ Numbers from in-process Node bench (Apple Silicon, M-series, Node 22). Run `node
 - Shared frozen `EMPTY_CAPS` for zero-cap Returns
 - `registry.dispatch` returns the bare handler (no per-call binding closure)
 
-Per-RPC wasm crossings dropped from ~9 to ~5. The remaining floor on tight loops is dominated by JS-side Promise scheduling — past microsecond cuts there require either an awaitable-batch API change or splitting `#handleCall` into sync-fast + async-slow dispatchers.
+Per-RPC wasm crossings dropped from ~9 to ~5. The remaining floor on tight loops is dominated by JS-side Promise scheduling. Past microsecond cuts there require either an awaitable-batch API change or splitting `#handleCall` into sync-fast + async-slow dispatchers.
 
 capnwasm consistently beats capnweb on:
-- **Throughput** — once you batch calls (which most apps do), capnwasm pulls 2-3× ahead.
-- **Big payloads** — binary wire skips the base64-in-JSON tax entirely.
-- **Wire size** — for binary data of any kind, capnwasm sends the bytes; capnweb base64-encodes.
+- **Throughput**. Once you batch calls (which most apps do), capnwasm pulls 2-3× ahead.
+- **Big payloads**. Binary wire skips the base64-in-JSON tax entirely.
+- **Wire size**. For binary data of any kind, capnwasm sends the bytes; capnweb base64-encodes.
 
 capnweb wins or ties on:
-- **Cap-passing fast path** — ~5% slower in capnwasm. Doesn't matter unless you're chaining caps deep.
-- **Sparse field access** — within noise.
+- **Cap-passing fast path**. ~5% slower in capnwasm. Doesn't matter unless you're chaining caps deep.
+- **Sparse field access**. Within noise.
 
 ## Where capnwasm wins (HTTP batch transport)
 
@@ -56,7 +56,7 @@ capnweb wins or ties on:
 
 Burst 100 picked up wins from two passes: (1) WebSocket-side boundary-call reductions (lower per-call wasm crossings, fewer JS allocations), and (2) a stateless mode flag that skips Finish/Release frame generation. Was tied at session start; now 1.48× faster than capnweb.
 
-The 29× sequential gap is structural, not implementation: capnweb's `BatchClientTransport` waits for a `setTimeout(0)` macrotask before sending so multiple in-tick calls coalesce into one POST. That gives every sequential `await` ~1 ms of macrotask delay before any bytes hit the wire. capnwasm uses `queueMicrotask`, so a single `await` round-trips fast. Burst workloads amortize the macrotask cost — that's the regime where capnweb catches up.
+The 29× sequential gap is structural, not implementation: capnweb's `BatchClientTransport` waits for a `setTimeout(0)` macrotask before sending so multiple in-tick calls coalesce into one POST. That gives every sequential `await` ~1 ms of macrotask delay before any bytes hit the wire. capnwasm uses `queueMicrotask`, so a single `await` round-trips fast. Burst workloads amortize the macrotask cost. That's the regime where capnweb catches up.
 
 ## Where capnwasm loses
 
@@ -76,18 +76,18 @@ falls back to gzip).
 
 | | capnweb gz / br | capnwasm gz / br | ratio gz / br |
 |---|---|---|---|
-| Whole library, RPC-ready | **21 / 18 KB** | — | — |
-| Wasm runtime only (read capnp messages) | n/a | **34 / 28 KB** | — |
+| Whole library, RPC-ready | **21 / 18 KB** | - | - |
+| Wasm runtime only (read capnp messages) | n/a | **34 / 28 KB** | - |
 | WebSocket RPC (transport + sessions + caps) | 21 / 18 KB | **39 / 33 KB** | 1.9× / 1.8× |
 | Typed proxy + HTTP-batch (typical browser shape) | 21 / 18 KB | **41 / 35 KB** | 1.95× / 1.96× |
 | All four transports + typed + dynamic | 21 / 18 KB | **47 / 40 KB** | 2.2× / 2.2× |
 
-Brotli does **not** close the gap meaningfully — capnweb compresses about
+Brotli does **not** close the gap meaningfully. Capnweb compresses about
 as well with brotli as we do, so the ratios stay roughly constant. The
 absolute on-wire delta (~17 KB at the typical-shape line) is the cost of
 shipping a real wasm runtime.
 
-33 KB of every capnwasm scenario is the wasm runtime — a real Cap'n Proto C++ implementation. The JS code itself is small after two-pass minification (esbuild → terser): rpc.mjs is 5.3 KB gz, each transport is 0.6–1.4 KB gz, the typed proxy is 0.9 KB. The slim browser wasm dropped from 39 → 33 KB across these compounding passes: moving the tape codec out of production, stripping KJ assertion strings (both condition text AND caller-supplied `__VA_ARGS__` messages, which alone shaved 3.9 KB gz), auditing the export list against actual JS callers (10 dead RPC summary getters whose work `cpp_rpc_decode` now does inline), switching to WASI reactor mode, replacing default-constructed AnyStruct::Reader stack with a placement-new union, and turning `KJ_LOG`/`KJ_DBG` into no-ops in the strip header (they reach formatted-logging machinery our wasm has nowhere to send).
+33 KB of every capnwasm scenario is the wasm runtime. A real Cap'n Proto C++ implementation. The JS code itself is small after two-pass minification (esbuild → terser): rpc.mjs is 5.3 KB gz, each transport is 0.6–1.4 KB gz, the typed proxy is 0.9 KB. The slim browser wasm dropped from 39 → 33 KB across these compounding passes: moving the tape codec out of production, stripping KJ assertion strings (both condition text AND caller-supplied `__VA_ARGS__` messages, which alone shaved 3.9 KB gz), auditing the export list against actual JS callers (10 dead RPC summary getters whose work `cpp_rpc_decode` now does inline), switching to WASI reactor mode, replacing default-constructed AnyStruct::Reader stack with a placement-new union, and turning `KJ_LOG`/`KJ_DBG` into no-ops in the strip header (they reach formatted-logging machinery our wasm has nowhere to send).
 
 If your bundle budget is tight and you don't need binary wire interop, **capnweb is the smaller choice**. There is no way for capnwasm to reach 21 KB without giving up the wasm runtime, which is what makes the rest of the wins possible.
 
@@ -103,13 +103,13 @@ Time-to-first-result, fresh Node 22 process, mean of 8 runs.
 
 Earlier releases pegged capnwasm's init at ~11 ms because the loader did `instanceof Response`, which lazy-initializes Node's built-in undici fetch (~10 ms). The fix is duck-typing: never reach for `Response` unless the source is clearly a URL/string.
 
-Browser is a different story. With an empty HTTP cache the first visit pays network + streaming compile — about **20–25 ms** on a desktop with localhost-served wasm; warm reloads (V8 code-cache hit) drop to **2–4 ms**. capnweb's 21 KB JS parses in ~1–3 ms either way. So on a fresh tab capnwasm is still measurably slower because the wasm bytes are larger; once the bundle is cached, the gap is small.
+Browser is a different story. With an empty HTTP cache the first visit pays network + streaming compile. About **20–25 ms** on a desktop with localhost-served wasm; warm reloads (V8 code-cache hit) drop to **2–4 ms**. capnweb's 21 KB JS parses in ~1–3 ms either way. So on a fresh tab capnwasm is still measurably slower because the wasm bytes are larger; once the bundle is cached, the gap is small.
 
 If you're optimizing for a single first request from an empty browser cache, **capnweb starts replying sooner**. In Node, in long-running processes, or after the first cache hit in the browser, the cold-start gap is gone.
 
 ### 3. Schema friction
 
-capnwasm requires a Cap'n Proto schema — even when generating a TypeScript-only client you go through `npx capnwasm gen`. capnweb works on arbitrary JS values: you call methods, JSON-shaped data goes over the wire, no schema step.
+capnwasm requires a Cap'n Proto schema. Even when generating a TypeScript-only client you go through `npx capnwasm gen`. capnweb works on arbitrary JS values: you call methods, JSON-shaped data goes over the wire, no schema step.
 
 If you control both ends and never want to define a schema, **capnweb is friction-free**. If you want types, IDE completion, wire-format stability across versions, and interop with C++/Rust/Go peers, the schema is the price you pay for that.
 
@@ -119,7 +119,7 @@ If you control both ends and never want to define a schema, **capnweb is frictio
 |---|---|---|
 | `getChild → call` round-trip | 13 µs | 12 µs |
 
-Roughly tied — capnwasm is ~5% slower on the cap-passing fast path. Doesn't matter unless you're doing very deep cap chains; both are dominated by network RTT in any real deployment.
+Roughly tied. Capnwasm is ~5% slower on the cap-passing fast path. Doesn't matter unless you're doing very deep cap chains; both are dominated by network RTT in any real deployment.
 
 ### 5. Single-call latency over real network: invisible
 
@@ -146,8 +146,8 @@ const r = await api.someMethod({ arg: 1 });
 
 Two lines either way. The differences:
 
-- **capnweb gets types from a TypeScript generic** — your `MyApi` interface is a TS type that lives only in source.
-- **capnwasm gets types from codegen output** — `MyApi_INTERFACE` is a real runtime value emitted from your `.capnp` schema by `npx capnwasm gen`. The same schema is portable to other Cap'n Proto implementations (C++, Rust, Go, Python, …).
+- **capnweb gets types from a TypeScript generic**. Your `MyApi` interface is a TS type that lives only in source.
+- **capnwasm gets types from codegen output**. `MyApi_INTERFACE` is a real runtime value emitted from your `.capnp` schema by `npx capnwasm gen`. The same schema is portable to other Cap'n Proto implementations (C++, Rust, Go, Python, …).
 
 If your stack is JS-only and the schema is "whatever shape my methods happen to have," capnweb's TS-generic approach is more direct. If your schema is a contract that other languages need to consume, capnwasm's codegen artifact is the lever.
 
@@ -163,7 +163,7 @@ If your stack is JS-only and the schema is "whatever shape my methods happen to 
 The two HTTP transports cover the most common Worker shapes:
 
 - **HTTP batch** is for stateless RPC: each request is a fresh server-side session, the response is a batch of frames, then teardown. Cheaper Worker billing (no idle WebSocket connection), no upgrade dance, plays with HTTP/2 multiplexing. Use this when the browser is making request/response calls with no need for server push.
-- **HTTP streaming** is for server push: client posts an initial batch, server keeps the response body open and streams subsequent frames as length-prefixed binary chunks. Use this for subscriptions, capability streams, and progress feeds. Limitation: this transport is one-shot client→server (after the initial POST, additional client→server calls require a new POST) — fetch upload streaming is HTTP/2-only and isn't reliable across browsers.
+- **HTTP streaming** is for server push: client posts an initial batch, server keeps the response body open and streams subsequent frames as length-prefixed binary chunks. Use this for subscriptions, capability streams, and progress feeds. Limitation: this transport is one-shot client→server (after the initial POST, additional client→server calls require a new POST). Fetch upload streaming is HTTP/2-only and isn't reliable across browsers.
 
 For full bidirectional, long-lived RPC where either side can initiate, use WebSocket.
 
@@ -186,19 +186,19 @@ Each row was a real HN-thread concern about capnweb. Both libraries' answers:
 | Multi-language wire interop | JS-only | proven against upstream `capnp` 1.3.0 (`test/interop.test.mjs`) |
 | Schema evolution (add fields without breaking old peers) | no schema, no evolution | proven both directions of skew (`test/schema_evolution.test.mjs`) |
 
-These are 12 separate gaps capnweb shares but doesn't address. capnwasm shipped fixes for all of them as opt-in subpath imports — they don't bloat the default bundle.
+These are 12 separate gaps capnweb shares but doesn't address. capnwasm shipped fixes for all of them as opt-in subpath imports. They don't bloat the default bundle.
 
 ## Where REST/JSON loses to both
 
-For completeness — neither library is competing with raw `fetch()` on the protocol axis, but it's worth showing what JSON-without-RPC costs:
+For completeness. Neither library is competing with raw `fetch()` on the protocol axis, but it's worth showing what JSON-without-RPC costs:
 
 - **No type safety** without runtime validation (zod/ajv etc)
 - **No bidirectional streaming** without inventing your own protocol
-- **No capability passing** — every request needs an auth token
-- **No promise pipelining** — sequential awaits cost you N round-trips
+- **No capability passing**. Every request needs an auth token
+- **No promise pipelining**. Sequential awaits cost you N round-trips
 - **Bytes**: 64 KB binary becomes ~88 KB after base64 + JSON escaping
 
-If your app fits inside "fetch some data, render it, occasionally POST" then plain REST is fine and probably what you should use. Both capnweb and capnwasm are for apps that need RPC semantics — capability-secure objects, pipelining, streaming, wire-compatible types.
+If your app fits inside "fetch some data, render it, occasionally POST" then plain REST is fine and probably what you should use. Both capnweb and capnwasm are for apps that need RPC semantics. Capability-secure objects, pipelining, streaming, wire-compatible types.
 
 ## When to choose what
 
@@ -233,13 +233,13 @@ by render, the DOM mutation, and forced layout. The
 `cd web && npm run dev`, open `/render-bench.html`, click Run. Numbers
 below are warm medians from one run on Apple Silicon, Chromium prod
 build, localhost (10 iter per cell). Cold is the first call after the
-transport opens — handshake + JIT + wasm fetch all baked in.
+transport opens. Handshake + JIT + wasm fetch all baked in.
 
 ### capnwasm wins
 
 | workload | capnwasm/WS | capnweb/WS | note |
 |---|---|---|---|
-| Binary blob 256 KB round-trip | **1.0 ms** | 2.3 ms | 2.3× — raw bytes vs base64 in JSON |
+| Binary blob 256 KB round-trip | **1.0 ms** | 2.3 ms | 2.3× - raw bytes vs base64 in JSON |
 | Sparse field access (50× calls, read 3 of 32) | **2.6 ms** | 3.2 ms | only crosses wasm 3× per call; capnweb materializes all 32 |
 | List render 100 records | **1.2 ms** | 1.4 ms | schema-typed binary decode + DOM build |
 
@@ -247,7 +247,7 @@ transport opens — handshake + JIT + wasm fetch all baked in.
 
 | workload | capnweb/WS | capnwasm/WS | note |
 |---|---|---|---|
-| Re-read storm (1000× field reads after one fetch) | **200 µs** | 400 µs | 2× — pure JS reads vs per-read wasm crossing |
+| Re-read storm (1000× field reads after one fetch) | **200 µs** | 400 µs | 2× - pure JS reads vs per-read wasm crossing |
 | List render 1000 records | **8.9 ms** | 9.7 ms | DOM dominates; capnweb's eager parse is "free" amortized |
 
 ### Practically tied (within noise)

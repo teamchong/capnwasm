@@ -1,4 +1,4 @@
-// Generated from example_user.capnp by capnwasm-gen — do not edit by hand.
+// Generated from example_user.capnp by capnwasm-gen. Do not edit by hand.
 
 import type { CapnCpp } from "capnwasm";
 

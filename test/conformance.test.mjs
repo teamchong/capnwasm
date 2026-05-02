@@ -135,21 +135,21 @@ test("Bool fields pack into separate bits without collision", () => {
       }
 });
 
-test("Text — empty, ASCII, UTF-8", () => {
+test("Text. Empty, ASCII, UTF-8", () => {
   for (const s of ["", "hello", "Cap'n Proto: 你好世界 🚀"]) {
     const r = roundTrip({ ...baseline, text: s });
     assert.equal(r.text, s, `text=${JSON.stringify(s)}`);
   }
 });
 
-test("Text — long string (multi-segment territory)", () => {
+test("Text. Long string (multi-segment territory)", () => {
   const s = "x".repeat(8192);
   const r = roundTrip({ ...baseline, text: s });
   assert.equal(r.text.length, s.length);
   assert.equal(r.text, s);
 });
 
-test("Data — empty + binary", () => {
+test("Data. Empty + binary", () => {
   for (const d of [new Uint8Array(0), new Uint8Array([0, 1, 2, 0xff, 0x80])]) {
     const r = roundTrip({ ...baseline, data: d });
     const got = r.data;
@@ -158,7 +158,7 @@ test("Data — empty + binary", () => {
   }
 });
 
-test("emptyText / emptyData — default values present", () => {
+test("emptyText / emptyData. Default values present", () => {
   const r = roundTrip(baseline);
   assert.equal(r.emptyText, "");
   assert.equal(r.emptyData.length, 0);

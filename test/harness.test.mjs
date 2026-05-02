@@ -1,4 +1,4 @@
-// Contract test harness emitter — end-to-end coverage.
+// Contract test harness emitter. End-to-end coverage.
 //
 // The harness's value is that the generated test file is actually
 // runnable and actually passes against an in-process mock. So this
@@ -102,7 +102,7 @@ test("buildHarness: rpcImport overrides the default '<runtime>/rpc' subpath", ()
 
 const tmp = mkdtempSync(join(ROOT, ".tmp-harness-test-"));
 // Best-effort cleanup at process exit. Failure to clean is not a test
-// failure — the directory name pattern is gitignored anyway.
+// failure. The directory name pattern is gitignored anyway.
 process.on("exit", () => { try { rmSync(tmp, { recursive: true, force: true }); } catch {} });
 
 function cleanTestEnv() {
@@ -127,7 +127,7 @@ interface UserService {
   r = spawnSync("node", [CLI, "manifest", schema, "-o", join(tmp, "svc.manifest.json")], { encoding: "utf8" });
   if (r.status !== 0) throw new Error("manifest failed: " + r.stderr);
 
-  // 3) harness (defaults — relies on package self-resolve from inside ROOT)
+  // 3) harness (defaults. Relies on package self-resolve from inside ROOT)
   r = spawnSync("node", [
     CLI, "harness", join(tmp, "svc.manifest.json"),
     "--gen", "./svc.gen.mjs",
@@ -135,7 +135,7 @@ interface UserService {
   ], { encoding: "utf8" });
   if (r.status !== 0) throw new Error("harness failed: " + r.stderr);
 
-  // 4) run the generated harness — must pass.
+  // 4) run the generated harness. Must pass.
   // NODE_TEST_CONTEXT is set when this test is itself running under
   // `node --test`; if we inherit it, the child's TAP reporter routes its
   // output to an IPC channel instead of stdout and we see nothing.
@@ -175,7 +175,7 @@ interface MyAPI {
   ], { encoding: "utf8" });
   if (r.status !== 0) throw new Error("harness failed: " + r.stderr);
 
-  // Run with REST_TARGET unset — the test should skip with the documented message,
+  // Run with REST_TARGET unset. The test should skip with the documented message,
   // not fail. node --test still exits 0 when tests skip.
   // Strip NODE_TEST_CONTEXT (see comment above) so the child's TAP
   // output lands on stdout.

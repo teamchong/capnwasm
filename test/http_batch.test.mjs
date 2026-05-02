@@ -106,7 +106,7 @@ test("http batch: handler that awaits async work still returns full response", a
   const IFC = 0x4242424242424242n;
   const registry = new InterfaceRegistry();
   registry.register(IFC, 0, async (target, ctx) => {
-    // Simulate an upstream fetch — the response should not flush until
+    // Simulate an upstream fetch. The response should not flush until
     // this completes.
     await new Promise(r => setTimeout(r, 25));
     return ctx.paramsBytes();

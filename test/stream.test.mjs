@@ -90,7 +90,7 @@ test("stream: handler that throws surfaces as a rejection on next()", async () =
   client.close();
 });
 
-test("stream: client closes session mid-stream — iterator rejects, no hang", async () => {
+test("stream: client closes session mid-stream. Iterator rejects, no hang", async () => {
   const IFC = 0x4444444444444444n;
   // Server yields slowly enough that the client closes before completion.
   const { client, root } = await setup({
@@ -117,7 +117,7 @@ test("stream: client closes session mid-stream — iterator rejects, no hang", a
   await assert.rejects(it.next(), /session closed/);
 });
 
-test("stream: client breaks out early — server handler still cleans up", async () => {
+test("stream: client breaks out early. Server handler still cleans up", async () => {
   const IFC = 0x5555555555555555n;
   let serverIterations = 0;
   let serverFinallyRan = false;
@@ -259,7 +259,7 @@ test("stream: chunks of varying sizes round-trip byte-perfectly", async () => {
 test("stream: maxQueueSize bounds memory; iterator rejects when exceeded", async () => {
   const IFC = 0x9999999999999999n;
   // Server tries to push 100 chunks as fast as it can. Client sets a
-  // maxQueueSize of 5 and never reads — the queue must reject before all
+  // maxQueueSize of 5 and never reads. The queue must reject before all
   // 100 are buffered.
   const { client, root } = await setup({
     stream: {

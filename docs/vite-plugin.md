@@ -2,7 +2,7 @@
 
 `capnwasm/vite-plugin` makes the codegen step invisible. Drop it into
 `vite.config.ts` and your `.capnp` schemas (and `.ts` interfaces with
-`@rest` directives, and OpenAPI specs) generate during the build — no
+`@rest` directives, and OpenAPI specs) generate during the build. No
 separate `npx capnwasm gen` step, no committed `.gen.mjs` files in the
 repo, full hot-reload on schema changes during dev.
 
@@ -39,7 +39,7 @@ All optional. Defaults are tuned for the common case.
 capnwasm({
   // Explicit list. Paths or globs. When unset, auto-discovers all
   // .capnp under the project root. .ts and OpenAPI specs (.yaml /
-  // .json) must be listed explicitly — they're not auto-discovered.
+  // .json) must be listed explicitly. They're not auto-discovered.
   schemas: ["./schemas/*.capnp", "./api.ts", "./stripe.json"],
 
   // Where to write generated files. Default: next to each schema.
@@ -50,7 +50,7 @@ capnwasm({
   extension: ".gen.mjs",
 
   // Abort the build on a codegen error. Default true. Set false to
-  // log errors but keep going — useful when one schema is broken in
+  // log errors but keep going. Useful when one schema is broken in
   // a monorepo and you want the rest to still build.
   failOnError: true,
 

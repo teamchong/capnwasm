@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// capnwasm — single CLI for codegen, build, and bench. Same package also
+// capnwasm. Single CLI for codegen, build, and bench. Same package also
 // exposes the runtime as a browser/node import via `import { CapnCpp } from
 // "capnwasm"`.
 //
@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 const PKG_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 
 function topUsage() {
-  console.error(`capnwasm — typed clients from one schema, two wire formats
+  console.error(`capnwasm. Typed clients from one schema, two wire formats
 
 Usage:
   npx capnwasm gen <schema.capnp|schema.ts> [-o output.gen.mjs]
@@ -171,7 +171,7 @@ async function parseTsInterfaces(text) {
             defaults: parseRestDefaults(pendingInterfaceDirectives),
           };
         } else if (hasRest) {
-          // Pure TS type interface alongside a REST API — capture the
+          // Pure TS type interface alongside a REST API. Capture the
           // body verbatim so we can re-emit it in the .d.ts.
           currentType = { name, body: [] };
         } else {
@@ -221,7 +221,7 @@ async function parseTsInterfaces(text) {
           pendingMethodDirectives.path = arg;
         } else if (dir === "query" || dir === "header" || dir === "body" || dir === "paginated"
                 || dir === "decode" || dir === "bodyencoding") {
-          // These can repeat (multiple @query lines) — accumulate as arrays/maps.
+          // These can repeat (multiple @query lines). Accumulate as arrays/maps.
           if (dir === "query" || dir === "header") {
             (pendingMethodDirectives[dir + "s"] ||= []).push(arg);
           } else {
@@ -378,7 +378,7 @@ function buildRestMethod(sig, dirs, lineNo) {
     else if (tokens.length >= 2) headerMap.set(tokens[1], tokens[0]);
   }
 
-  // @body paramName — explicit body param. If just `@body` (no name), the
+  // @body paramName. Explicit body param. If just `@body` (no name), the
   // body is auto-assigned (see below).
   let explicitBody = null;
   if (dirs.body) {
@@ -402,7 +402,7 @@ function buildRestMethod(sig, dirs, lineNo) {
   }
 
   // Anything still unassigned: treat as query parameter (the most permissive
-  // default — it shows up as a ?key=value pair on the URL).
+  // default. It shows up as a ?key=value pair on the URL).
   for (const p of paramRoles) if (p.role === null) p.role = "query";
 
   // Validate all path-template names are bound.
@@ -458,7 +458,7 @@ function validateStructs(structs) {
       if (listMatch) {
         const inner = listMatch[1];
         if (VALID_CAPNP_PRIMS.has(inner) || declared.has(inner)) continue;
-        if (/^List\(/.test(inner)) continue;  // nested list — assume well-formed; validated by upstream compiler
+        if (/^List\(/.test(inner)) continue;  // nested list. Assume well-formed; validated by upstream compiler
       }
       throw new Error(
         `capnwasm: ${s.name}.${f.name}: type '${f.type}' is not a known ` +
@@ -470,9 +470,9 @@ function validateStructs(structs) {
 
 // .capnp files are compiled via our wasm-built capnp schema compiler
 // (zig-out/capnpc.opt.wasm), so the same vendored sources produce both
-// runtime and compiler — no version skew, no external binary required.
+// runtime and compiler. No version skew, no external binary required.
 //
-// Cached compiler instance — wasm load is one-time and the compiler is
+// Cached compiler instance. Wasm load is one-time and the compiler is
 // heavyweight. Reused across all .capnp parses in a single CLI invocation.
 let _capnpCompiler = null;
 async function getCapnpCompiler() {
@@ -488,7 +488,7 @@ async function parseSchema(schemaPath) {
   if (abs.endsWith(".ts") || abs.endsWith(".tsx")) {
     return parseTsInterfaces(text);
   }
-  // .capnp paths — compile via our bundled wasm-built capnp compiler. No
+  // .capnp paths. Compile via our bundled wasm-built capnp compiler. No
   // external binary, no version skew with the runtime. The same vendor/
   // sources produce both compiler and runtime, guaranteed compatible.
   const compiler = await getCapnpCompiler();
@@ -511,7 +511,7 @@ async function parseSchema(schemaPath) {
  *      new hole between the previous high-water mark and the new field.
  *
  * Without hole-filling, layouts diverge from upstream `capnp compile`
- * whenever fields are not in size-decreasing order — readers get garbage
+ * whenever fields are not in size-decreasing order. Readers get garbage
  * because the offset they compute doesn't match where the writer put the
  * value.
  */
@@ -551,7 +551,7 @@ function computeOffsets(structs) {
       }
       if (placed) continue;
 
-      // No hole worked — extend the data section. Alignment padding becomes
+      // No hole worked. Extend the data section. Alignment padding becomes
       // a new hole that later fields can fill.
       const aligned = Math.ceil(dataBits / size) * size;
       if (aligned > dataBits) {
@@ -594,11 +594,11 @@ function primitiveBitSize(t) {
  *
  * Each field becomes a getter on the prototype that calls the appropriate
  * `cpp_any_*` primitive with its precomputed offset. Property access is a
- * normal V8 inlinable call — no string lookup, no Proxy.
+ * normal V8 inlinable call. No string lookup, no Proxy.
  */
 function generateJs(structs, schemaName) {
   const lines = [];
-  lines.push(`// Generated from ${schemaName} by capnwasm-gen — do not edit by hand.`);
+  lines.push(`// Generated from ${schemaName} by capnwasm-gen. Do not edit by hand.`);
   lines.push("");
   lines.push(`const SHARED_TEXT_DECODER = new TextDecoder();`);
   lines.push(`const SHARED_ENCODER = new TextEncoder();`);
@@ -606,7 +606,7 @@ function generateJs(structs, schemaName) {
   // fastest path across the size range that matters (~12 B and up):
   //   4 KB:  TextDecoder 0.4 µs vs hand-rolled loop 13 µs   (30x slower)
   //   64 KB: TextDecoder 4.1 µs vs hand-rolled loop 305 µs  (75x slower)
-  // The earlier "ASCII fast-path" loop was a premature pessimization —
+  // The earlier "ASCII fast-path" loop was a premature pessimization -
   // V8's TextDecoder.decode is V8-internal C++ and dwarfs any JS loop
   // once strings get above a handful of bytes.
   lines.push(`function decodeAscii(bytes) {`);
@@ -650,10 +650,10 @@ function _getPickRequest(fields, names) {
 }
 
 function _capnwasmPick(cpp, fields, names) {`);
-  lines.push(`  // Cached request prep — same names hit the WeakMap and skip the encode loop.`);
+  lines.push(`  // Cached request prep. Same names hit the WeakMap and skip the encode loop.`);
   lines.push(`  const req = _getPickRequest(fields, names);`);
   lines.push(`  const u8 = cpp._u8;`);
-  // _auxPtr is cached at CapnCpp load time (constant after wasm init) — no
+  // _auxPtr is cached at CapnCpp load time (constant after wasm init). No
   // per-call boundary crossing to fetch it. Saves ~50-100ns per pick.
   lines.push(`  const aux = cpp._auxPtr;`);
   lines.push(`  u8.set(req, aux);`);
@@ -716,7 +716,7 @@ function _capnwasmPick(cpp, fields, names) {`);
   for (const s of structs) {
     lines.push(`export class ${s.name}Reader {`);
     // Cache cpp._exports so per-field getters do `this._exp.cpp_*()`
-    // — one hidden-class lookup instead of walking two property chains.
+    //. One hidden-class lookup instead of walking two property chains.
     // Don't cache a Uint8Array view here: text/data getters fetch a
     // fresh one via this._cpp._u8 because the wasm calls inside them
     // can grow memory (and detach a pre-existing view).
@@ -726,7 +726,7 @@ function _capnwasmPick(cpp, fields, names) {`);
     // dataPtr is supplied by openX(cpp, bytes) and by the RPC layer's
     // open_call_params / open_return_results paths. When present,
     // primitive getters can read straight from wasm memory at
-    // dataPtr+offset — no per-field cpp_any_*_at boundary call. The
+    // dataPtr+offset. No per-field cpp_any_*_at boundary call. The
     // cached _u8 view stays valid for the Reader's lifetime since
     // primitive reads can't trigger memory growth.
     lines.push(`    this._dataPtr = dataPtr | 0;`);
@@ -777,7 +777,7 @@ function _capnwasmPick(cpp, fields, names) {`);
         lines.push(`  is${cap}() { return this.which() === ${f.discriminantValue}; }`);
       }
     }
-    // Per-class field descriptor table — fed to cpp_any_batch_read so one
+    // Per-class field descriptor table. Fed to cpp_any_batch_read so one
     // wasm boundary crossing fetches all requested fields. Codegen knows
     // each field's offset and type at build time (the Immer-pattern of
     // tracking accesses applied at codegen time, no runtime Proxy needed).
@@ -833,7 +833,7 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push("");
   }
 
-  // Builder classes — counterpart to Readers. One Builder writes one
+  // Builder classes. Counterpart to Readers. One Builder writes one
   // message at a time (the wasm-side AnyStruct::Builder is a global slot).
   // The static _DATA_WORDS / _PTR_WORDS counts let the RPC layer call
   // cpp_rpc_begin_call with the right shape so a Builder can write its
@@ -858,19 +858,19 @@ function _capnwasmPick(cpp, fields, names) {`);
     // any_builder_root is replaced (i.e. the next builder init), which
     // happens after this Builder's lifetime. Caching _u8 cuts per-
     // setter allocation: every `b.field = v` would otherwise do
-    // `new Uint8Array(cpp.memory.buffer)` — modern V8 spends more GC
+    // `new Uint8Array(cpp.memory.buffer)`. Modern V8 spends more GC
     // time than wasm-call time on a write-heavy struct.
     // If begin_call/begin_return supplied the data pointer (zero-copy RPC
-    // path), use it directly — saves another wasm boundary call per call.
+    // path), use it directly. Saves another wasm boundary call per call.
     lines.push(`    this._dataPtr = (opts && opts.dataPtr !== undefined)`);
     lines.push(`      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();`);
     lines.push(`    this._u8 = cpp._u8;`);
     // Cache one DataView for the wasm memory.buffer. The 64-bit and float
     // setters all need a DataView; allocating one per setter call was
     // ~15 ns of GC pressure each. The setters reference this._dv directly
-    // — only text/data setters need to refresh it, since they're the
+    //. Only text/data setters need to refresh it, since they're the
     // paths that can trigger wasm memory growth.
-    // Reuse the shared DataView cached on the cpp instance — refreshed
+    // Reuse the shared DataView cached on the cpp instance. Refreshed
     // there when memory grows. Saves one alloc per Builder construction
     // (per call on the hot RPC path).
     lines.push(`    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
@@ -927,12 +927,12 @@ function _capnwasmPick(cpp, fields, names) {`);
       lines.push(`  }`);
     }
     lines.push("");
-    // fromObject / from — the JSON.stringify-shaped ergonomic helper.
+    // fromObject / from. The JSON.stringify-shaped ergonomic helper.
     // Walks a plain JS object and applies its fields to this builder.
     // Per-field code is straight-line setter calls; no runtime dispatch
     // since the field list is hard-coded at codegen time. Missing fields
     // are skipped (caller's intent), unknown fields are ignored (caller's
-    // intent — schema is the contract). Same wire bytes as a hand-rolled
+    // intent. Schema is the contract). Same wire bytes as a hand-rolled
     // setter loop; this is just the codegen writing the loop for you.
     lines.push(`  /**`);
     lines.push(`   * Apply fields from a plain JS object to this builder. Same shape`);
@@ -949,14 +949,14 @@ function _capnwasmPick(cpp, fields, names) {`);
         lines.push(`    if (o.${f.name} !== undefined) this.${f.name}.fromObject(o.${f.name});`);
         continue;
       }
-      // Skip fields the codegen has no setter for — list pointers and
+      // Skip fields the codegen has no setter for. List pointers and
       // struct-ref pointers that aren't text/data. The codegen suppresses
       // these via `generateSetter` returning null; if we emitted them in
       // fromObject they'd silently set a regular JS property and never
       // make it into the wire bytes. Document the gap inline so users
       // see it in their generated file.
       if (!hasFieldSetter(f)) {
-        lines.push(`    // ${f.name}: ${f.type ?? f.kind} — no Builder setter yet (list / struct ref); skipped by fromObject`);
+        lines.push(`    // ${f.name}: ${f.type ?? f.kind}. No Builder setter yet (list / struct ref); skipped by fromObject`);
         continue;
       }
       // The public setter handles type coercion (BigInt for u64/i64,
@@ -979,7 +979,7 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push(`  toBytes() {`);
     lines.push(`    const len = this._exp.cpp_any_builder_finalize();`);
     lines.push(`    if (!len) throw new Error("cpp_any_builder_finalize failed");`);
-    // Re-fetch the Uint8Array view after finalize — it can grow wasm
+    // Re-fetch the Uint8Array view after finalize. It can grow wasm
     // memory while it's collecting segments, which detaches a
     // pre-existing typed-array view over the old buffer.
     lines.push(`    const out = this._cpp._outPtr;`);
@@ -1000,7 +1000,7 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push(`  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");`);
     lines.push(`  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());`);
     // cpp_any_open returns the data section pointer of the opened
-    // AnyStruct (or 0 if the struct has no data section — still a valid
+    // AnyStruct (or 0 if the struct has no data section. Still a valid
     // open). Pass it through so primitive getters can read direct from
     // wasm memory.
     lines.push(`  const dataPtr = cpp._exports.cpp_any_open(bytes.length);`);
@@ -1019,14 +1019,14 @@ function _capnwasmPick(cpp, fields, names) {`);
 
 // Mirror of generateSetter's "would I emit a setter for this field?" logic.
 // Used by the fromObject template to decide whether to skip a field. Kept
-// in lockstep with generateSetter — if generateSetter starts emitting list
+// in lockstep with generateSetter. If generateSetter starts emitting list
 // or struct-ref setters, this needs to learn about them too.
 function hasFieldSetter(field) {
   if (field.kind === "group") return false;       // groups are sub-builder getters, not setters
   if (field.kind === "pointer") {
     return field.type === "Text" || field.type === "Data";
   }
-  // Primitive — generateSetter handles every type via the switch below.
+  // Primitive. GenerateSetter handles every type via the switch below.
   return true;
 }
 
@@ -1040,7 +1040,7 @@ function generateSetter(field) {
   if (field.kind === "pointer") {
     if (field.type === "Text") {
       // encodeInto writes UTF-8 bytes directly into the destination Uint8Array
-      // — no intermediate JS allocation. The destination is a subarray view of
+      //. No intermediate JS allocation. The destination is a subarray view of
       // wasm linear memory at cpp_in_ptr(), so the bytes land where the C++
       // setter will read them in one step. Re-fetch the view via cpp._u8
       // because cpp_any_builder_set_text can grow wasm memory (large texts
@@ -1055,13 +1055,13 @@ function generateSetter(field) {
         `const { written } = SHARED_ENCODER.encodeInto(value, dst);`,
         `this._exp.cpp_any_builder_set_text(${field.ptrIndex}, written);`,
         `this._u8 = this._cpp._u8;`,
-        // Refresh the cached DataView too — cpp_any_builder_set_text may
+        // Refresh the cached DataView too. Cpp_any_builder_set_text may
         // have grown wasm memory and detached the view.
         `if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`,
       ];
     }
     if (field.type === "Data") {
-      // Same memory.grow caveat as Text — fetch the view, do the write, then
+      // Same memory.grow caveat as Text. Fetch the view, do the write, then
       // refresh the constructor-cached _u8 for any setters that follow.
       return [
         `const u8 = this._cpp._u8;`,
@@ -1074,7 +1074,7 @@ function generateSetter(field) {
     return null;  // struct refs need nested builder support
   }
   // Primitive setters write DIRECTLY into wasm linear memory at the data
-  // section's known offset. No wasm boundary crossing per setter — V8 just
+  // section's known offset. No wasm boundary crossing per setter. V8 just
   // stores bytes through the typed-array view. The DataView is rebuilt from
   // the (potentially refreshed) wasm memory on each call so we're safe
   // across memory.grow events. Allocating a DataView is cheap; V8 inlines.
@@ -1219,7 +1219,7 @@ function generateInterfaceDts(interfaces, structs) {
 
   // Per-interface: a Client interface listing each method as a typed call.
   for (const iface of interfaces) {
-    lines.push(`/** Typed client for the ${iface.name} interface — pass into typed/typedClient. */`);
+    lines.push(`/** Typed client for the ${iface.name} interface. Pass into typed/typedClient. */`);
     lines.push(`export interface ${iface.name}Client {`);
     for (const m of iface.methods) {
       const paramsStruct = structByName.get(`${m.name}$Params`);
@@ -1249,7 +1249,7 @@ function structToTsObjectType(struct, declared) {
  */
 function generateDts(structs, schemaName) {
   const lines = [];
-  lines.push(`// Generated from ${schemaName} by capnwasm-gen — do not edit by hand.`);
+  lines.push(`// Generated from ${schemaName} by capnwasm-gen. Do not edit by hand.`);
   lines.push("");
   lines.push(`import type { CapnCpp } from "capnwasm";`);
   lines.push("");
@@ -1331,7 +1331,7 @@ function fieldDescriptor(f) {
 // and Symbol.iterator. The element type drives at(i)'s return shape.
 //
 // For struct element lists, at(i) navigates the wasm reader stack and
-// constructs a typed Reader. The reader is "live" — it shares the wasm
+// constructs a typed Reader. The reader is "live". It shares the wasm
 // any_stack[top] slot, so accessing fields on it after another at(i) call
 // would read the new element. Treat at(i) as "open one element at a time."
 function generateListGetter(ptrIndex, innerType) {
@@ -1387,14 +1387,14 @@ function generateListGetter(ptrIndex, innerType) {
     return lines;
   }
   // Struct element list: at(i) navigates into element i and constructs a
-  // typed Reader. The Reader shares any_stack — calling at again will move
+  // typed Reader. The Reader shares any_stack. Calling at again will move
   // the stack pointer, so callers reading multiple elements should
   // materialize before iterating further.
   //
   // The `pushed` flag tracks whether THIS wrapper has previously pushed
   // an element onto the any_stack. If yes, pop it before re-opening the
   // list (otherwise open_list operates on the *element*, not the parent,
-  // and reads garbage for at(j) where j != 0). If no, don't pop —
+  // and reads garbage for at(j) where j != 0). If no, don't pop -
   // leave_struct is too aggressive when the parent itself is a nested
   // struct sitting on the stack, since it would unwind the parent.
   lines.push(`let pushed = false;`);
@@ -1441,7 +1441,7 @@ function generateGetter(field) {
   }
   if (field.kind === "pointer") {
     if (field.type === "Text") {
-      // Re-fetch the view via cpp._u8 — cpp_any_text_at may have grown
+      // Re-fetch the view via cpp._u8. Cpp_any_text_at may have grown
       // wasm memory while copying the text into cpp_out, detaching the
       // constructor-cached _u8.
       return [
@@ -1471,7 +1471,7 @@ function generateGetter(field) {
     return [`throw new Error("unsupported pointer type: ${field.type}");`];
   }
   // data-section field. With _dataPtr set, primitive reads go straight to
-  // wasm memory — saves one cpp_any_*_at boundary call per field access.
+  // wasm memory. Saves one cpp_any_*_at boundary call per field access.
   // Fallback to wasm getter when _dataPtr is 0 (e.g., a sub-Reader inside
   // a struct opened via cpp_any_enter_struct that doesn't update dataPtr).
   const off = field.bitOffset >> 3;
@@ -1499,7 +1499,7 @@ function generateGetter(field) {
       return [`return this._dataPtr ? this._dv.getBigInt64(this._dataPtr + ${off}, true) : this._exp.cpp_any_int64_at(${off}, 0n);`];
     case "Float32":
       // Reinterpret u32 bits as f32 via the module-scoped shared view (one
-      // ArrayBuffer per module load, not per reader instance — the latter
+      // ArrayBuffer per module load, not per reader instance. The latter
       // showed up in the bench at hundreds of nanoseconds per field access).
       return [
         `_F32_VIEW_U32[0] = this._exp.cpp_any_uint32_at(${off}, 0) >>> 0;`,
@@ -1519,7 +1519,7 @@ function generateGetter(field) {
 /**
  * Emit the operation manifest as canonical JSON.
  *
- * Same input formats as `gen` — .capnp, .ts (with @rest), .yaml/.json
+ * Same input formats as `gen`. .capnp, .ts (with @rest), .yaml/.json
  * (OpenAPI). Output is one JSON document per source schema; the shape is
  * defined by `js/manifest.mjs` and stable across input formats so
  * downstream consumers (drift detectors, mock generators, doc
@@ -1769,7 +1769,7 @@ async function cmdGen(argv) {
 /** Emit the .mjs for a REST API: a `create<Name>Client(opts)` factory. */
 function generateRestClient(api, schemaName, structs) {
   const lines = [];
-  lines.push(`// Generated from ${schemaName} by capnwasm-gen — do not edit by hand.`);
+  lines.push(`// Generated from ${schemaName} by capnwasm-gen. Do not edit by hand.`);
   lines.push(`// REST client for "${api.name}".`);
   lines.push(``);
   lines.push(`import { _restCall, _restPaginate, _buildRestCfg } from "capnwasm/rest";`);
@@ -1818,7 +1818,7 @@ function generateRestMethod(m) {
     lines.push(`    query: { ${entries} },`);
   }
 
-  // Header params — use wire header name (may differ from JS identifier).
+  // Header params. Use wire header name (may differ from JS identifier).
   const headerParams = m.params.filter(p => p.role === "header");
   if (headerParams.length > 0) {
     const entries = headerParams
@@ -1850,7 +1850,7 @@ function generateRestMethod(m) {
 /** Emit a .d.ts for the REST client matching the source TS interface. */
 function generateRestDts(api, schemaName, structs, typeInterfaces = []) {
   const lines = [];
-  lines.push(`// Generated from ${schemaName} by capnwasm-gen — do not edit by hand.`);
+  lines.push(`// Generated from ${schemaName} by capnwasm-gen. Do not edit by hand.`);
   lines.push(`// REST client types for "${api.name}".`);
   lines.push(``);
   lines.push(`import type { RestClientOpts, RestCallOpts, RestError } from "capnwasm/rest";`);
@@ -1938,7 +1938,7 @@ async function cmdOpenapi(argv) {
   if (args.schema.endsWith(".json")) {
     spec = JSON.parse(text);
   } else {
-    // YAML — try the optional `yaml` package. If unavailable, give the
+    // YAML. Try the optional `yaml` package. If unavailable, give the
     // user a clear install command. Most published OpenAPI specs are also
     // available as JSON (Stripe, GitHub, etc.).
     try {
@@ -2001,7 +2001,7 @@ async function main() {
 }
 
 // --------------------------------------------------------------------------
-// Programmatic API — for the Vite plugin and any other tool that wants to
+// Programmatic API. For the Vite plugin and any other tool that wants to
 // drive codegen without shelling out.
 //
 // generateFromSchema(path) → { mjs, dts, meta }
@@ -2010,7 +2010,7 @@ async function main() {
 //   schema. The format is auto-detected from the extension.
 //   mjs:  the JS module text. Write to disk or feed straight to a bundler.
 //   dts:  the corresponding TypeScript declarations.
-//   meta: { schemaName, structs, restApis, typeInterfaces } — useful for
+//   meta: { schemaName, structs, restApis, typeInterfaces }. Useful for
 //         logging or display in a build dashboard.
 //
 // Errors are thrown as `CapnwasmCodegenError` so callers (e.g. Vite's HMR
@@ -2053,7 +2053,7 @@ export async function generateFromSchema(schemaPath) {
           spec = yaml.parse(text);
         } catch (yamlErr) {
           throw new CapnwasmCodegenError(
-            `YAML OpenAPI specs require the optional 'yaml' package — run \`npm install yaml\`, or convert to JSON.`,
+            `YAML OpenAPI specs require the optional 'yaml' package. Run \`npm install yaml\`, or convert to JSON.`,
             { schemaPath: abs, cause: yamlErr },
           );
         }
@@ -2110,7 +2110,7 @@ export async function generateFromSchema(schemaPath) {
 }
 
 // Only execute the CLI when this file is invoked directly (node bin/...,
-// npx capnwasm). Importing it as a module — e.g. from the Vite plugin —
+// npx capnwasm). Importing it as a module. E.g. from the Vite plugin -
 // must not run main(), or the imported file's top-level work would race
 // with whatever the importer was doing.
 const isDirectInvocation = (() => {

@@ -1,4 +1,4 @@
-// capnweb-wire compat shim — speak capnweb's newline-delimited JSON
+// capnweb-wire compat shim. Speak capnweb's newline-delimited JSON
 // protocol so capnwasm clients can talk to capnweb servers (and vice
 // versa) without changing the server side.
 //
@@ -66,7 +66,7 @@ export class JsonWireSession {
     if (this.#closed) throw new Error("JsonWireSession closed");
     const importId = this.#nextImportId++;
     const expression = encodePipeline(0, propertyPath, args);
-    // Push followed by Pull on the same line — capnweb processes multiple
+    // Push followed by Pull on the same line. Capnweb processes multiple
     // top-level messages per line if newline-separated, but two lines in
     // one transport.send is also fine (newline-delimited framing).
     this.#sendLine(JSON.stringify(["push", expression]));
@@ -85,7 +85,7 @@ export class JsonWireSession {
   #sendLine(line) {
     // capnweb's framing for non-WebSocket transports is newline-delimited.
     // For WebSocket / MessagePort each transport message is one RPC
-    // message — no extra newline needed. Transport decides.
+    // message. No extra newline needed. Transport decides.
     this.#transport.send(line);
   }
 
@@ -159,8 +159,8 @@ function encodePipeline(importId, propertyPath, args) {
   // ["pipeline", importId, propertyPath, callArguments]
   // Per protocol.md: omitting callArguments means "evaluate to the
   // property" (return it as a capability reference), NOT "call with no
-  // args". A method invocation must always include callArguments — even
-  // an empty array — so capnweb knows to call the function instead of
+  // args". A method invocation must always include callArguments. Even
+  // an empty array. So capnweb knows to call the function instead of
   // returning a reference to it.
   return ["pipeline", importId, propertyPath, args.map(encodeValue)];
 }
@@ -196,7 +196,7 @@ function decodeExpression(e) {
   if (e === null || typeof e !== "object") return e;
   if (Array.isArray(e)) {
     if (e.length === 1 && Array.isArray(e[0])) {
-      // Array literal — recursively decode each element.
+      // Array literal. Recursively decode each element.
       return e[0].map(decodeExpression);
     }
     if (typeof e[0] !== "string") return e;     // shouldn't happen in well-formed messages
@@ -222,7 +222,7 @@ function decodeExpression(e) {
         for (const [k, v] of e[1] ?? []) h.append(k, v);
         return h;
       }
-      // Capability references — preserve the raw expression so the caller
+      // Capability references. Preserve the raw expression so the caller
       // can inspect it if needed. Full capability support is out of scope
       // for this minimal client.
       case "import": case "export": case "pipeline":

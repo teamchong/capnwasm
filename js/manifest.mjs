@@ -6,7 +6,7 @@
 // contract test harnesses) can consume without re-parsing the source
 // schema themselves.
 //
-// One shape across all three input formats — .capnp interfaces, TS @rest
+// One shape across all three input formats. .capnp interfaces, TS @rest
 // interfaces, and OpenAPI specs all emit the same envelope. Consumers
 // don't need to know which source produced the manifest.
 //
@@ -28,7 +28,7 @@ const MANIFEST_VERSION = 1;
  * @param {string} [opts.source.path] - absolute path of the source if available
  * @param {object} [opts.metadata] - free-form per-manifest metadata
  *                                   (owner team, repo URL, version, ...)
- * @returns {object} manifest object — JSON-serializable
+ * @returns {object} manifest object. JSON-serializable
  */
 export function buildManifest(model, opts) {
   if (!opts?.source?.name || !opts?.source?.format) {
@@ -106,7 +106,7 @@ function normalizeInterfaceId(raw) {
   if (typeof raw === "bigint") return "0x" + raw.toString(16);
   if (typeof raw !== "string") return String(raw);
   if (raw.startsWith("0x") || raw.startsWith("0X")) return "0x" + raw.slice(2).toLowerCase();
-  // Decimal string from capnpc — convert via BigInt (no precision loss).
+  // Decimal string from capnpc. Convert via BigInt (no precision loss).
   try { return "0x" + BigInt(raw).toString(16); }
   catch { return raw; }   // unparseable; pass through unchanged
 }

@@ -1,7 +1,7 @@
 // Sturdyref: persistable handles for capabilities.
 //
 // A sturdyref is an opaque token a caller can persist and later use to
-// reconstruct a capability on a fresh session — even after the original
+// reconstruct a capability on a fresh session. Even after the original
 // session has dropped, even after a process restart (when the store is
 // durable). Cap'n Proto's "Persistent" interface pattern; here it's an
 // opt-in helper rather than a wire-level primitive, so it works against
@@ -35,7 +35,7 @@ const SHARED_DECODER = new TextDecoder();
 const SHARED_ENCODER = new TextEncoder();
 
 // Reserved interface ID for the sturdyref helper. Bit pattern picked to
-// minimize collision risk with user schemas. Stable — change here would
+// minimize collision risk with user schemas. Stable. Change here would
 // break existing tokens, so don't.
 export const STURDYREF_INTERFACE_ID = 0xcafe5e5d51e7e1f0n;
 export const STURDYREF_METHOD_SAVE = 0;
@@ -159,7 +159,7 @@ function readBytesMessage(framed) {
 
 /**
  * Register the sturdyref save/restore handlers on the given registry.
- * Server side. The store is the source of truth — pass an
+ * Server side. The store is the source of truth. Pass an
  * InMemorySturdyrefStore for dev or a durable adapter for prod.
  */
 export function registerSturdyrefHandlers(registry, store) {

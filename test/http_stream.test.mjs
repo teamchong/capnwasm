@@ -80,7 +80,7 @@ test("http stream: handler can emit additional frames after the initial Return",
   const registry = new InterfaceRegistry();
   let serverPushCount = 0;
   registry.register(IFC, 0, async (target, ctx) => {
-    // The first Return — the client gets this from its initial call.
+    // The first Return. The client gets this from its initial call.
     return null;
     // Server cannot easily push more frames in this minimal demo without
     // a server→client cap; the assertion below just verifies the stream
@@ -99,11 +99,11 @@ test("http stream: handler can emit additional frames after the initial Return",
     signal: ctrl.signal,
   });
 
-  // First call resolves — confirms the response stream is delivering frames.
+  // First call resolves. Confirms the response stream is delivering frames.
   const { promise } = client.bootstrap().call(IFC, 0, emptyMessage());
   await promise;
 
-  // Stream is still open — abort the client to close it down.
+  // Stream is still open. Abort the client to close it down.
   ctrl.abort();
   // Give the abort a moment to propagate before the test ends.
   await new Promise(r => setTimeout(r, 5));
@@ -135,7 +135,7 @@ test("http stream: transport.close() aborts the in-flight stream", async () => {
     return new Response(new ReadableStream({
       start(controller) {
         controller.enqueue(new Uint8Array([0, 0, 0, 0]));  // empty frame
-        // Don't close — keep the stream open so the client has time to abort.
+        // Don't close. Keep the stream open so the client has time to abort.
       },
     }), { status: 200, headers: { "Content-Type": "application/x-capnwasm-stream" } });
   };

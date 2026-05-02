@@ -14,7 +14,7 @@
 //   }
 //
 // This module converts a capnwasm manifest (capnp interfaces or REST
-// APIs) into that shape. The schema is the source of truth — agents
+// APIs) into that shape. The schema is the source of truth. Agents
 // see the same typed contract the rest of your stack does, with no
 // ad-hoc JSON-tool wrangling.
 //
@@ -51,7 +51,7 @@ export function manifestToTools(manifest, opts = {}) {
   const structIndex = indexStructs(manifest.structs ?? []);
   const tools = [];
 
-  // Cap'n Proto interfaces — one tool per method.
+  // Cap'n Proto interfaces. One tool per method.
   for (const iface of manifest.interfaces ?? []) {
     for (const method of iface.methods ?? []) {
       const op = {
@@ -72,7 +72,7 @@ export function manifestToTools(manifest, opts = {}) {
     }
   }
 
-  // REST APIs — one tool per method.
+  // REST APIs. One tool per method.
   for (const api of manifest.restApis ?? []) {
     for (const method of api.methods ?? []) {
       const op = {
@@ -106,14 +106,14 @@ function structToInputSchema(structName, structIndex) {
   if (!s) {
     // Params struct missing from manifest (e.g. a method with no params
     // doesn't always emit a $Params struct). Empty object is the right
-    // default — agents see a no-arg tool.
+    // default. Agents see a no-arg tool.
     return { type: "object", properties: {}, required: [] };
   }
   const properties = {};
   const required = [];
   for (const f of s.fields ?? []) {
     properties[f.name] = capnpTypeToJsonSchema(f, structIndex);
-    // Cap'n Proto has no nullable concept — every field has a default
+    // Cap'n Proto has no nullable concept. Every field has a default
     // value (zero / "" / empty list). Treat all as required for the
     // strictest agent contract; consumers can post-process if they
     // want optionality semantics.
@@ -127,7 +127,7 @@ function structToInputSchema(structName, structIndex) {
 }
 
 function restMethodToInputSchema(method) {
-  // OpenAPI / @rest method params are already JSON-shaped — surface them
+  // OpenAPI / @rest method params are already JSON-shaped. Surface them
   // as-is. method.params is an array of { name, in, type, required }.
   const properties = {};
   const required = [];
@@ -135,7 +135,7 @@ function restMethodToInputSchema(method) {
     properties[p.name] = openApiParamToJsonSchema(p);
     if (p.required) required.push(p.name);
   }
-  // Some REST methods carry a body — fold in its top-level properties.
+  // Some REST methods carry a body. Fold in its top-level properties.
   if (method.body && typeof method.body === "object") {
     if (method.body.properties) {
       for (const [k, v] of Object.entries(method.body.properties)) {
@@ -187,7 +187,7 @@ function capnpTypeToJsonSchema(field, structIndex) {
     case "Text":    return { type: "string" };
     case "Data":    return { type: "string", contentEncoding: "base64" };
     default: {
-      // List(X) or a struct reference — manifest emits the type as a
+      // List(X) or a struct reference. Manifest emits the type as a
       // string so we sniff the prefix.
       if (typeof t === "string" && t.startsWith("List(")) {
         const inner = t.slice("List(".length, -1);
@@ -200,14 +200,14 @@ function capnpTypeToJsonSchema(field, structIndex) {
       if (typeof t === "string" && structIndex.has(t)) {
         return structToInputSchema(t, structIndex);
       }
-      // Unknown — leave loosely typed so the agent at least sees the field.
+      // Unknown. Leave loosely typed so the agent at least sees the field.
       return {};
     }
   }
 }
 
 function defaultNamer(op) {
-  // Anthropic tool names: ^[a-zA-Z0-9_-]{1,64}$ — snake_case the operationId.
+  // Anthropic tool names: ^[a-zA-Z0-9_-]{1,64}$. Snake_case the operationId.
   // "UserService.getUser" → "user_service_get_user"
   // "Petstore.listPets"   → "petstore_list_pets"
   const id = op.operationId;
@@ -223,5 +223,5 @@ function defaultDescribe(op) {
   if (op.kind === "capnp") {
     return `Cap'n Proto RPC: ${op.interfaceName}.${op.methodName} (interface ${op.interfaceId}, method ordinal ${op.methodOrdinal}).`;
   }
-  return `${op.httpMethod ?? "GET"} ${op.path ?? ""} — ${op.apiName}.${op.methodName}`;
+  return `${op.httpMethod ?? "GET"} ${op.path ?? ""}. ${op.apiName}.${op.methodName}`;
 }

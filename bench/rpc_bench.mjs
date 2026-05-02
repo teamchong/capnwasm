@@ -4,7 +4,7 @@
 //
 // Capnweb is JSON-based (text transport). Capnwasm is binary (Uint8Array
 // transport). Each pair uses a paired in-memory transport tailored to its
-// message type — that's intrinsic to each library, not a bench artifact.
+// message type. That's intrinsic to each library, not a bench artifact.
 
 import { load as loadWasm } from "../dist/inlined.mjs";
 import {
@@ -75,7 +75,7 @@ async function setupCapnwasm() {
   const cppB = await loadWasm();
   const { a, b } = createMemoryTransportPair();
   const registry = new InterfaceRegistry();
-  // Sync handlers — the new fast path skips the await microtask for these.
+  // Sync handlers. The new fast path skips the await microtask for these.
   registry.register(IFC_ECHO, M_ECHO_U8, (target, ctx) => {
     const p = ctx.openParams(PrimitivesReader);
     const u8 = p.u8;
@@ -179,7 +179,7 @@ console.log(`  ${"─".repeat(36)}  ${"─".repeat(15)}  ${"─".repeat(17)}  ${
   printRow("large: 4KB text echo", cwb, ours);
 }
 
-// XL text echo (64 KB) — only modest N to avoid taking minutes
+// XL text echo (64 KB). Only modest N to avoid taking minutes
 {
   const text64k = "x".repeat(64 * 1024);
   const cwb = await timed("text echo 64K", async () => {

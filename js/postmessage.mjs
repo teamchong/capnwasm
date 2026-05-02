@@ -11,7 +11,7 @@
 // handles the typed-array case automatically.
 //
 // Wire frames are the same length-prefixed Cap'n Proto bytes the WS
-// transport sends — the receiver's FrameReader handles boundaries even
+// transport sends. The receiver's FrameReader handles boundaries even
 // if a single message contains multiple frames or the framing splits
 // across messages.
 
@@ -27,7 +27,7 @@
  *        cross-origin sends; passed straight through. Use "*" for same-origin
  *        only when you've otherwise verified the peer.
  * @param {string} [opts.acceptOrigin]  - filter inbound messages by origin
- *        (window targets only — MessagePort/Worker messages have no origin).
+ *        (window targets only. MessagePort/Worker messages have no origin).
  *        Set to "*" to accept any.
  * @param {boolean} [opts.transfer=true]  - when true and the message is a
  *        Uint8Array, transfer the underlying ArrayBuffer (zero-copy). The
@@ -42,7 +42,7 @@ export function postMessageTransport(target, opts = {}) {
   const acceptOrigin = opts.acceptOrigin;
   const transfer = opts.transfer !== false;
 
-  // MessagePort needs start() before it delivers messages — it's a no-op
+  // MessagePort needs start() before it delivers messages. It's a no-op
   // for Worker/Window. Calling on objects that don't expose it is fine
   // because of the optional-chain.
   target.start?.();
@@ -62,7 +62,7 @@ export function postMessageTransport(target, opts = {}) {
       // Already a typed-array view (Uint8Array etc.). Pass straight through.
       data = data instanceof Uint8Array ? data : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     } else {
-      // Skip non-binary messages — could be unrelated traffic on the same port.
+      // Skip non-binary messages. Could be unrelated traffic on the same port.
       return;
     }
     messageCb(data);

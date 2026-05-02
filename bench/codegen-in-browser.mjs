@@ -61,7 +61,7 @@ struct Tag {
   // then re-open it via cpp_any_open and read each field.
   //
   // Writes the data-section primitives (u64, bool) directly to wasm
-  // memory via the cached data_ptr — the same fast path the codegen
+  // memory via the cached data_ptr. The same fast path the codegen
   // builder takes. The slim wasm intentionally doesn't export the
   // cpp_any_builder_set_int64_lo_hi / set_bool helpers because
   // production JS doesn't need a wasm boundary call for primitive
@@ -99,7 +99,7 @@ struct Tag {
 
   log(`Round-trip read:  id=${id}  name=${JSON.stringify(name)}  active=${active}`);
   log("");
-  log("PASS — wasm compiler + runtime fully working in the browser, no host I/O.");
+  log("PASS. Wasm compiler + runtime fully working in the browser, no host I/O.");
   setStatus("done");
   window.__codegenDemoResult = { id, name, active, model };
 }

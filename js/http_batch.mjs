@@ -16,7 +16,7 @@
 //     [u32 LE length][frame bytes][u32 LE length][frame bytes]...
 //
 // Each "frame" is exactly what wsTransport sends/receives in one
-// WebSocket message — i.e., a complete capnp RPC frame.
+// WebSocket message. I.e., a complete capnp RPC frame.
 //
 // Content-Type for both directions: application/x-capnwasm-batch.
 
@@ -105,7 +105,7 @@ function filterFrames(bytes, dropKinds) {
  * Outbound frames are coalesced per microtask boundary, so a burst of
  * `cap.foo()` / `cap.bar()` calls in the same tick produces one HTTP
  * request. The microtask batching means typical client code "just works"
- * — no manual `flush()` needed.
+ *. No manual `flush()` needed.
  *
  * @param {string} url - the gateway endpoint
  * @param {object} [opts]
@@ -194,7 +194,7 @@ export function httpBatchTransport(url, opts = {}) {
   // no server-side state for the client to release, so Finish and
   // Release frames the client emits in response to Returns are no-ops.
   // The connectHttpBatch wrapper passes stateless: true to RpcSession,
-  // so those frames are never generated in the first place — no
+  // so those frames are never generated in the first place. No
   // post-send filterFrames pass is needed. (If a user wires this
   // transport up against a non-stateless session, Finish/Release frames
   // will go on the wire and waste a round-trip; pass `stateless: true`
@@ -230,7 +230,7 @@ export function connectHttpBatch(cpp, url, opts = {}) {
   return new RpcSession(cpp, transport, opts.registry, {
     bootstrap: opts.bootstrap,
     // Stateless mode: peer (server) creates a fresh session per request,
-    // so Finish/Release frames are pointless — and sending them would
+    // so Finish/Release frames are pointless. And sending them would
     // force the transport into an extra POST (wasted round-trip).
     stateless: true,
   });
@@ -263,7 +263,7 @@ export function connectHttpBatch(cpp, url, opts = {}) {
  * @param {object} [opts]
  * @param {object|Function} [opts.bootstrap] - bootstrap target, or a function
  *        `(req) => target` evaluated per request (lets you derive bootstrap
- *        from the incoming Request — auth headers, query params, etc.)
+ *        from the incoming Request. Auth headers, query params, etc.)
  * @returns {(req: Request) => Promise<Response>}
  */
 export function createHttpBatchHandler(cpp, registry, opts = {}) {

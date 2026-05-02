@@ -10,7 +10,7 @@
 // the framed Cap'n Proto bytes, logging an expandable tree to the
 // console and returning the decoded structure for chaining.
 //
-// Schemaless by default — walks the wire format using nothing but the
+// Schemaless by default. Walks the wire format using nothing but the
 // Cap'n Proto encoding rules, so you don't need the .capnp file or a
 // generated reader to see what's in a message. Pass `{ reader: Foo }`
 // to use a generated reader instead and get field names back.
@@ -51,12 +51,12 @@ async function coerce(input) {
     return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
   }
   // Node Buffer (which is a Uint8Array but inheriting through different
-  // path in some envs) — already covered by the Uint8Array branch.
+  // path in some envs). Already covered by the Uint8Array branch.
   throw new TypeError("inspect(): unsupported input type " + Object.prototype.toString.call(input));
 }
 
 /**
- * Parse the framed-message header — segment count + per-segment word sizes
+ * Parse the framed-message header. Segment count + per-segment word sizes
  * + 8-byte alignment padding. Returns { segments: Uint8Array[], headerBytes }.
  */
 function readFrame(bytes) {
@@ -68,7 +68,7 @@ function readFrame(bytes) {
   const segCount = dv.getUint32(off, true) + 1;
   off += 4;
   if (segCount > 512) {
-    // Sanity cap — non-framed bytes will look like a huge segCount and
+    // Sanity cap. Non-framed bytes will look like a huge segCount and
     // we'd happily try to read N MB of segment-size table.
     throw new Error("segment count " + segCount + " is implausibly large (input probably isn't a Cap'n Proto framed message)");
   }
@@ -97,7 +97,7 @@ function readFrame(bytes) {
 }
 
 /**
- * Walk a pointer — bottom-of-stack entry. `segIdx` and `wordOff` together
+ * Walk a pointer. Bottom-of-stack entry. `segIdx` and `wordOff` together
  * locate the 8-byte pointer in the segment array. Returns a JS-shaped
  * description tree.
  *
@@ -144,14 +144,14 @@ function walkPointer(segments, segIdx, wordOff, depth, maxDepth) {
     const targetWord = lo >>> 3;
     const targetSeg = hi;
     if (padIsDouble) {
-      // Double-far pointer — the landing pad is two words: a far pointer
+      // Double-far pointer. The landing pad is two words: a far pointer
       // that points to the actual content, and a tag that describes the
       // content's structure. Rare; we just chase the inner pointer.
       return walkPointer(segments, targetSeg, targetWord, depth + 1, maxDepth);
     }
     return walkPointer(segments, targetSeg, targetWord, depth + 1, maxDepth);
   }
-  // POINTER_OTHER: capabilities, etc. — report as opaque.
+  // POINTER_OTHER: capabilities, etc.. Report as opaque.
   return { kind: "other", lo: lo.toString(16), hi: hi.toString(16) };
 }
 
@@ -355,7 +355,7 @@ function previewHex(bytes) {
  * @param opts  { reader?: GeneratedReaderClass, cpp?: CapnCpp,
  *                label?: string, log?: boolean }
  *              reader: optional codegen-generated reader for schema-aware decode
- *              cpp:    a loaded CapnCpp instance — required when `reader` is set,
+ *              cpp:    a loaded CapnCpp instance. Required when `reader` is set,
  *                      since the schema-aware path goes through wasm
  *              label:  optional string shown in the console group header
  *              log:    set false to skip the console.group dump and only
@@ -366,11 +366,11 @@ export async function inspect(input, opts = {}) {
   const label = opts.label ?? "Cap'n Proto frame";
   const log = opts.log !== false;
 
-  // Schema-aware path — delegate to a generated reader. Requires a loaded
+  // Schema-aware path. Delegate to a generated reader. Requires a loaded
   // CapnCpp instance because the reader reads through wasm.
   if (opts.reader) {
     if (!opts.cpp) {
-      throw new Error("inspect({ reader }) also needs `{ cpp }` — pass the loaded CapnCpp instance so the reader can decode through wasm");
+      throw new Error("inspect({ reader }) also needs `{ cpp }`. Pass the loaded CapnCpp instance so the reader can decode through wasm");
     }
     const reader = opts.reader;
     if (typeof reader._FIELDS !== "object") {
@@ -402,7 +402,7 @@ export async function inspect(input, opts = {}) {
     return obj;
   }
 
-  // Schemaless path — walk the wire directly.
+  // Schemaless path. Walk the wire directly.
   let frame, root;
   try {
     frame = readFrame(bytes);

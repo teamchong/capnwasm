@@ -65,7 +65,7 @@ test("postMessage transport: many calls in same tick coalesce on the wire", asyn
   // With microtask batching they collapse to: bootstrap+Calls in one
   // outbound batch, Finishes in another after Returns arrive ≈ 2-3.
   assert.ok(messagesSent <= 3,
-    `client sent ${messagesSent} messages — expected ≤ 3 with microtask batching`);
+    `client sent ${messagesSent} messages. Expected ≤ 3 with microtask batching`);
 
   client.close(); server.close();
 });
@@ -93,7 +93,7 @@ test("postMessage transport: close() detaches the message handler", async () => 
   let received = 0;
   t.onMessage(() => { received++; });
 
-  // Send something via port2 — should arrive at port1.
+  // Send something via port2. Should arrive at port1.
   ch.port2.start();
   ch.port2.postMessage(new Uint8Array([1, 2, 3]).buffer);
   await new Promise(r => setTimeout(r, 5));

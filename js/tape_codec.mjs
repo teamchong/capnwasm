@@ -1,6 +1,6 @@
 // JS-side tape codec. Converts capnweb-shape JS values into the byte tape
 // consumed by cpp/wrapper.cpp, and back. The tape format is the contract
-// between JS and the C++ wasm — keep both in sync.
+// between JS and the C++ wasm. Keep both in sync.
 
 const MSG_PUSH = 0;
 const MSG_PULL = 1;

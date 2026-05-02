@@ -4,7 +4,7 @@
 // writes.
 //
 // The runtime wasm only declares 5 imports (args, fd_write, proc_exit,
-// fd_close) — those live in cpp_wasi_runtime.mjs so the runtime loader
+// fd_close). Those live in cpp_wasi_runtime.mjs so the runtime loader
 // stays small and bundlers don't drag the full shim into RPC-only
 // browser bundles.
 

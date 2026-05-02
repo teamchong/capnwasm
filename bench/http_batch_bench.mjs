@@ -1,7 +1,7 @@
 // Head-to-head: capnweb HTTP batch vs capnwasm HTTP batch.
 //
-// Both transports get the same in-process Request/Response shim — no real
-// HTTP, no real network — so the numbers reflect pure encode/decode and
+// Both transports get the same in-process Request/Response shim. No real
+// HTTP, no real network. So the numbers reflect pure encode/decode and
 // boundary-crossing overhead. Network RTT will dominate any of this in
 // practice; the point of this bench is to measure what the libraries cost
 // on top of the network.
@@ -65,7 +65,7 @@ async function setupCapnwasm() {
   const cppClient = await loadWasm();
   const registry = new InterfaceRegistry();
   registry.register(ECHO_IFC, 0, async (target, ctx) => {
-    // Echo paramsBytes verbatim — measures transport overhead, not codegen.
+    // Echo paramsBytes verbatim. Measures transport overhead, not codegen.
     return ctx.paramsBytes();
   });
   const handler = createHttpBatchHandler(cppServer, registry, { bootstrap: {} });
@@ -110,7 +110,7 @@ async function setupCapnweb() {
   };
   const realFetch = globalThis.fetch;
   globalThis.fetch = fetchShim;
-  // Each callEcho creates a new session — matches the documented capnweb
+  // Each callEcho creates a new session. Matches the documented capnweb
   // pattern for stateless request/response.
   const callEcho = (text) => {
     const api = newHttpBatchRpcSession("http://test.local/rpc");
@@ -190,12 +190,12 @@ async function main() {
   console.log("| Workload                             | capnwasm   | capnweb    | Winner |");
   console.log("|--------------------------------------|------------|------------|--------|");
 
-  // 1. Single tiny call — sequential
+  // 1. Single tiny call. Sequential
   const tinyW = await bench("tiny seq", (i) => wasm.callEcho(TINY), 200);
   const tinyB = await bench("tiny seq", (i) => web.callEcho(TINY), 200);
   fmtRow("Single tiny call (sequential)", tinyW, tinyB);
 
-  // 2. Burst of 100 in same tick — pipelining/batching
+  // 2. Burst of 100 in same tick. Pipelining/batching
   // capnweb requires reusing the same session within a tick to batch.
   const burstW = await benchBurst("burst-100", (i) => wasm.callEcho(TINY), 100);
   const burstB = await (async () => {

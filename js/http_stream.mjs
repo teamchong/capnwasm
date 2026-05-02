@@ -8,11 +8,11 @@
 //
 // What this transport supports:
 //   • Subscriptions (server pushes events for a long time)
-//   • Capability streams (capnp's stream methods — chunks pushed by server)
+//   • Capability streams (capnp's stream methods. Chunks pushed by server)
 //   • Progress / notification feeds
 //
 // What this transport does NOT support (use wsTransport for those):
-//   • Multiple client→server calls after the initial batch — fetch upload
+//   • Multiple client→server calls after the initial batch. Fetch upload
 //     streaming is HTTP/2-only and inconsistent across browsers, so this
 //     transport is one-shot client→server.
 //   • Capabilities returned from the server can be invoked WITHIN this
@@ -92,7 +92,7 @@ function frameOne(bytes) {
  *
  * The first send() (or the burst of sends in the same microtask) becomes
  * the request body. Any sends after the request has been issued are
- * dropped — see the module comment for why fetch upload streaming isn't
+ * dropped. See the module comment for why fetch upload streaming isn't
  * a viable browser cross-target option.
  *
  * @param {string} url
@@ -186,7 +186,7 @@ export function httpStreamTransport(url, opts = {}) {
   return {
     send(bytes) {
       if (closed) return;
-      if (started) return;       // post-initial sends ignored — see module doc
+      if (started) return;       // post-initial sends ignored. See module doc
       outbox.push(new Uint8Array(bytes));
       scheduleStart();
     },
@@ -225,7 +225,7 @@ export function connectHttpStream(cpp, url, opts = {}) {
  * are written into the stream as length-prefixed binary chunks.
  *
  * The session ends when:
- *   • The client aborts the request (most common — user navigates away,
+ *   • The client aborts the request (most common. User navigates away,
  *     unsubscribes, or the AbortController fires).
  *   • All inbound calls have settled AND the user passes opts.endOnIdle:
  *     true. The default is to keep the stream open so subscription-style
@@ -313,7 +313,7 @@ export function createHttpStreamHandler(cpp, registry, opts = {}) {
         // Client disconnect → session close. The browser firing AbortError
         // surfaces here as `cancel()` below, but if the underlying socket
         // closes without an explicit abort, ReadableStream calls cancel
-        // too — both paths land at the same teardown.
+        // too. Both paths land at the same teardown.
       },
       cancel(reason) {
         sessionClosed = true;
@@ -325,7 +325,7 @@ export function createHttpStreamHandler(cpp, registry, opts = {}) {
       status: 200,
       headers: {
         "Content-Type": MIME,
-        // No buffering — push frames straight to the wire as soon as they
+        // No buffering. Push frames straight to the wire as soon as they
         // hit controller.enqueue. Some proxies will buffer chunked-encoded
         // bodies otherwise (defeats the streaming).
         "Cache-Control": "no-cache, no-transform",

@@ -1,6 +1,6 @@
 // Stream Cap'n Proto bytes from a ReadableStream (e.g. fetch response.body)
 // directly into wasm linear memory at cpp_in_ptr(). No intermediate JS-side
-// ArrayBuffer for the whole response — chunks land straight in wasm memory
+// ArrayBuffer for the whole response. Chunks land straight in wasm memory
 // as they arrive. The Reader returned reads from there in place.
 
 /**
@@ -39,7 +39,7 @@ export async function openFromStream(cpp, ReaderClass, stream) {
 
   if (pos === 0) throw new Error("stream produced no bytes");
   // cpp_any_open returns the data section pointer (truthy on success,
-  // 0 only for an empty struct — also valid). Pass through to the Reader
+  // 0 only for an empty struct. Also valid). Pass through to the Reader
   // so primitive getters can read from wasm memory directly.
   const dataPtr = cpp._exports.cpp_any_open(pos);
   return new ReaderClass(cpp, dataPtr);

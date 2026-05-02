@@ -39,7 +39,7 @@ function payloadFrame(values) {
   dv.setUint32(8, 0x00, true);
   dv.setUint16(12, dataWords, true);
   dv.setUint16(14, 0, true);
-  // Data section (16 bytes) — caller patches via the values param.
+  // Data section (16 bytes). Caller patches via the values param.
   if (values) out.set(values, 16);
   return out;
 }
@@ -139,13 +139,13 @@ test("pipeline: handler error surfaces as a per-call rejection", async () => {
   p.call(IFC_USER, METHOD, payloadFrame());
   p.call(IFC_ORDER, METHOD, payloadFrame());
   // The first call's result is fine; the second throws, but execute()
-  // returns a result array with throwing accessor only on access — actually
+  // returns a result array with throwing accessor only on access. Actually
   // our impl throws on iteration. Let me test by catching at the array
   // unpack point.
   let failed = false;
   try {
     const results = await p.execute();
-    // Accessing results[1] throws; it's a getter? No — execute throws on first error.
+    // Accessing results[1] throws; it's a getter? No. Execute throws on first error.
     void results;
   } catch (e) {
     failed = true;
@@ -164,7 +164,7 @@ test("pipeline: splice with bad fromCall index errors", async () => {
   const client = new RpcSession(cppA, a);
 
   const p = pipeline(client.bootstrap());
-  // Reference call index 5 (out of bounds — only 1 call).
+  // Reference call index 5 (out of bounds. Only 1 call).
   p.call(IFC_USER, METHOD, payloadFrame(), [
     { fromCall: 5, fromOffset: 0, length: 4, toOffset: 0 },
   ]);
@@ -202,7 +202,7 @@ test("pipeline: validator can reject a batch before dispatch", async () => {
   new RpcSession(cppB, b, registry, { bootstrap: {} });
   const client = new RpcSession(cppA, a);
 
-  // Big batch — validator rejects.
+  // Big batch. Validator rejects.
   const p = pipeline(client.bootstrap());
   for (let i = 0; i < 5; i++) p.call(IFC_USER, METHOD, payloadFrame());
   await assert.rejects(p.execute(), /batch too large/);
@@ -216,7 +216,7 @@ test("pipeline: validator can inspect interface IDs to enforce policy", async ()
   registry.register(ADMIN_IFC, METHOD, async () => payloadFrame());
   registerPipelineHandler(registry, {
     validate: (view) => {
-      // Mixing admin + user calls in one batch is forbidden — analog to
+      // Mixing admin + user calls in one batch is forbidden. Analog to
       // GraphQL "no mutations alongside queries" type rules.
       const hasAdmin = view.some(c => c.ifcId === ADMIN_IFC);
       const hasUser = view.some(c => c.ifcId === IFC_USER);

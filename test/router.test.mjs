@@ -54,7 +54,7 @@ test("router: routes by interface ID to the right backend", async () => {
   const back1 = await makeBackend(aHits, IFC_A);
   const back2 = await makeBackend(bHits, IFC_B);
 
-  // Each session on the gateway needs its own cpp instance — sessions share
+  // Each session on the gateway needs its own cpp instance. Sessions share
   // cpp_in/cpp_out scratch buffers via the wasm linear memory, so two sessions
   // on the same instance corrupt each other under concurrent forwarding.
   const cppGwToB1 = await loadWasm();

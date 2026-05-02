@@ -1,4 +1,4 @@
-// Playwright runner for big_bench.mjs — opens a Chromium tab, waits for
+// Playwright runner for big_bench.mjs. Opens a Chromium tab, waits for
 // results, prints a stats table.
 
 import { chromium } from "playwright";

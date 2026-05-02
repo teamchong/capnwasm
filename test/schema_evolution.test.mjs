@@ -71,7 +71,7 @@ test("schema evolution: v2 → v2 baseline", async () => {
 });
 
 test("schema evolution: v1 client → v2 server (new field defaults empty)", async () => {
-  // Old client emits a v1 message — only id + name. Server runs v2 schema
+  // Old client emits a v1 message. Only id + name. Server runs v2 schema
   // and reads it through the v2 Reader. The new email field has no bytes
   // on the wire; Cap'n Proto's wire spec says it reads as default ("" for
   // Text). No error, no crash, no corruption.
@@ -85,7 +85,7 @@ test("schema evolution: v1 client → v2 server (new field defaults empty)", asy
 test("schema evolution: v2 client → v1 server (new field silently ignored)", async () => {
   // New client emits a v2 message with an email field. Server runs v1
   // schema and decodes through the v1 Reader, which simply doesn't ask
-  // about field @2 — it never sees the email bytes. No error.
+  // about field @2. It never sees the email bytes. No error.
   const bytes = await encodeV2({
     id: 200n,
     name: "new-client",
@@ -105,7 +105,7 @@ test("schema evolution: full round-trip across versions stays bit-stable for sha
   const r1 = await decodeV1(bytes1);
   assert.equal(r1.id, 333n);
   assert.equal(r1.name, "rt");
-  // r1 is v1 — re-encoding through v1 produces a smaller message that
+  // r1 is v1. Re-encoding through v1 produces a smaller message that
   // omits the email entirely.
   const bytes2 = await encodeV1({ id: r1.id, name: r1.name });
   const r2 = await decodeV2(bytes2);
