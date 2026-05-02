@@ -265,6 +265,10 @@ export class RpcSession {
   // generating Finish/Release frames — they'd just be wasted bytes
   // (and would force the http-batch transport to filter them).
   #stateless = false;
+  // Metrics subscribers — registered via session.onMetric(fn). Empty by
+  // default; #emitMetric early-outs when no listeners so the hot path
+  // pays nothing when metrics aren't in use.
+  #metricSubscribers = null;
   // Per-(target, ifc, method) cache of empty-params Call frame bytes.
   // After the first wasm cpp_rpc_build_call for a tuple, subsequent calls
   // copy the cached bytes and patch the questionId at byte 28 — no wasm
@@ -384,6 +388,41 @@ export class RpcSession {
   }
 
   /**
+   * Subscribe to per-event metrics. Handler receives `(event, data)` where
+   * event is one of:
+   *   - "callStart"   { questionId, interfaceId, methodId, startTime }
+   *   - "callEnd"     { questionId, interfaceId, methodId, durationMs, status: "ok"|"err", error? }
+   *   - "dispatchStart" { answerId, interfaceId, methodId, startTime }
+   *   - "dispatchEnd"   { answerId, interfaceId, methodId, durationMs, status, error? }
+   *   - "bytesSent"   { bytes }
+   *   - "bytesReceived" { bytes }
+   *
+   * Returns an unsubscribe function. Multiple subscribers are supported.
+   * When zero subscribers are registered, the hot path skips event
+   * construction entirely — wire to OpenTelemetry / Prometheus / your
+   * own histogram only when you actually need it.
+   */
+  onMetric(fn) {
+    if (typeof fn !== "function") throw new TypeError("onMetric: fn must be a function");
+    if (!this.#metricSubscribers) this.#metricSubscribers = [];
+    this.#metricSubscribers.push(fn);
+    return () => {
+      if (!this.#metricSubscribers) return;
+      const i = this.#metricSubscribers.indexOf(fn);
+      if (i >= 0) this.#metricSubscribers.splice(i, 1);
+    };
+  }
+
+  #emitMetric(event, data) {
+    const subs = this.#metricSubscribers;
+    if (!subs || subs.length === 0) return;
+    for (const fn of subs) {
+      try { fn(event, data); }
+      catch { /* a broken metric handler must not break RPC */ }
+    }
+  }
+
+  /**
    * Request the peer's bootstrap capability. Returns an RpcCap handle that
    * can issue method calls; the underlying question id stays open until the
    * handle is released.
@@ -469,6 +508,25 @@ export class RpcSession {
     const d = deferred();
     this.#questions.set(questionId, makeQ(d, "call", undefined, undefined, undefined));
     if (opts?.signal) this.#wireAbort(opts.signal, questionId, d, "question");
+    // Metrics: only attach the timing wrapper when subscribers exist —
+    // otherwise this hot path skips the Date.now + then() allocation.
+    if (this.#metricSubscribers && this.#metricSubscribers.length > 0) {
+      const startTime = performance.now();
+      this.#emitMetric("callStart", { questionId, interfaceId, methodId, startTime });
+      d.promise.then(
+        () => this.#emitMetric("callEnd", {
+          questionId, interfaceId, methodId,
+          durationMs: performance.now() - startTime,
+          status: "ok",
+        }),
+        (err) => this.#emitMetric("callEnd", {
+          questionId, interfaceId, methodId,
+          durationMs: performance.now() - startTime,
+          status: "err",
+          error: err?.message ?? String(err),
+        }),
+      );
+    }
     // The pipeline cap lets the caller chain follow-up calls onto this
     // answer before it returns — those Calls go on the wire immediately,
     // with target=promisedAnswer(questionId). The peer holds them until
@@ -647,6 +705,9 @@ export class RpcSession {
   // ---- Internal: message dispatch -----------------------------------------
 
   #onBytes(bytes) {
+    if (this.#metricSubscribers && this.#metricSubscribers.length > 0) {
+      this.#emitMetric("bytesReceived", { bytes: bytes.length });
+    }
     this.#frames.push(bytes);
     let payload;
     while ((payload = this.#frames.next()) !== null) {
@@ -728,6 +789,23 @@ export class RpcSession {
     const targetId    = Number(dv.getBigUint64(out + 8,  true));
     const interfaceId = dv.getBigUint64(out + 16, true);  // stays BigInt — InterfaceId is genuinely u64
     const methodId    = dv.getUint16(out + 24, true);
+    const metricsActive = this.#metricSubscribers && this.#metricSubscribers.length > 0;
+    const dispatchStart = metricsActive ? performance.now() : 0;
+    if (metricsActive) {
+      this.#emitMetric("dispatchStart", { answerId, interfaceId, methodId, startTime: dispatchStart });
+    }
+    // Wrap the body so we emit a single dispatchEnd at the end regardless
+    // of which exit path runs.
+    let dispatchError = null;
+    const emitEnd = () => {
+      if (!metricsActive) return;
+      this.#emitMetric("dispatchEnd", {
+        answerId, interfaceId, methodId,
+        durationMs: performance.now() - dispatchStart,
+        status: dispatchError ? "err" : "ok",
+        ...(dispatchError ? { error: dispatchError } : {}),
+      });
+    };
     // Note: we do NOT materialize paramsBytes up front anymore. The handler
     // chooses whether to copy (ctx.paramsBytes()) or to read directly out
     // of rpc_reader (ctx.openParams). Either way, the read must happen
@@ -752,14 +830,18 @@ export class RpcSession {
       if (!targetAnswer.resolved) {
         try { await targetAnswer.readyPromise; }
         catch (err) {
-          this.#sendException(answerId, `pipeline target failed: ${err?.message ?? err}`);
+          dispatchError = `pipeline target failed: ${err?.message ?? err}`;
+          this.#sendException(answerId, dispatchError);
+          emitEnd();
           return;
         }
       }
       cap = targetAnswer.resolved;
     }
     if (!cap) {
-      this.#sendException(answerId, `no capability at target ${targetId}`);
+      dispatchError = `no capability at target ${targetId}`;
+      this.#sendException(answerId, dispatchError);
+      emitEnd();
       return;
     }
 
@@ -775,7 +857,9 @@ export class RpcSession {
     }
     const handler = this.#registry.dispatch(cap.target, idU64, methodId);
     if (!handler) {
-      this.#sendException(answerId, `unknown method 0x${idU64.toString(16)}:${methodId}`);
+      dispatchError = `unknown method 0x${idU64.toString(16)}:${methodId}`;
+      this.#sendException(answerId, dispatchError);
+      emitEnd();
       return;
     }
     // Build a context the handler can opt into for zero-copy receive +
@@ -822,7 +906,9 @@ export class RpcSession {
       if (r && typeof r.then === "function") handlerResult = await r;
       else handlerResult = r;
     } catch (err) {
-      this.#sendException(answerId, String(err?.message ?? err));
+      dispatchError = String(err?.message ?? err);
+      this.#sendException(answerId, dispatchError);
+      emitEnd();
       return;
     }
     // Handlers can satisfy a Call in one of four ways:
@@ -877,6 +963,7 @@ export class RpcSession {
       if (!len) throw new Error("cpp_rpc_build_return (results) failed");
       this.#sendFromOut(len);
     }
+    emitEnd();
   }
 
   #allocLocalCapId() {
@@ -1412,11 +1499,21 @@ export class RpcSession {
     this.#sendQueue = null;
     const total = this.#sendQueueBytes;
     this.#sendQueueBytes = 0;
-    if (q.length === 1) { this.#transport.send(q[0]); this.#maybeNotifyIdle(); return; }
+    if (q.length === 1) {
+      this.#transport.send(q[0]);
+      if (this.#metricSubscribers && this.#metricSubscribers.length > 0) {
+        this.#emitMetric("bytesSent", { bytes: q[0].length });
+      }
+      this.#maybeNotifyIdle();
+      return;
+    }
     const out = new Uint8Array(total);
     let p = 0;
     for (let i = 0; i < q.length; i++) { out.set(q[i], p); p += q[i].length; }
     this.#transport.send(out);
+    if (this.#metricSubscribers && this.#metricSubscribers.length > 0) {
+      this.#emitMetric("bytesSent", { bytes: total });
+    }
     this.#maybeNotifyIdle();
   }
 
