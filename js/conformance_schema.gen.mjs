@@ -399,6 +399,28 @@ function _parseSimplePredicate(fn) {
   m = falsyRe.exec(src); if (m) return { kind: "falsy", field: m[4] };
   return null;
 }
+function _isShapePreservingMap(fn, leafFields) {
+  let src;
+  try { src = Function.prototype.toString.call(fn); } catch (_) { return false; }
+  const m = /^\s*(?:\(\s*([a-zA-Z_$][\w$]*)\s*\)|([a-zA-Z_$][\w$]*))\s*=>\s*\(\s*\{([\s\S]*)\}\s*\)\s*;?\s*$/.exec(src);
+  if (!m) return false;
+  const param = m[1] || m[2];
+  const body = m[3];
+  if (/[\/{\[\`'"]/.test(body)) return false;
+  const entries = body.split(",").map((s) => s.trim()).filter(Boolean);
+  if (entries.length !== leafFields.length) return false;
+  if (!/^[a-zA-Z_$][\w$]*$/.test(param)) return false;
+  const entryRe = new RegExp("^([a-zA-Z_$][\\w$]*)\\s*:\\s*" + param + "\\.([a-zA-Z_$][\\w$]*)$");
+  const set = new Set(leafFields);
+  const seen = new Set();
+  for (let i = 0; i < entries.length; i++) {
+    const em = entryRe.exec(entries[i]);
+    if (!em || em[1] !== em[2]) return false;
+    if (!set.has(em[1]) || seen.has(em[1])) return false;
+    seen.add(em[1]);
+  }
+  return true;
+}
 function _planRaw(fields, fn) {
   const selected = [];
   const seen = new Set();
@@ -475,10 +497,12 @@ function _compilePlan(selected, outerListMapIdx, outerSlice) {
   }
   const nested = [];
   for (const [name, raw] of nestedRaw) nested.push({ name, plan: _compilePlan(raw, -1, null) });
-  const listMap = listMapRaw.map(({ name, inner, fn, filter }) => ({
-    name, inner, fn, filter,
-    plan: _planDraft(_STRUCT_FIELDS[inner], fn).plan,
-  }));
+  const listMap = listMapRaw.map(({ name, inner, fn, filter }) => {
+    const innerPlan = _planDraft(_STRUCT_FIELDS[inner], fn).plan;
+    const shapePreserving = (innerPlan.nested.length === 0 && innerPlan.listMap.length === 0)
+      && _isShapePreservingMap(fn, innerPlan.leaf);
+    return { name, inner, fn, filter, plan: innerPlan, shapePreserving };
+  });
   return { leaf, nested, listMap, outerListMapPos, outerSlice };
 }
 function _planDraft(fields, fn) {
@@ -532,7 +556,8 @@ function _runDraft(cpp, fields, fn) {
     const desc = fields[item.name];
     if (desc && _STRUCT_FIELDS[item.inner] && item.plan.nested.length === 0 && item.plan.listMap.length === 0) {
       const innerFields = _STRUCT_FIELDS[item.inner];
-      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf, item.fn, plan.outerSlice, item.filter);
+      const fastFn = item.shapePreserving ? null : item.fn;
+      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf, fastFn, plan.outerSlice, item.filter);
       if (fast !== null) return fast;
     }
   }

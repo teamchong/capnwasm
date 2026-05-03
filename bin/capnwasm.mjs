@@ -1250,6 +1250,42 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`  m = falsyRe.exec(src); if (m) return { kind: "falsy", field: m[4] };`);
   lines.push(`  return null;`);
   lines.push(`}`);
+  // Shape-preserving identity detector. Matches exactly:
+  //   (u) => ({ a: u.a, b: u.b, ... })   /   u => ({ a: u.a, b: u.b, ... })
+  // where every output key equals the input parameter's same-named property
+  // and the set of keys equals the projected leaf fields. When matched, the
+  // decoder can emit the row literal directly and skip calling the user's
+  // mapFn — same JS object value, one fewer function call and allocation
+  // per row. Any deviation (spread, computed values, ternaries, comments,
+  // strings, nested objects, function expression form) returns false and
+  // the slow path runs the user's callback as-is.
+  lines.push(`function _isShapePreservingMap(fn, leafFields) {`);
+  lines.push(`  let src;`);
+  lines.push(`  try { src = Function.prototype.toString.call(fn); } catch (_) { return false; }`);
+  lines.push(`  const m = /^\\s*(?:\\(\\s*([a-zA-Z_$][\\w$]*)\\s*\\)|([a-zA-Z_$][\\w$]*))\\s*=>\\s*\\(\\s*\\{([\\s\\S]*)\\}\\s*\\)\\s*;?\\s*$/.exec(src);`);
+  lines.push(`  if (!m) return false;`);
+  lines.push(`  const param = m[1] || m[2];`);
+  lines.push(`  const body = m[3];`);
+  // Conservative content gate: any of these characters means the body is
+  // non-trivial (string, comment, nested object, regex, computed key,
+  // template literal, etc.). Bail rather than try to parse precisely.
+  lines.push(`  if (/[\\/{\\[\\\`'"]/.test(body)) return false;`);
+  lines.push(`  const entries = body.split(",").map((s) => s.trim()).filter(Boolean);`);
+  lines.push(`  if (entries.length !== leafFields.length) return false;`);
+  // RegExp.escape isn't ubiquitous yet; param comes from a captured \\w+
+  // group so it's already safe to splice. Guard with a runtime check.
+  lines.push(`  if (!/^[a-zA-Z_$][\\w$]*$/.test(param)) return false;`);
+  lines.push(`  const entryRe = new RegExp("^([a-zA-Z_$][\\\\w$]*)\\\\s*:\\\\s*" + param + "\\\\.([a-zA-Z_$][\\\\w$]*)$");`);
+  lines.push(`  const set = new Set(leafFields);`);
+  lines.push(`  const seen = new Set();`);
+  lines.push(`  for (let i = 0; i < entries.length; i++) {`);
+  lines.push(`    const em = entryRe.exec(entries[i]);`);
+  lines.push(`    if (!em || em[1] !== em[2]) return false;`);
+  lines.push(`    if (!set.has(em[1]) || seen.has(em[1])) return false;`);
+  lines.push(`    seen.add(em[1]);`);
+  lines.push(`  }`);
+  lines.push(`  return true;`);
+  lines.push(`}`);
   lines.push(`function _planRaw(fields, fn) {`);
   lines.push(`  const selected = [];`);
   lines.push(`  const seen = new Set();`);
@@ -1347,10 +1383,15 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`  }`);
   lines.push(`  const nested = [];`);
   lines.push(`  for (const [name, raw] of nestedRaw) nested.push({ name, plan: _compilePlan(raw, -1, null) });`);
-  lines.push(`  const listMap = listMapRaw.map(({ name, inner, fn, filter }) => ({`);
-  lines.push(`    name, inner, fn, filter,`);
-  lines.push(`    plan: _planDraft(_STRUCT_FIELDS[inner], fn).plan,`);
-  lines.push(`  }));`);
+  lines.push(`  const listMap = listMapRaw.map(({ name, inner, fn, filter }) => {`);
+  lines.push(`    const innerPlan = _planDraft(_STRUCT_FIELDS[inner], fn).plan;`);
+  // shapePreserving applies only when the inner plan is leaf-only (no
+  // nested struct or list-of-struct). Otherwise the user's mapFn is doing
+  // structural work the literal cannot replicate.
+  lines.push(`    const shapePreserving = (innerPlan.nested.length === 0 && innerPlan.listMap.length === 0)`);
+  lines.push(`      && _isShapePreservingMap(fn, innerPlan.leaf);`);
+  lines.push(`    return { name, inner, fn, filter, plan: innerPlan, shapePreserving };`);
+  lines.push(`  });`);
   lines.push(`  return { leaf, nested, listMap, outerListMapPos, outerSlice };`);
   lines.push(`}`);
   lines.push(`function _planDraft(fields, fn) {`);
@@ -1433,7 +1474,8 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`    const desc = fields[item.name];`);
   lines.push(`    if (desc && _STRUCT_FIELDS[item.inner] && item.plan.nested.length === 0 && item.plan.listMap.length === 0) {`);
   lines.push(`      const innerFields = _STRUCT_FIELDS[item.inner];`);
-  lines.push(`      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf, item.fn, plan.outerSlice, item.filter);`);
+  lines.push(`      const fastFn = item.shapePreserving ? null : item.fn;`);
+  lines.push(`      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf, fastFn, plan.outerSlice, item.filter);`);
   lines.push(`      if (fast !== null) return fast;`);
   lines.push(`    }`);
   lines.push(`  }`);
