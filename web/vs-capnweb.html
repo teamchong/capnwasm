@@ -41,31 +41,31 @@
         <tbody>
           <tr>
             <td>Burst 1000 calls (per-call)</td>
-            <td class="win">2.5 &mu;s</td>
-            <td>7.9 &mu;s</td>
+            <td id="live-burst-wasm" class="win">measuring…</td>
+            <td id="live-burst-web">measuring…</td>
             <td>n/a</td>
-            <td class="note">3.2&times; faster than capnweb</td>
+            <td id="live-burst-note" class="note">live</td>
           </tr>
           <tr>
             <td>64 KB text echo round-trip</td>
-            <td class="win">96 &mu;s</td>
-            <td>365 &mu;s</td>
+            <td id="live-text64-wasm" class="win">measuring…</td>
+            <td id="live-text64-web">measuring…</td>
             <td>n/a</td>
-            <td class="note">3.8&times; faster</td>
+            <td id="live-text64-note" class="note">live</td>
           </tr>
           <tr>
             <td>4 KB text echo</td>
-            <td class="win">17 &mu;s</td>
-            <td>26 &mu;s</td>
+            <td id="live-text4-wasm" class="win">measuring…</td>
+            <td id="live-text4-web">measuring…</td>
             <td>n/a</td>
-            <td class="note">1.5&times; faster</td>
+            <td id="live-text4-note" class="note">live</td>
           </tr>
           <tr>
             <td>Single tiny call</td>
-            <td class="win">8.5 &mu;s</td>
-            <td>14 &mu;s</td>
+            <td id="live-tiny-wasm" class="win">measuring…</td>
+            <td id="live-tiny-web">measuring…</td>
             <td>n/a</td>
-            <td class="note">1.7&times; faster</td>
+            <td id="live-tiny-note" class="note">live</td>
           </tr>
           <tr>
             <td>Wire bytes for 4 KB binary blob (gzip)</td>
@@ -76,10 +76,10 @@
           </tr>
           <tr>
             <td>Sparse field access (read 3 of 32)</td>
-            <td>26 &mu;s</td>
-            <td>26 &mu;s</td>
+            <td id="live-sparse-wasm">measuring…</td>
+            <td id="live-sparse-web">measuring…</td>
             <td>&mdash;</td>
-            <td class="note">tied</td>
+            <td id="live-sparse-note" class="note">live</td>
           </tr>
         </tbody>
       </table>
@@ -126,7 +126,7 @@
       <h3>4. Cap-passing micro-overhead</h3>
       <table class="cmp small">
         <thead><tr><th></th><th>capnwasm</th><th>capnweb</th></tr></thead>
-        <tbody><tr><td><code>getChild &rarr; call</code> round-trip</td><td>13 &mu;s</td><td class="win">12 &mu;s</td></tr></tbody>
+        <tbody><tr><td><code>getChild &rarr; call</code> round-trip</td><td id="live-cap-wasm">measuring…</td><td id="live-cap-web" class="win">measuring…</td></tr></tbody>
       </table>
       <p>Roughly tied &mdash; capnwasm is ~5% slower on the cap-passing fast path. Doesn&apos;t matter unless you&apos;re doing very deep cap chains; both are dominated by network RTT in any real deployment.</p>
 
