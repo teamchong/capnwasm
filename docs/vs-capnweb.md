@@ -64,74 +64,46 @@ The 26× sequential gap is structural, not implementation: capnweb's `BatchClien
 
 These are real, not handwave-able-away.
 
-### 1. Bundle size: tier matters — read-only is now under capnweb; full RPC is ~2×
+### 1. Bundle size: 2.0–2.6× larger depending on what you import
 
-capnwasm ships in two tiers, so consumers don't pay for what they don't use.
-The **read-only** path (`import "capnwasm/reader"`) is what most apps need:
-they consume capnwasm responses, project fields via `draft()` / per-field
-getters, never build their own messages or open RPC sessions. The **full**
-path (`import "capnwasm"` or `capnwasm/browser` + `capnwasm/rpc`) adds the
-message builder, the RPC client, the legacy lazy reader, and the tape codec
-for users who do.
-
-All sizes are minified-then-gzipped (the `dist/` build that ships in npm).
-Apples-to-apples: both libraries at the same compression. Workers measures
-the deploy bundle in **gzip** (1 MB Free / 10 MB Paid limit per
+All sizes minified-then-gzipped (the `dist/` build that ships in npm).
+Apples-to-apples: both libraries measured at the same compression. Workers
+measures the deploy bundle in **gzip** (1 MB Free / 10 MB Paid limit per
 `wrangler deploy`); browsers receive **brotli** when the host serves it
-(Cloudflare/Vercel/Netlify auto-compress; GitHub Pages still falls back to
-gzip).
+(Cloudflare/Vercel/Netlify auto-compress with brotli; GitHub Pages still
+falls back to gzip).
 
 | | capnweb gz / br | capnwasm gz / br | ratio gz / br |
 |---|---|---|---|
-| Whole library, RPC-ready | **21.1 / 18.1 KB** | - | - |
-| **Read-only client** (capnwasm/reader) | n/a | **21.1 / 18.0 KB** | **0.997× / 0.991×** |
-| Wasm runtime only (decode capnp messages + dynamic builder) | n/a | **34 / 28 KB** | - |
+| Whole library, RPC-ready | **21 / 18 KB** | - | - |
+| Wasm runtime only (read capnp messages) | n/a | **34 / 28 KB** | - |
 | WebSocket RPC (transport + sessions + caps) | 21 / 18 KB | **39 / 33 KB** | 1.9× / 1.8× |
 | Typed proxy + HTTP-batch (typical browser shape) | 21 / 18 KB | **41 / 35 KB** | 1.95× / 1.96× |
 | All four transports + typed + dynamic | 21 / 18 KB | **46 / 40 KB** | 2.2× / 2.2× |
 
-For consume-only clients (the common case) capnwasm's read path is now
-actually a hair *under* capnweb on bytes-on-the-wire — by ~60 bytes gzip /
-~160 bytes brotli, not a meaningful UX delta, but the "wasm RPC libraries
-are always larger than pure JS" framing no longer holds for the read
-direction. Brotli does **not** close the gap meaningfully for the full
-path: capnweb compresses about as well with brotli as we do, so the ~2×
-ratio for the full RPC tier stays roughly constant.
+Brotli does **not** close the gap meaningfully. Capnweb compresses about
+as well with brotli as we do, so the ratios stay roughly constant. The
+absolute on-wire delta (~17 KB at the typical-shape line) is the cost of
+shipping a real wasm runtime.
 
-How the read-only path got there:
+If your bundle budget is tight and you don't need binary wire interop,
+**capnweb is the smaller choice**. There is no way for capnwasm to reach
+21 KB while still doing RPC; the wasm runtime is what enables the rest of
+the wins.
 
-- A `#ifdef CW_READER_ONLY` switch in `cpp/wrapper.cpp` strips out the
-  builder, RPC layer, lazy reader, and tape codec from the production
-  wasm. With `--gc-sections` and matching export removal, that drops the
-  wasm from ~83 KB raw to ~47 KB raw.
-- A build-time patch on `kj/debug.c++` replaces the `strerror_r(errno,
-  buffer, sizeof(buffer))` calls in KJ's syscall-error formatter with
-  inline empty-string assignments. KJ's syscall path is unreachable
-  from the read code path; the patch keeps libc's `strerror_r` symbol
-  unreferenced so `--gc-sections` drops the ~1.5 KB errno-name table.
-- A self-contained `js/reader.mjs` shim, written by hand, doesn't import
-  the shared `cpp_loader.mjs`. It implements only the bits the read
-  path needs (no LazyReader class, no `NAME_ENCODE_CACHE`, WASI
-  `fd_write` stubbed to a no-op since reader-mode wasm has `KJ_LOG`
-  compiled out and no syscalls). Cuts the JS shim from ~1.2 KB gzip
-  to ~600 B.
-- The slim wasm dropped from 39 → 33 KB across earlier passes that the
-  reader build inherits: moving the tape codec out of production,
-  stripping KJ assertion strings (both condition text AND caller
-  `__VA_ARGS__` messages), auditing the export list against actual JS
-  callers (10 dead RPC summary getters whose work `cpp_rpc_decode`
-  now does inline), switching to WASI reactor mode, replacing the
-  default-constructed AnyStruct::Reader stack with a placement-new
-  union, and turning `KJ_LOG`/`KJ_DBG` into no-ops in the strip
-  header (they reach formatted-logging machinery our wasm has
-  nowhere to send).
-
-For the full RPC path, the absolute on-wire delta (~15 KB at the typical
-shape line) is the cost of shipping a real wasm runtime + message builder
-+ RPC client. There is no way for that tier to reach 21 KB without giving
-up either the wasm runtime, the builder, or the RPC client — and those
-are what enable the wins below. Pick the right entry point for what your
-code does.
+A `capnwasm/reader` subpath also exists (~21 KB gz / 18 KB br, decoder
+only — no builder, no RPC, no transport) for users who already have
+Cap'n Proto bytes coming from somewhere else. It is not a capnweb
+replacement: capnweb gives you a working RPC client, `capnwasm/reader`
+gives you a decoder for an existing wire. The right comparison for the
+reader is `JSON.parse` (0 KB, built into V8) — capnwasm/reader only
+makes sense if your wire is binary Cap'n Proto for reasons other than
+bundle size. How it got that small (`#ifdef CW_READER_ONLY` strip,
+build-time `strerror_r` patch on `kj/debug.c++`, self-contained JS
+shim with no LazyReader and stubbed WASI `fd_write`) is in
+[notes-from-the-trenches](notes-from-the-trenches.md); the win is that
+adding capnp decode to a JS app costs ~21 KB in addition to whatever
+transport you bring, not that capnwasm beats capnweb on bundle size.
 
 ### 2. Cold start: now essentially tied in Node, still slower in the browser
 
@@ -251,14 +223,9 @@ If your app fits inside "fetch some data, render it, occasionally POST" then pla
 
 **Choose capnweb when:**
 - Pure JS-to-JS, all-text-shaped payloads
-- You want a single library that builds and consumes messages with one tier of bundle (21 KB gz)
+- You want the smallest possible bundle (21 KB gz)
 - You don't need wire interop with non-JS peers
 - Schema friction is a deal-breaker
-
-(For consume-only clients the bundle argument has weakened: `capnwasm/reader`
-is now ~21 KB gz / 18 KB br too, slightly under capnweb. The remaining
-capnweb advantages are operational simplicity — one bundle, no codegen,
-no two-tier import story.)
 
 **Choose capnwasm when:**
 - You're moving binary data (images, audio, ML models, embeddings)

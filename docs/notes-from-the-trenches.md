@@ -226,10 +226,8 @@ In-process bench, both peers in the same Node process via a memory transport pai
 
 | | capnwasm | capnweb |
 |---|---|---|
-| Bundle gz, **read-only** path (`capnwasm/reader`) | **21 KB** | 21 KB |
-| Bundle br, **read-only** path (browser on-wire) | **18 KB** | **18 KB** |
-| Bundle gz, full RPC + typed + HTTP-batch (Workers deploy limit) | 41 KB | 21 KB |
-| Bundle br, full RPC + typed + HTTP-batch (browser on-wire) | 35 KB | 18 KB |
+| Bundle gz (Workers deploy limit) | 41 KB | 21 KB |
+| Bundle br (browser on-wire via Cloudflare/Vercel/Netlify) | **35 KB** | **18 KB** |
 | Cold start | ~3 ms | ~0.2 ms |
 | Multi-language wire interop | yes | no |
 | OpenAPI client codegen | yes | structurally no |
