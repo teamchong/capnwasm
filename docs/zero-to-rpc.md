@@ -145,5 +145,5 @@ One TCP write per direction. Cap'n Proto's wire format is the bytes you see goin
 - **Multiple methods**: add more `interface`s and `methods`; the codegen produces one register-handler per method.
 - **Capabilities (interface returned from a method)**: `interface` types are first-class in Cap'n Proto. Return one from a method, the client gets a typed handle and can call it back. See [`test/rpc.test.mjs`](../test/rpc.test.mjs) for a worked example.
 - **Streaming responses**: see `cap.callStream()` and `registry.registerStream()`. Async generators on the server, async iterables on the client.
-- **Browser client**: replace `connectWebSocket` with the same call against your hosted server's wss:// endpoint. The wasm fetches as a separate asset (42 KB gzip).
+- **Browser client**: replace `connectWebSocket` with the same call against your hosted server's wss:// endpoint. The wasm fetches as a separate asset (~33 KB gzip for the full RPC bundle; if your client only consumes responses without sending requests, `capnwasm/reader` ships ~21 KB gzip / 18 KB brotli — slightly smaller than capnweb).
 - **REST instead of RPC**: write a TypeScript interface with `@rest` directives and use `npx capnwasm gen` against it. See the [REST runtime section](../README.md#rest-runtime-details).

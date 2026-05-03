@@ -48,6 +48,7 @@ gRPC-Web requires a **proxy** because browsers can't speak HTTP/2 trailers. That
 
 | | gzip | brotli (Cloudflare Pages / Vercel / Netlify on-wire) |
 |---|---|---|
+| **capnwasm/reader** (consume responses, no RPC, no builder) | **21 KB** | **18 KB** |
 | capnwasm/browser (~1.4 KB JS shim + 33 KB wasm) | 34 KB | **28 KB** |
 | capnwasm + RPC + typed proxy + HTTP-batch | 41 KB | **35 KB** |
 | gRPC-Web (`@grpc/grpc-js` + generated code, typical) | 80–120 KB | 60–90 KB |

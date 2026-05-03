@@ -4,9 +4,12 @@
 
 I built this to learn how Cloudflare's [capnweb](https://github.com/cloudflare/capnweb) works under the hood and to understand the tradeoffs it makes. capnweb deliberately dropped Cap'n Proto's binary wire format to fit a 21 KB JS-only bundle; I wanted to see what the inverse experiment looks like, keep the binary wire and statically compile the upstream Cap'n Proto C++ to wasm, and measure what that costs and what it buys.
 
-Both points on the curve are valid. capnwasm sits at: ~17 KB more brotli than capnweb, but a real Cap'n Proto runtime in the browser, raw bytes for binary data, sparse-access reads on large payloads, and wire interop with C++/Rust/Go services. The numbers below are findings from this exploration, not a scoreboard.
+The bundle story is **two-tier**:
 
-Slim runtime: 33 KB gz / 28 KB brotli for the wasm-only path; 41 KB gz / 35 KB brotli for the typical typed-proxy + HTTP-batch shape.
+- **`capnwasm/reader`** (read-only path) — **21.1 KB gzip / 18.0 KB brotli**, slightly smaller than capnweb in both compressions. Use this when your client only consumes capnwasm responses (the common case): `openX()` + `draft()` projections, no message building, no RPC client.
+- **`capnwasm` / `capnwasm/browser`** (full path) — **~33 KB gzip / ~28 KB brotli** for wasm + read; **~39 KB / ~33 KB** with RPC; **~41 KB / ~35 KB** for the typical typed-proxy + HTTP-batch shape. Use this when you also build messages, send requests, or open RPC sessions. Full path is ~2× capnweb because you carry a real wasm runtime, the message builder, and the RPC client.
+
+Both points on the curve are valid. The numbers below are findings from this exploration, not a scoreboard.
 
 ```js
 // 1. Write a schema:           user.capnp
@@ -81,6 +84,8 @@ const r = openUser(cpp, bytes);
 console.log(r.id, r.name);   // typed getters; V8-inlinable
 ```
 
+> **Reader-only client?** If your client never builds messages or opens RPC sessions, swap `import { load } from "capnwasm"` for `import { load } from "capnwasm/reader"`. Same generated `openUser` works against the smaller `dist/capnp.reader.wasm`. Bundle drops to 21.1 KB gzip / 18.0 KB brotli — slightly under capnweb. Calling `buildUser` against this smaller runtime throws because the builder exports aren't shipped; pick the right entry point for what your code actually does.
+
 **2. TypeScript interface → typed REST client (your own backend)**
 
 ```ts
@@ -150,14 +155,15 @@ In plain English, `compat` is the old-contract vs new-contract check: removed op
 
 ## What's in the box
 
-All entry-point sizes are minified-then-gzipped (the `dist/` build that ships in the npm package). Picking one transport is the typical browser shape; "everything" pulls every transport for the rare app that wants WS + HTTP-batch + HTTP-stream + postMessage in one bundle.
+All entry-point sizes are minified-then-gzipped (the `dist/` build that ships in the npm package). The reader-only row is the right pick if your client only consumes capnwasm responses (no message building, no RPC sessions); it ships a smaller wasm via `#ifdef CW_READER_ONLY` plus a self-contained JS shim with no LazyReader and a no-op WASI fd_write. Everything below it is the full path with builder + RPC + lazy reader + tape codec.
 
 | | what | gzip | brotli |
 |---|---|---|---|
-| `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, brotli+base64-inlined wasm). Requires Chrome 124+ / FF 126+ / Safari 18+ / Node 18+ for `DecompressionStream("brotli")`. Older runtimes: use `capnwasm/browser`. **Not Workers-compatible at runtime** - uses `WebAssembly.compile(bytes)` which Workers blocks (dynamic codegen). | **38 KB** | **36 KB** |
-| `import "capnwasm/browser"` | wasm-only path: shim + loader + slim wasm. Read capnp messages, no RPC. **Workers-compatible** when paired with `import wasm from "capnwasm/capnp.slim.wasm"` (Wrangler bundles + precompiles the .wasm). | **33 KB** | **28 KB** |
+| `import "capnwasm/reader"` | **read-only path**: bundle-size minimum for clients that only project capnwasm responses via `draft()` / per-field getters. No message builder, no RPC client, no lazy reader, no tape codec. **Now slightly smaller than capnweb in both compressions** (capnweb: 21.1 KB gz / 18.1 KB br). | **21.1 KB** | **18.0 KB** |
+| `import "capnwasm/browser"` | full wasm path: shim + loader + slim wasm. Read capnp messages and use the dynamic builder, no RPC. **Workers-compatible** when paired with `import wasm from "capnwasm/capnp.slim.wasm"` (Wrangler bundles + precompiles the .wasm). | **33 KB** | **28 KB** |
 | `+ "capnwasm/rpc"` | adds the RPC layer (sessions, caps, streaming, all wire-conformance handlers) | **39 KB** | **33 KB** |
 | `+ "capnwasm/typed" + "capnwasm/http-batch"` | typed proxy + HTTP-batch transport - the typical browser app shape | **41 KB** | **35 KB** |
+| `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, brotli+base64-inlined wasm). Requires Chrome 124+ / FF 126+ / Safari 18+ / Node 18+ for `DecompressionStream("brotli")`. Older runtimes: use `capnwasm/browser`. **Not Workers-compatible at runtime** - uses `WebAssembly.compile(bytes)` which Workers blocks (dynamic codegen). | **38 KB** | **36 KB** |
 | All four transports + typed + dynamic | every transport (WS, HTTP-batch, HTTP-stream, postMessage) + typed proxy + dynamic-schema reader | **46 KB** | **40 KB** |
 
 The gzip column is what Cloudflare Workers measures against the deploy bundle limit (1 MB Free / 10 MB Paid, per `wrangler deploy`). The brotli column is what modern browsers actually receive over the wire (Cloudflare/Vercel/Netlify all serve `Content-Encoding: br` automatically).
@@ -213,13 +219,14 @@ For browsers, prefer `capnwasm/browser`: a tiny JS shim + a separately-fetched 3
 
 | | capnwasm | capnweb |
 |---|---|---|
-| Decode capnp messages, no RPC | **28 KB br** | n/a |
+| **Read-only client** (consume capnwasm responses, no RPC, no builder) | **18.0 KB br** | 18.1 KB br |
+| Decode capnp messages + dynamic builder, no RPC | **28 KB br** | n/a |
 | + RPC (sessions, caps, streaming) | **33 KB br** | 18 KB br |
 | + typed proxy + HTTP-batch (typical browser app) | **35 KB br** | 18 KB br |
 
-That's roughly 2× larger than capnweb in absolute bytes. Apples-to-apples (brotli for both, capnweb compresses just as well with brotli as with gzip, so it does not close the gap). The extra ~17 KB buys you a real Cap'n Proto C++ runtime in the browser: binary wire, zero-copy field reads, sparse-access perf, raw bytes for binary blobs (capnweb has to base64-encode → +33% wire bytes per blob), and wire compatibility with C++/Rust/Go peers. Things capnweb structurally can't have.
+For consume-only clients (the common case) the read path is now a hair *under* capnweb on bytes-on-the-wire — by ~150 bytes, not a meaningful UX delta, but the "wasm RPC libraries are always larger than pure JS" framing no longer holds for the read direction. Apps that also build messages, send requests, or open RPC sessions ship the full path and pay roughly 2× capnweb because they carry a real Cap'n Proto C++ runtime, the message builder, and the RPC client. The extra bytes there buy: binary wire, zero-copy field reads, sparse-access perf, raw bytes for binary blobs (capnweb has to base64-encode → +33% wire bytes per blob), and wire compatibility with C++/Rust/Go peers. Things capnweb structurally can't have.
 
-GitHub Pages / plain nginx without brotli fall back to the gzip column in the table below.
+GitHub Pages / plain nginx without brotli fall back to the gzip column in the table above.
 
 ---
 
