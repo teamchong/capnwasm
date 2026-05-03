@@ -187,7 +187,13 @@ function emitRestHarness(lines, manifest) {
   lines.push(`// ---- REST contract tests ----`);
   lines.push(`// REST contract assertions need a real base URL. Set`);
   lines.push(`// CAPNWASM_HARNESS_REST_TARGET=https://staging.example.com to run.`);
+  lines.push(`//`);
+  lines.push(`// On failure, a snapshot is written to`);
+  lines.push(`// CAPNWASM_HARNESS_SNAPSHOT_DIR (default ./capnwasm-snapshots/)`);
+  lines.push(`// capturing the operation id, args, request, response, and error.`);
+  lines.push(`// Replay with: npx capnwasm harness --replay <snapshot>`);
   lines.push(`const REST_TARGET = process.env.CAPNWASM_HARNESS_REST_TARGET;`);
+  lines.push(`import { recordOnFailure, recordingFetch } from "capnwasm/harness/snapshot";`);
   lines.push(``);
 
   for (const api of manifest.restApis ?? []) {
@@ -195,19 +201,22 @@ function emitRestHarness(lines, manifest) {
     for (const m of api.methods ?? []) {
       const args = (m.params ?? []).map((p) => synthesizeRestParamLiteral(p, manifest));
       const argList = args.join(", ");
+      const argsLiteral = "[" + args.join(", ") + "]";
       const skipMsg = `${m.operationId}: set CAPNWASM_HARNESS_REST_TARGET to run`;
       lines.push(`test(${JSON.stringify(m.operationId + ": " + m.httpMethod + " " + m.path)}, async (t) => {`);
       lines.push(`  if (!REST_TARGET) { t.skip(${JSON.stringify(skipMsg)}); return; }`);
-      lines.push(`  const client = gen.${factoryName}({ baseUrl: REST_TARGET });`);
-      lines.push(`  const result = await client.${m.name}(${argList});`);
-      lines.push(`  // For async-iterable / paginated methods, drain the first`);
-      lines.push(`  // page so we exercise the response decode without committing`);
-      lines.push(`  // to walking arbitrarily large pagination histories.`);
+      lines.push(`  await recordOnFailure({ operationId: ${JSON.stringify(m.operationId)}, transport: "rest", args: ${argsLiteral} }, async () => {`);
+      lines.push(`    const client = gen.${factoryName}({ baseUrl: REST_TARGET, fetch: recordingFetch() });`);
+      lines.push(`    const result = await client.${m.name}(${argList});`);
+      lines.push(`    // For async-iterable / paginated methods, drain the first`);
+      lines.push(`    // page so we exercise the response decode without committing`);
+      lines.push(`    // to walking arbitrarily large pagination histories.`);
       if (m.isAsyncIterable) {
-        lines.push(`  for await (const _item of result) break;`);
+        lines.push(`    for await (const _item of result) break;`);
       } else {
-        lines.push(`  assert.ok(result !== undefined, ${JSON.stringify(m.operationId + ": result was undefined")});`);
+        lines.push(`    assert.ok(result !== undefined, ${JSON.stringify(m.operationId + ": result was undefined")});`);
       }
+      lines.push(`  });`);
       lines.push(`});`);
       lines.push(``);
     }

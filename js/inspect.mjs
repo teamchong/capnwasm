@@ -433,3 +433,72 @@ export async function inspectResponse(response, opts) {
 export async function inspectFetch(fetchPromise, opts) {
   return inspect(fetchPromise, opts);
 }
+
+// ---- Copy-paste-from-DevTools entry points -----------------------------
+//
+// The Network panel's "Copy response" gives you a base64 string for
+// binary bodies; the WebSocket Frames tab shows individual frames you
+// can copy as hex. Both entry points decode whatever you pasted, then
+// route into the standard inspect() pipeline.
+//
+// Workflow:
+//   DevTools Network panel → right-click a capnp response → Copy response
+//   → paste into console:
+//     cw.inspectBase64("CAAAAAYAAAA...")
+//
+//   DevTools WS panel → right-click a frame → Copy
+//   → paste into console:
+//     cw.inspectHex("08 00 00 00 06 00 00 00 ...")
+
+/**
+ * Decode a base64-encoded capnp message and inspect. Whitespace and
+ * newlines are tolerated (DevTools "Copy response" sometimes wraps).
+ * Both standard and URL-safe base64 are accepted.
+ */
+export async function inspectBase64(b64, opts) {
+  if (typeof b64 !== "string") {
+    throw new TypeError("inspectBase64(): expected base64 string, got " + typeof b64);
+  }
+  const cleaned = b64.replace(/[\s\n\r]+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+  let bytes;
+  try {
+    if (typeof atob === "function") {
+      const bin = atob(cleaned);
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } else {
+      // Node fallback. Browsers always have atob.
+      bytes = new Uint8Array(Buffer.from(cleaned, "base64"));
+    }
+  } catch (err) {
+    throw new Error(
+      "inspectBase64(): failed to decode base64 (" + (err?.message ?? err) + "). " +
+      "Make sure you copied the response body, not the response headers / cURL line."
+    );
+  }
+  return inspect(bytes, opts);
+}
+
+/**
+ * Decode a hex-encoded capnp message and inspect. Tolerates spaces,
+ * commas, "0x" prefixes, and newlines, so you can paste DevTools'
+ * various hex formats verbatim.
+ */
+export async function inspectHex(hex, opts) {
+  if (typeof hex !== "string") {
+    throw new TypeError("inspectHex(): expected hex string, got " + typeof hex);
+  }
+  const cleaned = hex.replace(/0x/gi, "").replace(/[\s,;:]+/g, "").toLowerCase();
+  if (cleaned.length === 0) throw new Error("inspectHex(): empty input after cleaning");
+  if (cleaned.length % 2 !== 0) {
+    throw new Error("inspectHex(): odd number of hex digits (" + cleaned.length + "); did you copy a partial byte?");
+  }
+  if (!/^[0-9a-f]+$/.test(cleaned)) {
+    throw new Error("inspectHex(): non-hex characters in input. Strip non-hex prefixes / suffixes before pasting.");
+  }
+  const bytes = new Uint8Array(cleaned.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(cleaned.substr(i * 2, 2), 16);
+  }
+  return inspect(bytes, opts);
+}

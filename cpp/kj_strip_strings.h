@@ -4,7 +4,7 @@
 // for opaque error messages.
 //
 // What still works: the assertion fires, an exception is thrown, the file
-// name and line number are preserved (those are tiny — one filename per
+// name and line number are preserved (those are tiny; one filename per
 // .c++ translation unit, deduplicated across all sites in that file).
 // What's lost: the textual representation of the failed condition (e.g.
 // `"ref->kind() == WirePointer::STRUCT"`) and any descriptive text the
@@ -51,7 +51,7 @@
                                nullptr, nullptr);; f.fatal())
 
 // KJ_LOG / KJ_DBG are debugging output paths that go through formatted
-// logging — they pull in kj::str() formatters, the Debug::log severity
+// logging; they pull in kj::str() formatters, the Debug::log severity
 // filter, and (transitively, via kj's sysstr) the wasi-libc strerror
 // table. None of this is callable from JS in our environment; log
 // messages have nowhere to go (no stderr) even if reached. Replacing
@@ -66,9 +66,9 @@
 
 // trimSourceFilename runtime path canonicalization is unnecessary once
 // -ffile-prefix-map=cpp/vendor/= has already stripped the build prefix
-// from `__FILE__` strings — paths arrive as "kj/mutex.c++" which match
+// from `__FILE__` strings; paths arrive as "kj/mutex.c++" which match
 // none of trimSourceFilename's hardcoded ROOTS ("ekam-provider/...",
 // "src/", "tmp/") so the function would just return its input anyway.
 // build.sh sed-patches the body of trimSourceFilename to a single
-// `return filename;` line at compile time — see TRIM_SOURCE_FILENAME
+// `return filename;` line at compile time; see TRIM_SOURCE_FILENAME
 // section there. The result drops the ROOTS string table and the loop.

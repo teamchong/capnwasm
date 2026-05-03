@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
 
-import { inspect } from "../js/inspect.mjs";
+import { inspect, inspectBase64, inspectHex } from "../js/inspect.mjs";
 import { load } from "../dist/inlined.mjs";
 import { buildUser, openUser, UserReader } from "../web/src/playground/users.capnp.gen.mjs";
 
@@ -133,4 +133,89 @@ test("inspect: schema-aware path errors clearly when cpp is missing", async () =
     inspect(bytes, { reader: UserReader, log: false }),
     /also needs `\{ cpp \}`/,
   );
+});
+
+// ---- Copy-paste-from-DevTools entry points ---------------------------
+
+test("inspectBase64: decodes a base64 capnp message round-trip", async () => {
+  const bytes = buildSampleUser();
+  const b64 = Buffer.from(bytes).toString("base64");
+  const out = await inspectBase64(b64, { log: false });
+  assert.equal(out.bytes, bytes.length);
+  assert.equal(out.root.kind, "struct");
+});
+
+test("inspectBase64: tolerates whitespace and newlines (DevTools sometimes wraps)", async () => {
+  const bytes = buildSampleUser();
+  const b64 = Buffer.from(bytes).toString("base64");
+  // Insert newlines every 64 chars (typical DevTools wrap).
+  const wrapped = b64.match(/.{1,64}/g).join("\n");
+  const out = await inspectBase64(wrapped, { log: false });
+  assert.equal(out.bytes, bytes.length);
+});
+
+test("inspectBase64: accepts URL-safe base64 (- and _ swapped for + and /)", async () => {
+  const bytes = buildSampleUser();
+  const urlSafe = Buffer.from(bytes).toString("base64").replace(/\+/g, "-").replace(/\//g, "_");
+  const out = await inspectBase64(urlSafe, { log: false });
+  assert.equal(out.bytes, bytes.length);
+});
+
+test("inspectBase64: schema-aware decode works the same as inspect()", async () => {
+  const bytes = buildSampleUser();
+  const b64 = Buffer.from(bytes).toString("base64");
+  const out = await inspectBase64(b64, { reader: UserReader, cpp, log: false });
+  assert.equal(out.id, 42n);
+  assert.equal(out.name, "Alice");
+});
+
+test("inspectBase64: rejects non-strings with a useful error", async () => {
+  await assert.rejects(inspectBase64(null), /expected base64 string/);
+  await assert.rejects(inspectBase64(123), /expected base64 string/);
+});
+
+test("inspectBase64: rejects truly malformed base64", async () => {
+  // Length must be a multiple of 4 after padding; "@" is not a base64 char.
+  await assert.rejects(inspectBase64("@@@@"), /failed to decode base64/);
+});
+
+test("inspectHex: decodes a hex capnp message round-trip", async () => {
+  const bytes = buildSampleUser();
+  const hex = Buffer.from(bytes).toString("hex");
+  const out = await inspectHex(hex, { log: false });
+  assert.equal(out.bytes, bytes.length);
+  assert.equal(out.root.kind, "struct");
+});
+
+test("inspectHex: tolerates spaces, commas, 0x prefixes (DevTools WS panel formats vary)", async () => {
+  const bytes = buildSampleUser();
+  const hex = Buffer.from(bytes).toString("hex");
+  // Insert spaces between bytes (the most common DevTools WS hex format).
+  const spaced = hex.match(/.{2}/g).join(" ");
+  let out = await inspectHex(spaced, { log: false });
+  assert.equal(out.bytes, bytes.length);
+  // Try with 0x prefixes + commas (script-style copy).
+  const prefixed = hex.match(/.{2}/g).map((b) => "0x" + b).join(", ");
+  out = await inspectHex(prefixed, { log: false });
+  assert.equal(out.bytes, bytes.length);
+});
+
+test("inspectHex: schema-aware decode works the same as inspect()", async () => {
+  const bytes = buildSampleUser();
+  const hex = Buffer.from(bytes).toString("hex");
+  const out = await inspectHex(hex, { reader: UserReader, cpp, log: false });
+  assert.equal(out.id, 42n);
+  assert.equal(out.email, "alice@example.com");
+});
+
+test("inspectHex: rejects odd hex length with a useful error", async () => {
+  await assert.rejects(inspectHex("abc"), /odd number of hex digits/);
+});
+
+test("inspectHex: rejects non-hex characters with a useful error", async () => {
+  await assert.rejects(inspectHex("xyz0"), /non-hex characters/);
+});
+
+test("inspectHex: rejects empty input after cleaning", async () => {
+  await assert.rejects(inspectHex("   ,,, ;; "), /empty input after cleaning/);
 });

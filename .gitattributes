@@ -1,0 +1,13 @@
+# Language stats on GitHub: hide vendored upstream Cap'n Proto C++
+# (cpp/vendor/capnp + cpp/vendor/kj are 222k LOC of upstream code, not
+# anything written here) so the language bar reflects what this repo
+# actually contains.
+cpp/vendor/** linguist-vendored
+
+# Generated codegen output is also not hand-written.
+*.gen.mjs    linguist-generated
+*.gen.d.ts   linguist-generated
+
+# Treat .capnp source as Cap'n Proto for syntax highlighting (GitHub
+# ships a Linguist definition; this just nails it down explicitly).
+*.capnp linguist-language=Cap'n-Proto

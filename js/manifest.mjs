@@ -57,6 +57,13 @@ export function buildManifest(model, opts) {
   for (const api of model.restApis ?? []) {
     out.restApis.push(restApiToManifest(api));
   }
+  // OpenAPI source preserves a verbatim sidecar so emit-openapi /
+  // emit-capnp can do lossless round-trips without re-parsing the source.
+  // Other formats (.capnp / @rest TS) don't need this since the structs
+  // / interfaces blocks above are already canonical.
+  if (model.openapi) {
+    out.openapi = model.openapi;
+  }
   return out;
 }
 
@@ -142,8 +149,10 @@ function restMethodToManifest(apiName, m) {
     path: m.path,
     params: (m.params ?? []).map(restParamToManifest),
     returnType: m.returnType ?? null,
-    extensions: {},
+    extensions: m.extensions ?? {},
   };
+  if (m.summary)         out.summary = m.summary;
+  if (m.description)     out.description = m.description;
   if (m.isAsyncIterable) out.isAsyncIterable = true;
   if (m.paginated)       out.paginated = m.paginated;
   if (m.bodyEncoding)    out.bodyEncoding = m.bodyEncoding;

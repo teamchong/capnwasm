@@ -66,7 +66,7 @@ export function manifestToTools(manifest, opts = {}) {
       };
       tools.push({
         name: namer(op),
-        description: describe(op),
+        description: agentDescription(method, op, describe),
         input_schema: structToInputSchema(method.paramsStruct, structIndex),
       });
     }
@@ -86,13 +86,29 @@ export function manifestToTools(manifest, opts = {}) {
       };
       tools.push({
         name: namer(op),
-        description: describe(op),
+        description: agentDescription(method, op, describe),
         input_schema: restMethodToInputSchema(method),
       });
     }
   }
 
   return tools;
+}
+
+// Description resolution precedence:
+//   1. method.extensions.agentDescription (capnwasm-side override; lets
+//      teams tune for agent consumption without changing the
+//      human-facing description).
+//   2. method.summary or method.description (when the OpenAPI source
+//      provided one).
+//   3. The describe() callback (default builds a one-liner from the
+//      operationId).
+function agentDescription(method, op, describe) {
+  const override = method?.extensions?.agentDescription;
+  if (typeof override === "string" && override.length > 0) return override;
+  const human = method?.summary ?? method?.description;
+  if (typeof human === "string" && human.length > 0) return human;
+  return describe(op);
 }
 
 function indexStructs(structs) {

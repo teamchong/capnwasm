@@ -19,7 +19,7 @@
 import { WebSocketServer } from "ws";
 import { load as loadWasm } from "../dist/inlined.mjs";
 import { RpcSession, InterfaceRegistry, wsTransport } from "../js/rpc.mjs";
-// PrimitivesReader/Builder is the project's existing primitives schema —
+// PrimitivesReader/Builder is the project's existing primitives schema  - 
 // has u8 + text + data fields that map cleanly onto the three echo
 // methods this server exposes. Available because the bench schemas are
 // shipped in js/ alongside the runtime.
@@ -47,7 +47,7 @@ reg.register(IFC, M_ECHO_TEXT, (_t, ctx) => {
   const p = ctx.openParams(PrimitivesReader);
   const t = p.text;
   const reply = ctx.beginResults(PrimitivesBuilder);
-  reply.text = t;  // echo verbatim — the bench measures wire + decode, not transform
+  reply.text = t;  // echo verbatim; the bench measures wire + decode, not transform
 });
 reg.register(IFC, M_ECHO_BINARY, (_t, ctx) => {
   // PrimitivesReader has an `avatar`-shaped Data field exposed under the
@@ -76,7 +76,7 @@ console.log(`[server] capnwasm at /capnwasm, capnweb at /capnweb`);
 wss.on("connection", (ws, req) => {
   const url = req.url ?? "/";
   if (url.startsWith("/capnwasm")) {
-    // Each connection gets its own wasm instance — independent scratch
+    // Each connection gets its own wasm instance; independent scratch
     // buffers means concurrent connections can't clobber each other.
     loadWasm().then((cpp) => {
       new RpcSession(cpp, wsTransport(ws), reg, { bootstrap: { kind: "root" } });

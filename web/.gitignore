@@ -1,6 +1,7 @@
 node_modules/
 dist/
 public/data/
+public/metrics/
 public/capnp.slim.wasm
 
 # Codegen artefacts — produced by `pnpm codegen` (or the

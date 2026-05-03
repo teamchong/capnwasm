@@ -19,3 +19,24 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+------------------------------------------------------------------------
+
+This distribution bundles upstream Cap'n Proto C++ source code under
+cpp/vendor/capnp/ and cpp/vendor/kj/, taken from
+https://github.com/capnproto/capnproto and statically compiled into the
+shipped wasm binaries (dist/capnp.slim.wasm, dist/inlined.mjs,
+dist/codegen.mjs, dist/capnpc.wasm.gz). That code is redistributed under
+its original MIT license; see cpp/vendor/LICENSE for the full text and
+copyright notice.
+
+------------------------------------------------------------------------
+
+NOT AFFILIATED
+
+This is an independent personal project. It is not affiliated with,
+endorsed by, or sponsored by Cloudflare, Inc., the Cap'n Proto project,
+or any other organization. References elsewhere in this repository to
+capnweb (github.com/cloudflare/capnweb) and Cap'n Proto
+(github.com/capnproto/capnproto) are made solely because those projects
+are public, MIT-licensed, and the natural points of comparison.

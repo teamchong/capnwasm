@@ -1,7 +1,7 @@
 // Wasm wrapper around the upstream capnp schema compiler. JS hands us
 // the source of one .capnp file via a shared scratch buffer; we run the
 // compiler against an in-memory filesystem (so all imports resolve to
-// schemas we've pre-loaded — no host fs touched), and write the resulting
+// schemas we've pre-loaded; no host fs touched), and write the resulting
 // CodeGeneratorRequest's bytes back to the same scratch area for JS to
 // walk via the schema.capnp Reader.
 //
@@ -25,7 +25,7 @@
 #include <cstring>
 #include <cstdint>
 
-// Embedded standard schemas (c++.capnp, schema.capnp, etc.) — generated
+// Embedded standard schemas (c++.capnp, schema.capnp, etc.); generated
 // by cpp/embed_standard_schemas.sh from the vendored .capnp sources, so
 // the compiler can serve `import "/capnp/c++.capnp"` etc. without any
 // host filesystem access. Critical for browser-side codegen.
@@ -33,11 +33,15 @@
 
 extern "C" {
 
-// Two scratch buffers — input source (and import contents, when JS preloads
-// them) and output (the binary CodeGeneratorRequest plus error text). Big
-// enough for any realistic single-file schema; users with truly huge
-// schemas can split or call multiple times.
-constexpr size_t CAPNPC_CAP = 4 * 1024 * 1024;
+// Two scratch buffers: input source (and import contents, when JS preloads
+// them) and output (the binary CodeGeneratorRequest plus error text).
+// Sized at 32 MB so emit-codec / capnpc_compile can handle the materialized
+// .capnp text from large OpenAPI corpora (e.g., the Cloudflare public spec
+// produces ~5.7 MB of capnp). Each buffer lives in linear memory so the
+// total wasm footprint grows by 64 MB but only when the compiler module is
+// instantiated (the slim runtime is a separate wasm module and stays at
+// ~28 KB brotli).
+constexpr size_t CAPNPC_CAP = 32 * 1024 * 1024;
 alignas(8) static uint8_t capnpc_in[CAPNPC_CAP];
 alignas(8) static uint8_t capnpc_out[CAPNPC_CAP];
 
@@ -53,7 +57,7 @@ struct VFile {
   kj::Array<capnp::byte> bytes;
 };
 
-// Reset between compiles — JS calls capnpc_reset() before staging the next
+// Reset between compiles; JS calls capnpc_reset() before staging the next
 // schema.
 static kj::Maybe<kj::Own<kj::Arena>> g_arena;
 static kj::Vector<VFile>* g_files = nullptr;
@@ -148,7 +152,7 @@ public:
   }
 
   kj::Maybe<kj::Array<const capnp::byte>> embedRelative(kj::StringPtr embedPath) override {
-    // Not supported in wasm — we'd need host fs access. Embeds are rare;
+    // Not supported in wasm; we'd need host fs access. Embeds are rare;
     // user can avoid by inlining the data into the schema.
     return kj::none;
   }

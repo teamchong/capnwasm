@@ -21,7 +21,7 @@
 
 extern "C" {
 
-// Scratch regions in linear memory shared with JS. 4 MB each — enough for
+// Scratch regions in linear memory shared with JS. 4 MB each; enough for
 // most realistic RPC payloads (gRPC's default max-message size is also
 // 4 MB). Anything bigger should be chunked at the application layer or
 // streamed via openFromStream.
@@ -263,7 +263,7 @@ static void decodeExpression(Expression::Reader r, TapeWriter& w) {
 // ---------------------------------------------------------------------------
 // Lazy reader: parse the message once, then JS pulls individual fields on
 // demand. This is the access pattern Cap'n Proto's wire format is designed
-// for — skip materializing the whole tree, fetch only what's read.
+// for; skip materializing the whole tree, fetch only what's read.
 // ---------------------------------------------------------------------------
 
 // Heap-allocated reader so its lifetime spans many cpp_lazy_* calls.
@@ -323,7 +323,7 @@ uint32_t cpp_lazy_msg_obj_field_text(const uint8_t* name_ptr, uint32_t name_len)
 }
 
 // Batched: fetch text values for multiple fields in one boundary crossing.
-// Input layout in cpp_in (after lazy_open already consumed it — the JS side
+// Input layout in cpp_in (after lazy_open already consumed it; the JS side
 // stages the name list into the lazy_aux scratch instead). Format:
 //   u32 count
 //   u32 name_len[count]
@@ -402,7 +402,7 @@ uint32_t cpp_lazy_obj_fields_text(const uint8_t* input_ptr, uint32_t input_len) 
 // ---------------------------------------------------------------------------
 // Typed schema (cpp/typed_schema.capnp): WideUserData with 32 named Text
 // fields. Demonstrates the access pattern Cap'n Proto users would actually
-// deploy — fields by integer offset, not string lookup.
+// deploy; fields by integer offset, not string lookup.
 // ---------------------------------------------------------------------------
 
 alignas(8) static char typed_reader_storage[1024];
@@ -507,7 +507,7 @@ uint32_t cpp_typed_field_at(uint32_t field_idx) {
   return static_cast<uint32_t>(text.size());
 }
 
-// Forward decl — the AnyStruct section below owns the storage.
+// Forward decl; the AnyStruct section below owns the storage.
 extern capnp::FlatArrayMessageReader* any_reader;
 
 // ---------------------------------------------------------------------------
@@ -736,7 +736,7 @@ capnp::FlatArrayMessageReader* any_reader = nullptr;
 // Wrapped in a union so the array doesn't trigger default-construction at
 // module init. AnyStruct::Reader has a trivial default ctor, but the
 // compiler still emits a 32-iteration init loop in _initialize for the
-// static array — that's responsible for ~30k instructions, 75% of the
+// static array; that's responsible for ~30k instructions, 75% of the
 // slim wasm's code section. The union skips per-element init; the wasm
 // spec already zero-initializes BSS, which matches what the default
 // Reader ctor would have produced. Slots are accessed via `any_stack(i)`.
@@ -825,7 +825,7 @@ uint32_t cpp_any_list_size() {
   return any_list_reader.size();
 }
 
-// Primitive-list element access — read element i directly without pushing
+// Primitive-list element access; read element i directly without pushing
 // it on the stack (lists of primitives don't have struct shape). The
 // templated helpers below work because the underlying List<T> stores
 // elements at fixed offsets.
@@ -885,7 +885,7 @@ uint32_t cpp_any_list_get_bool(uint32_t i) {
   return list[i] ? 1 : 0;
 }
 
-// Get text element i — copies bytes to cpp_out, returns length.
+// Get text element i; copies bytes to cpp_out, returns length.
 uint32_t cpp_any_list_get_text(uint32_t i) {
   if (!any_list_reader_set) return 0;
   auto list = any_list_reader.as<capnp::List<capnp::Text>>();
@@ -896,7 +896,7 @@ uint32_t cpp_any_list_get_text(uint32_t i) {
   return static_cast<uint32_t>(t.size());
 }
 
-// Get data element i — copies bytes to cpp_out, returns length.
+// Get data element i; copies bytes to cpp_out, returns length.
 uint32_t cpp_any_list_get_data(uint32_t i) {
   if (!any_list_reader_set) return 0;
   auto list = any_list_reader.as<capnp::List<capnp::Data>>();
@@ -1004,8 +1004,8 @@ uint32_t cpp_any_bool_at(uint32_t bit_offset, uint32_t default_val) {
 //   for each request:
 //     u32 result_len      (0xFFFFFFFF if missing/wrong-kind)
 //     bytes...            (text/data) OR
-//     u32 value           (uint8/16/32/bool — value packed into the size field)
-//     i64 value           (int64 — packed into 8 bytes of payload)
+//     u32 value           (uint8/16/32/bool; value packed into the size field)
+//     i64 value           (int64; packed into 8 bytes of payload)
 //
 // Returns total bytes written.
 uint32_t cpp_any_batch_read(uint32_t input_len) {
@@ -1081,13 +1081,13 @@ uint32_t cpp_any_batch_read(uint32_t input_len) {
 }
 
 // ---------------------------------------------------------------------------
-// Generic AnyStruct BUILDER — counterpart to the reader. Codegen-emitted
+// Generic AnyStruct BUILDER; counterpart to the reader. Codegen-emitted
 // XBuilder classes know each field's offset/type at build time; these
 // primitives let them write into a shared message via integer-indexed calls.
 //
 // The builder lives in static placement-new storage with a pre-allocated
 // first segment. Avoids the malloc/calloc/free cycle on every Builder
-// init — the calloc-zeroing first segment was the dominant CPU cost in
+// init; the calloc-zeroing first segment was the dominant CPU cost in
 // hot RPC loops (CPU profile showed ~70% of wasm time in calloc).
 // MallocMessageBuilder's destructor zeroes a borrowed firstSegment for
 // us, so re-initialization sees a fresh-zeroed buffer.
@@ -1164,7 +1164,7 @@ uint32_t cpp_any_builder_exit_struct() {
 
 // Expose the address (in linear memory) and size of the current
 // any_builder_root's data section. JS can then write primitive fields
-// DIRECTLY into wasm memory at known offsets — no per-setter wasm call.
+// DIRECTLY into wasm memory at known offsets; no per-setter wasm call.
 // Pointer-section fields (text, data, structs) still need wasm because
 // they require arena allocation, but the inline data is just bytes.
 uint32_t cpp_any_builder_data_ptr() {
@@ -1386,7 +1386,7 @@ uint32_t cpp_any_builder_finalize() {
 // Pre-allocated first segment + placement-new storage for the RPC frame
 // builder. Same reasoning as any_builder above: avoid the calloc/free
 // cycle that dominated CPU profiles. RPC frames (Bootstrap, Call, Return,
-// Finish, Release) are small — 4 KB is more than enough for a single
+// Finish, Release) are small; 4 KB is more than enough for a single
 // segment in practice. Larger payloads carry their bytes in
 // Call.params.content / Return.results.content via initWithCaveats and
 // don't bloat this builder.
@@ -1404,7 +1404,7 @@ static inline void resetRpcBuilder() {
       kj::arrayPtr(rpc_first_seg, sizeof(rpc_first_seg) / sizeof(capnp::word)));
 }
 
-// Message kind codes returned to JS — match capnp::rpc::Message::Which
+// Message kind codes returned to JS; match capnp::rpc::Message::Which
 // values 1-1, but exposed as a stable small-int enum for the JS layer to
 // switch on.
 enum CwRpcKind {
@@ -1752,7 +1752,7 @@ uint32_t cpp_rpc_get_resolve_exception() {
   return static_cast<uint32_t>(reason.size());
 }
 
-// Disembargo summary: 16 bytes at cpp_out — context kind, embargo id, target
+// Disembargo summary: 16 bytes at cpp_out; context kind, embargo id, target
 // kind, target id.
 uint32_t cpp_rpc_get_disembargo_summary() {
   if (!rpc_reader) return 0;
@@ -1781,7 +1781,7 @@ uint32_t cpp_rpc_get_disembargo_summary() {
   return 1;
 }
 
-// Build a Disembargo with a receiverLoopback context — used to echo back a
+// Build a Disembargo with a receiverLoopback context; used to echo back a
 // senderLoopback from a peer.
 uint32_t cpp_rpc_build_disembargo_receiver_loopback(
     uint32_t target_kind, uint32_t target_id, uint32_t embargo_id) {
@@ -2021,14 +2021,14 @@ uint32_t cpp_rpc_get_release_refcount() {
 //
 // The RPC layer in JS keeps the local-cap and import tables; the C++ side
 // just encodes/decodes the wire bits of Payload.capTable. We support only
-// senderHosted descriptors here — the most common case — which lets a peer
+// senderHosted descriptors here; the most common case; which lets a peer
 // say "this cap in my reply lives in my local export table at id N." When
 // a richer descriptor variant arrives (promise/answer/thirdParty), the JS
 // layer can fall back to ignoring it.
 
 // Build a Return whose Payload.capTable carries `cap_count` senderHosted
 // descriptors. The export ids are pre-staged in cpp_in as a packed array
-// of uint32_t (little-endian). The Payload's content is left null —
+// of uint32_t (little-endian). The Payload's content is left null  - 
 // callers that want both struct content and caps would need a richer
 // builder that's not in this minimal MVP.
 uint32_t cpp_rpc_build_return_with_caps(
@@ -2050,7 +2050,7 @@ uint32_t cpp_rpc_build_return_with_caps(
   return finalizeRpcBuilder();
 }
 
-// Read the capTable on a Return — number of descriptors and per-index
+// Read the capTable on a Return; number of descriptors and per-index
 // kind/id. Only senderHosted (kind=1) carries an export id; other kinds
 // are surfaced so JS can ignore them and report the unsupported variant.
 uint32_t cpp_rpc_get_return_cap_count() {
@@ -2105,7 +2105,7 @@ uint32_t cpp_rpc_get_return_cap_id(uint32_t i) {
 // params directly into Call.params.content's arena (and the application's
 // Reader read directly out of inbound Call.params.content's arena). The
 // only memory the params data ever lives in is the rpc_builder/rpc_reader
-// itself — no intermediate buffer, no copy.
+// itself; no intermediate buffer, no copy.
 
 // Begin a Call: initialize rpc_builder with the Call header AND point
 // any_builder_root at Call.params.content as an AnyStruct of the requested
@@ -2146,7 +2146,7 @@ uint32_t cpp_rpc_begin_call(
   any_builder_root = new (any_builder_root_storage) capnp::AnyStruct::Builder(kj::mv(contentAnyStruct));
   cursor_stack[0] = any_builder_root;
   cursor_depth = 0;
-  // Return the data section pointer instead of a 0/1 success — the JS
+  // Return the data section pointer instead of a 0/1 success; the JS
   // Builder needs it on every call, and combining the lookup with the
   // begin_call op saves a wasm boundary crossing per outbound Call.
   return reinterpret_cast<uint32_t>(any_builder_root->getDataSection().begin());
@@ -2190,14 +2190,14 @@ uint32_t cpp_rpc_finalize() {
 
 // Open the inbound Call's params.content as an AnyStruct on the reader
 // stack so the application's typed Reader can pull fields directly out
-// of the rpc_reader's memory — no intermediate flat-array materialization.
+// of the rpc_reader's memory; no intermediate flat-array materialization.
 uint32_t cpp_rpc_open_call_params() {
   if (!rpc_reader) return 0;
   auto params = rpc_reader->getRoot<capnp::rpc::Message>().getCall().getParams();
   any_stack(0) = params.getContent().getAs<capnp::AnyStruct>();
   any_stack_top = 0;
   // Return the data section address so the JS Reader can read primitives
-  // straight from wasm memory — no per-field cpp_any_*_at boundary call.
+  // straight from wasm memory; no per-field cpp_any_*_at boundary call.
   return reinterpret_cast<uint32_t>(any_stack(0).getDataSection().begin());
 }
 

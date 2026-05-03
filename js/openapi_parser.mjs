@@ -69,7 +69,29 @@ export function parseOpenApi(spec) {
     typeInterfaces.push(translateSchemaToInterface(name, resolveRef(schema, ctx), ctx));
   }
 
-  return { restApis: [api], typeInterfaces, structs: [] };
+  // Sidecar: the canonical OpenAPI shape, kept verbatim for round-trip
+  // emit. Downstream tools that only need the SDK-shaped model can ignore
+  // it; the emit-openapi / emit-capnp converters consume it.
+  const openapi = {
+    openapi: spec.openapi ?? "3.0.0",
+    info: spec.info ?? { title: apiName, version: "0.0.0" },
+    servers: spec.servers ?? undefined,
+    security: spec.security ?? undefined,
+    tags: spec.tags ?? undefined,
+    externalDocs: spec.externalDocs ?? undefined,
+    paths: spec.paths ?? {},
+    components: spec.components ?? undefined,
+  };
+  // Pass through any unknown top-level keys (custom x-* extensions, etc.)
+  // so the round-trip is lossless on the structural surface.
+  for (const k of Object.keys(spec)) {
+    if (k === "swagger") continue;
+    if (!(k in openapi)) openapi[k] = spec[k];
+  }
+  // Strip undefined keys so the round-trip diff is clean.
+  for (const k of Object.keys(openapi)) if (openapi[k] === undefined) delete openapi[k];
+
+  return { restApis: [api], typeInterfaces, structs: [], openapi };
 }
 
 // ---- Helpers -----------------------------------------------------------
@@ -135,7 +157,11 @@ function translateOperation(verb, path, op, pathLevelParams, ctx) {
       optional: p.required !== true,
       role,
     };
-    if (role === "header" && p.name !== param.name) param.wireName = p.name;
+    // Preserve the original wire-name for any param whose JS identifier
+    // got camelCased (foo_bar → fooBar). The wire name is what the
+    // server sees on the URL / header / cookie; downstream tools (the
+    // adapter, the SDK emit, the docs) need the wire form.
+    if (p.name !== param.name) param.wireName = p.name;
     params.push(param);
   }
 
@@ -160,7 +186,7 @@ function translateOperation(verb, path, op, pathLevelParams, ctx) {
   // Pick success response: prefer 2xx with content, fall back to first 2xx.
   const successType = pickSuccessType(op, ctx);
 
-  return {
+  const out = {
     name: opName,
     method: verb.toUpperCase(),
     path,
@@ -172,6 +198,17 @@ function translateOperation(verb, path, op, pathLevelParams, ctx) {
     paginated: null,
     tag: op.tags?.[0] ?? null,
   };
+  if (op.summary) out.summary = op.summary;
+  if (op.description) out.description = op.description;
+  // Pass through any vendor extensions on the operation. The MCP /
+  // AGENTS.md emitters look at extensions.agentDescription for an
+  // agent-specific override.
+  const extensions = {};
+  for (const [k, v] of Object.entries(op)) {
+    if (k.startsWith("x-")) extensions[k.slice(2)] = v;
+  }
+  if (Object.keys(extensions).length > 0) out.extensions = extensions;
+  return out;
 }
 
 function jsIdent(name) {

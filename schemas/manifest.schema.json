@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/teamchong/capnwasm/schemas/manifest.schema.json",
+  "title": "capnwasm operation manifest",
+  "description": "Canonical IR produced by `npx capnwasm manifest`. One stable shape across all input formats (.capnp, @rest TS, OpenAPI 3.x). Downstream tools (drift detectors, mock generators, contract harnesses, MCP servers, the lock-file engine, the OpenAPI / capnp emitters) consume this without re-parsing the source schema.",
+  "type": "object",
+  "required": ["manifestVersion", "source", "metadata", "structs", "interfaces", "restApis"],
+  "additionalProperties": true,
+  "properties": {
+    "manifestVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Increment when the IR shape changes incompatibly."
+    },
+    "source": {
+      "type": "object",
+      "required": ["name", "format", "generatedAt"],
+      "additionalProperties": true,
+      "properties": {
+        "name":        { "type": "string", "description": "Display name (usually the source filename)." },
+        "format":      { "type": "string", "enum": ["capnp", "typescript-rest", "openapi"] },
+        "path":        { "type": "string", "description": "Absolute path of the source if available." },
+        "generatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Free-form per-manifest metadata (owner team, repo URL, version, ...). Always present, may be empty.",
+      "additionalProperties": true
+    },
+    "structs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/struct" }
+    },
+    "interfaces": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/interface" }
+    },
+    "restApis": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/restApi" }
+    },
+    "openapi": {
+      "description": "Verbatim OpenAPI sidecar. Present only when `source.format === 'openapi'`. Used for lossless round-trip emit by `capnwasm emit-openapi` and `capnwasm emit-capnp`.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "lock": {
+      "$ref": "#/$defs/lock",
+      "description": "Inline lock file (field-ID + op-ID pinning). When present, `emit-capnp` honors the pinned ordinals."
+    }
+  },
+  "$defs": {
+    "struct": {
+      "type": "object",
+      "required": ["name", "fields"],
+      "additionalProperties": true,
+      "properties": {
+        "name":      { "type": "string" },
+        "dataWords": { "type": "integer", "minimum": 0, "description": "Capnp wire-layout words in the data section." },
+        "ptrWords":  { "type": "integer", "minimum": 0, "description": "Capnp wire-layout pointer slots." },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/field" }
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "required": ["name", "ordinal", "type"],
+      "additionalProperties": true,
+      "properties": {
+        "name":      { "type": "string" },
+        "ordinal":   { "type": "integer", "minimum": 0 },
+        "type":      { "type": "string", "description": "Capnp type expression (Text, UInt32, List(Foo), AnyPointer, ...) or TS-string for non-capnp sources." },
+        "kind":      { "type": "string", "enum": ["data", "pointer", "void"] },
+        "bitOffset": { "type": "integer", "minimum": 0 },
+        "ptrIndex":  { "type": "integer", "minimum": 0 }
+      }
+    },
+    "interface": {
+      "type": "object",
+      "required": ["name", "id", "methods"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "id":   { "type": "string", "pattern": "^0x[0-9a-fA-F]{1,16}$", "description": "64-bit interface ID, normalized to a 0x-prefixed hex string." },
+        "methods": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/method" }
+        }
+      }
+    },
+    "method": {
+      "type": "object",
+      "required": ["operationId", "name", "ordinal"],
+      "additionalProperties": true,
+      "properties": {
+        "operationId":   { "type": "string", "description": "`{InterfaceName}.{methodName}` (capnp) or `{ApiName}.{methodName}` (REST)." },
+        "name":          { "type": "string" },
+        "ordinal":       { "type": "integer", "minimum": 0 },
+        "paramsStruct":  { "type": "string" },
+        "resultsStruct": { "type": "string" },
+        "extensions":    { "type": "object", "additionalProperties": true }
+      }
+    },
+    "restApi": {
+      "type": "object",
+      "required": ["name", "methods"],
+      "additionalProperties": true,
+      "properties": {
+        "name":     { "type": "string" },
+        "baseUrl":  { "type": ["string", "null"] },
+        "defaults": { "type": "object", "additionalProperties": true },
+        "methods": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/restMethod" }
+        }
+      }
+    },
+    "restMethod": {
+      "type": "object",
+      "required": ["operationId", "name", "httpMethod", "path"],
+      "additionalProperties": true,
+      "properties": {
+        "operationId":     { "type": "string" },
+        "name":            { "type": "string" },
+        "httpMethod":      { "type": "string", "enum": ["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH"] },
+        "path":            { "type": "string", "description": "OpenAPI-style path with `{name}` templating." },
+        "params": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/restParam" }
+        },
+        "returnType":      { "type": ["string", "null"] },
+        "extensions":      { "type": "object", "additionalProperties": true },
+        "isAsyncIterable": { "type": "boolean" },
+        "paginated":       { "anyOf": [{ "type": "object" }, { "type": "null" }] },
+        "bodyEncoding":    { "type": ["string", "null"], "enum": ["json", "form", "multipart", null] },
+        "decode":          { "type": ["string", "null"] },
+        "pagination":      {
+          "$ref": "#/$defs/pagination",
+          "description": "Set by `capnwasm adapt` (detect-and-adapt layer). Absent until adapt runs."
+        },
+        "errorShapes":     {
+          "type": "array",
+          "description": "Set by `capnwasm adapt`. One entry per declared non-2xx response.",
+          "items": { "$ref": "#/$defs/errorShape" }
+        }
+      }
+    },
+    "restParam": {
+      "type": "object",
+      "required": ["name", "in"],
+      "additionalProperties": true,
+      "properties": {
+        "name":     { "type": "string", "description": "JS-side identifier (camelCase)." },
+        "wireName": { "type": "string", "description": "Original URL/header/cookie name when it differs from `name` (e.g. `per_page`)." },
+        "in":       { "type": "string", "enum": ["path", "query", "header", "cookie", "body"] },
+        "type":     { "type": ["string", "null"] },
+        "required": { "type": "boolean" }
+      }
+    },
+    "pagination": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "type": "string", "enum": ["cursor", "offset", "page", "page-token", "unknown"] },
+        "params": {
+          "type": "object",
+          "additionalProperties": { "type": ["string", "null"] }
+        },
+        "response": {
+          "type": "object",
+          "properties": {
+            "nextField": { "type": ["string", "null"] }
+          },
+          "additionalProperties": true
+        }
+      }
+    },
+    "errorShape": {
+      "type": "object",
+      "required": ["code", "shape"],
+      "additionalProperties": true,
+      "properties": {
+        "code":  { "type": "string", "description": "HTTP status code as a string, or `default`." },
+        "shape": { "type": "string", "enum": ["rfc7807", "single", "list", "passthrough"] }
+      }
+    },
+    "lock": {
+      "type": "object",
+      "required": ["lockfileVersion"],
+      "additionalProperties": true,
+      "properties": {
+        "lockfileVersion": { "type": "integer", "const": 1 },
+        "manifestSource":  { "type": "string" },
+        "interfaces": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/lockSlot" }
+        },
+        "structs": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/lockSlot" }
+        },
+        "enums": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/lockSlot" }
+        }
+      }
+    },
+    "lockSlot": {
+      "type": "object",
+      "required": ["next"],
+      "additionalProperties": true,
+      "properties": {
+        "next": { "type": "integer", "minimum": 0 },
+        "fields":     { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "methods":    { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "values":     { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "signatures": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    }
+  }
+}

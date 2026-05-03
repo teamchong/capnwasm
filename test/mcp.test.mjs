@@ -159,6 +159,49 @@ test("mcp: REST API method emits tool with HTTP-method-aware description", () =>
   assert.deepEqual(tools[0].input_schema.required, ["tag"]);
 });
 
+test("mcp: extensions.agentDescription overrides the human-facing description", () => {
+  const m = buildManifest(
+    {
+      restApis: [{
+        name: "Petstore",
+        methods: [{
+          operationId: "Petstore.listPets",
+          name: "listPets",
+          httpMethod: "GET",
+          path: "/pets",
+          params: [],
+          summary: "List pets in the store.",
+          extensions: { agentDescription: "Returns up to 100 pets. Use the optional `limit` param to page." },
+        }],
+      }],
+    },
+    { source: { name: "petstore.yaml", format: "openapi" } },
+  );
+  const tools = manifestToTools(m);
+  assert.equal(tools[0].description, "Returns up to 100 pets. Use the optional `limit` param to page.");
+});
+
+test("mcp: falls back to summary/description when no agentDescription extension", () => {
+  const m = buildManifest(
+    {
+      restApis: [{
+        name: "Petstore",
+        methods: [{
+          operationId: "Petstore.listPets",
+          name: "listPets",
+          httpMethod: "GET",
+          path: "/pets",
+          params: [],
+          summary: "List pets in the store.",
+        }],
+      }],
+    },
+    { source: { name: "petstore.yaml", format: "openapi" } },
+  );
+  const tools = manifestToTools(m);
+  assert.equal(tools[0].description, "List pets in the store.");
+});
+
 test("mcp: rejects non-manifest input", () => {
   assert.throws(() => manifestToTools(null), /must be a capnwasm manifest/);
   assert.throws(() => manifestToTools({}), /must be a capnwasm manifest/);

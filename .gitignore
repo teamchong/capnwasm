@@ -8,3 +8,23 @@ dist/
 # test/harness.test.mjs creates per-run tmp dirs under the repo root so
 # Node's package self-resolve picks up "capnwasm" from package.json.
 .tmp-harness-test-*/
+
+# Per-assistant project files. Kept local; never commit.
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.claude.json
+.mcp.json
+.opencode/
+.cursor/
+.cursorrules
+.aider*
+.continue/
+.windsurf/
+.codeium/
+.github/copilot-instructions.md
+AGENTS.local.md
+HANDOFF.md
+
+# Wrangler local state
+.wrangler/
