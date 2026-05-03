@@ -1080,6 +1080,123 @@ uint32_t cpp_any_batch_read(uint32_t input_len) {
   return static_cast<uint32_t>(out_pos);
 }
 
+// Project a List(Struct) in one wasm call. This is the list-shaped sibling
+// of cpp_any_batch_read: caller supplies a field descriptor list in
+// cpp_lazy_aux, C++ loops every row and writes a compact row tape to cpp_out.
+//
+// Input in cpp_lazy_aux:
+//   u32 fieldCount
+//   for each field: u8 kind, u32 offset
+//
+// Arguments:
+//   ptr_idx: pointer slot on current AnyStruct holding List(Struct)
+//   input_len: bytes used in cpp_lazy_aux
+//
+// Output in cpp_out:
+//   u32 rowCount
+//   u32 fieldCount
+//   u32 cellHeader[rowCount * fieldCount]
+//   payload bytes for text/data/int64/float64 cells
+//
+// Cell semantics match cpp_any_batch_read: text/data header is byte length,
+// missing pointer is 0xFFFFFFFF, small scalar values are packed directly in
+// the header, 64-bit / float64 payloads are 8 bytes.
+uint32_t cpp_any_list_project(uint32_t ptr_idx, uint32_t input_len) {
+  if (any_stack_top < 0) return 0;
+  if (input_len < 4) return 0;
+
+  uint32_t field_count;
+  std::memcpy(&field_count, cpp_lazy_aux, 4);
+  if (field_count == 0 || field_count > 256) return 0;
+
+  const size_t request_bytes = 1 + 4;
+  if (input_len < 4 + field_count * request_bytes) return 0;
+
+  auto ptrs = any_stack(any_stack_top).getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  auto any_list = ptrs[ptr_idx].getAs<capnp::AnyList>();
+  auto list = any_list.as<capnp::List<capnp::AnyStruct>>();
+  const uint32_t row_count = list.size();
+
+  const uint64_t cell_count64 = static_cast<uint64_t>(row_count) * field_count;
+  if (cell_count64 > 1024u * 1024u) return 0;
+  const uint32_t cell_count = static_cast<uint32_t>(cell_count64);
+
+  size_t out_pos = 8 + static_cast<size_t>(cell_count) * 4;
+  if (out_pos > SCRATCH_CAP) return 0;
+
+  std::memcpy(cpp_out, &row_count, 4);
+  std::memcpy(cpp_out + 4, &field_count, 4);
+  uint32_t* headers = reinterpret_cast<uint32_t*>(cpp_out + 8);
+
+  for (uint32_t row = 0; row < row_count; row++) {
+    auto item = list[row];
+    auto data = item.getDataSection();
+    auto item_ptrs = item.getPointerSection();
+
+    size_t in_pos = 4;
+    for (uint32_t col = 0; col < field_count; col++) {
+      uint8_t kind = cpp_lazy_aux[in_pos]; in_pos += 1;
+      uint32_t off; std::memcpy(&off, cpp_lazy_aux + in_pos, 4); in_pos += 4;
+      uint32_t& h = headers[row * field_count + col];
+
+      switch (kind) {
+        case 0: { // text pointer
+          if (off >= item_ptrs.size()) { h = 0xFFFFFFFFu; break; }
+          auto t = item_ptrs[off].getAs<capnp::Text>();
+          if (out_pos + t.size() > SCRATCH_CAP) return 0;
+          h = static_cast<uint32_t>(t.size());
+          std::memcpy(cpp_out + out_pos, t.cStr(), t.size());
+          out_pos += t.size();
+          break;
+        }
+        case 6: { // data pointer
+          if (off >= item_ptrs.size()) { h = 0xFFFFFFFFu; break; }
+          auto d = item_ptrs[off].getAs<capnp::Data>();
+          if (out_pos + d.size() > SCRATCH_CAP) return 0;
+          h = static_cast<uint32_t>(d.size());
+          std::memcpy(cpp_out + out_pos, d.begin(), d.size());
+          out_pos += d.size();
+          break;
+        }
+        case 1:
+        case 2:
+        case 3: {
+          const uint32_t sz = (kind == 1) ? 1 : (kind == 2 ? 2 : 4);
+          if (off + sz > data.size()) { h = 0; break; }
+          uint32_t v = 0;
+          std::memcpy(&v, data.begin() + off, sz);
+          h = v;
+          break;
+        }
+        case 4: { // int64 / uint64 / float64 payload
+          if (out_pos + 8 > SCRATCH_CAP) return 0;
+          if (off + 8 > data.size()) {
+            h = 0;
+            std::memset(cpp_out + out_pos, 0, 8);
+          } else {
+            h = 8;
+            std::memcpy(cpp_out + out_pos, data.begin() + off, 8);
+          }
+          out_pos += 8;
+          break;
+        }
+        case 5: { // bool bit offset
+          const uint32_t byte = off / 8;
+          const uint32_t bit = off & 7;
+          if (byte >= data.size()) { h = 0; break; }
+          h = (data[byte] >> bit) & 1;
+          break;
+        }
+        default:
+          h = 0xFFFFFFFFu;
+      }
+    }
+  }
+
+  return static_cast<uint32_t>(out_pos);
+}
+
 // ---------------------------------------------------------------------------
 // Generic AnyStruct BUILDER; counterpart to the reader. Codegen-emitted
 // XBuilder classes know each field's offset/type at build time; these

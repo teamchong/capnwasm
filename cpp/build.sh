@@ -190,6 +190,7 @@ FLAGS=(
   -Wl,--export=cpp_any_uint8_at
   -Wl,--export=cpp_any_bool_at
   -Wl,--export=cpp_any_batch_read
+  -Wl,--export=cpp_any_list_project
   -Wl,--export=cpp_any_builder_init
   # NOTE: cpp_any_builder_set_uint8/16/32, set_int64_lo_hi, set_bool intentionally
   # not exported — JS writes data-section primitives directly via the cached

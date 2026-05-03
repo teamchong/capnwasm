@@ -176,6 +176,48 @@ struct Person {
   });
 });
 
+test("draft: list row projection falls back for nested row fields", async () => {
+  const mod = await compile(`@0xb1f7c5e9c4e02142;
+struct Profile {
+  city @0 :Text;
+}
+struct User {
+  id @0 :UInt64;
+  profile @1 :Profile;
+}
+struct UserList {
+  users @0 :List(User);
+}`);
+  const cpp = await load();
+  const Profile = defineSchema({
+    city: { kind: "text", slot: 0 },
+  }, { dataWords: 0, ptrWords: 1 });
+  const User = defineSchema({
+    id: { kind: "uint64", offset: 0 },
+    profile: { kind: "struct", slot: 0, schema: Profile },
+  }, { dataWords: 1, ptrWords: 1 });
+  const UserList = defineSchema({
+    users: { kind: "listStruct", slot: 0, element: User },
+  }, { dataWords: 0, ptrWords: 1 });
+  const bytes = buildDynamic(cpp, UserList).fromObject({
+    users: [
+      { id: 1n, profile: { city: "Austin" } },
+      { id: 2n, profile: { city: "London" } },
+    ],
+  }).finalize();
+
+  const projected = mod.openUserList(cpp, bytes).draft((r) => ({
+    rows: r.users.map((u) => ({ id: u.id, city: u.profile.city })),
+  }));
+
+  assert.deepEqual(projected, {
+    rows: [
+      { id: 1, city: "Austin" },
+      { id: 2, city: "London" },
+    ],
+  });
+});
+
 // ---- type coverage ------------------------------------------------------
 
 test("draft: round-trips primitive types (bool, int, uint64, float, data, text)", async () => {

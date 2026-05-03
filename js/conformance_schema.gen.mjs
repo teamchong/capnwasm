@@ -109,6 +109,74 @@ function _capnwasmPick(cpp, fields, names) {
   return result;
 }
 
+function _capnwasmListProject(cpp, ptrIndex, fields, names) {
+  const exp = cpp._exports;
+  if (typeof exp.cpp_any_list_project !== "function") return null;
+  const entry = _getPickRequest(fields, names);
+  const req = entry.req;
+  const descs = entry.descs;
+  cpp._u8.set(req, cpp._auxPtr);
+  const written = exp.cpp_any_list_project(ptrIndex, req.length);
+  if (!written) return null;
+  const out = cpp._outPtr;
+  const u8 = cpp._u8;
+  const dv = new DataView(u8.buffer, out, written);
+  const rows = dv.getUint32(0, true);
+  const cols = dv.getUint32(4, true);
+  if (cols !== names.length) return null;
+  let readPos = 8 + rows * cols * 4;
+  const arr = new Array(rows);
+  for (let row = 0; row < rows; row++) {
+    const obj = {};
+    for (let col = 0; col < cols; col++) {
+      const lenOrVal = dv.getUint32(8 + (row * cols + col) * 4, true);
+      const d = descs[col];
+      const name = names[col];
+      switch (d.type) {
+        case "text": {
+          if (lenOrVal === 0xFFFFFFFF) { obj[name] = undefined; break; }
+          if (lenOrVal === 0) { obj[name] = ""; break; }
+          obj[name] = decodeAscii(u8.subarray(out + readPos, out + readPos + lenOrVal));
+          readPos += lenOrVal;
+          break;
+        }
+        case "data": {
+          if (lenOrVal === 0xFFFFFFFF) { obj[name] = undefined; break; }
+          obj[name] = u8.slice(out + readPos, out + readPos + lenOrVal);
+          readPos += lenOrVal;
+          break;
+        }
+        case "bool":   obj[name] = lenOrVal === 1; break;
+        case "uint8":  obj[name] = lenOrVal; break;
+        case "int8":   obj[name] = (lenOrVal << 24) >> 24; break;
+        case "uint16": obj[name] = lenOrVal; break;
+        case "int16":  obj[name] = (lenOrVal << 16) >> 16; break;
+        case "uint32": obj[name] = lenOrVal >>> 0; break;
+        case "int32":  obj[name] = lenOrVal | 0; break;
+        case "float32": _F32_VIEW_U32[0] = lenOrVal >>> 0; obj[name] = _F32_VIEW_F32[0]; break;
+        case "uint64":
+        case "int64": {
+          const lo = dv.getUint32(out - dv.byteOffset + readPos, true);
+          const hi = dv.getInt32(out - dv.byteOffset + readPos + 4, true);
+          obj[name] = (hi >= -0x200000 && hi <= 0x1FFFFF) ? hi * 4294967296 + lo : dv.getBigInt64(out - dv.byteOffset + readPos, true);
+          readPos += 8;
+          break;
+        }
+        case "float64": {
+          _F64_VIEW_U32[0] = dv.getUint32(out - dv.byteOffset + readPos, true);
+          _F64_VIEW_U32[1] = dv.getUint32(out - dv.byteOffset + readPos + 4, true);
+          obj[name] = _F64_VIEW_F64[0];
+          readPos += 8;
+          break;
+        }
+        default: obj[name] = undefined;
+      }
+    }
+    arr[row] = obj;
+  }
+  return arr;
+}
+
 const _STRUCT_FIELDS = Object.create(null);
 function _planRaw(fields, fn) {
   const selected = [];
@@ -187,6 +255,10 @@ function _materializeDraft(cpp, fields, plan) {
     const desc = fields[item.name];
     if (!desc || !_STRUCT_FIELDS[item.inner]) { out[item.name] = []; continue; }
     const innerFields = _STRUCT_FIELDS[item.inner];
+    if (item.plan.nested.length === 0 && item.plan.listMap.length === 0) {
+      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf);
+      if (fast !== null) { out[item.name] = fast; continue; }
+    }
     const size = exp.cpp_any_open_list(desc.off);
     const arr = new Array(size);
     for (let j = 0; j < size; j++) {
