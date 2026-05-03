@@ -10,10 +10,15 @@
 //            https://github.com/llvm/llvm-project/blob/main/libcxxabi/src/cxa_noexception.cpp
 
 #include <cstdlib>
+#include <cstddef>
 #include <new>
 #include <exception>
 
 extern "C" {
+
+// (kj/debug.c++ used to reference strerror_r; now patched at build time
+// to inline an empty-string assignment instead, so the libc symbol is
+// dead and --gc-sections drops the errno-name table. See cpp/build.sh.)
 
 // Allocate space for the thrown exception object. The Itanium ABI requires
 // a small header before the user data; libc++abi reserves space for

@@ -45,16 +45,45 @@ open(sys.argv[2], "w").write(patched)
 PYEOF
 fi
 
+# Same trick for kj/debug.c++: KJ_SYSCALL formatting calls strerror_r(errno,
+# buffer, sizeof(buffer)) which would otherwise pull libc's strerror_r and
+# the ~1.5 KB errno-name table into the wasm. We never make syscalls in
+# wasm, so the SYSCALL-style branch is unreachable; replace the strerror_r
+# calls with empty-string assignments at compile time. Saves ~1.5 KB raw /
+# ~700 B gzip on top of every other strip pass.
+PATCHED_DBG=zig-out/patched-kj/debug.c++
+if [ ! -f "$PATCHED_DBG" ] || [ "$CAPNP_SRC/kj/debug.c++" -nt "$PATCHED_DBG" ]; then
+  python3 - "$CAPNP_SRC/kj/debug.c++" "$PATCHED_DBG" <<'PYEOF'
+import sys, re
+src = open(sys.argv[1]).read()
+# Both forms KJ uses:
+#   sysErrorArray = strerror_r(errorNumber, buffer, sizeof(buffer));
+#   strerror_r(errorNumber, buffer, sizeof(buffer));
+# Replace the strerror_r(...) call with an inline expression that writes
+# an empty string into buffer and returns the buffer pointer, so the libc
+# symbol is never referenced and --gc-sections drops the errno table.
+patched = re.sub(
+    r"strerror_r\(\s*errorNumber\s*,\s*buffer\s*,\s*sizeof\(buffer\)\s*\)",
+    "((buffer[0] = 0), (const char*)buffer)",
+    src,
+)
+open(sys.argv[2], "w").write(patched)
+PYEOF
+fi
+
 KJ_SOURCES=(
   "$CAPNP_SRC/kj/common.c++"
   "$PATCHED_EXC"
-  "$CAPNP_SRC/kj/debug.c++"
+  "$PATCHED_DBG"
   "$CAPNP_SRC/kj/string.c++"
-  "$CAPNP_SRC/kj/source-location.c++"
-  "$CAPNP_SRC/kj/hash.c++"
+  # source-location.c++, units.c++, hash.c++, list.c++, refcount.c++:
+  # confirmed unreferenced by the production link (verified by removing
+  # one at a time and observing the linker doesn't emit any undefined
+  # symbol). With -ffunction-sections + --gc-sections their dead code
+  # was already gone, so removing them from the source list is purely
+  # build-time hygiene; final wasm bytes are identical.
   "$CAPNP_SRC/kj/array.c++"
   "$CAPNP_SRC/kj/memory.c++"
-  "$CAPNP_SRC/kj/units.c++"
   # encoding.c++ removed — UTF-16/32 / wide / hex / URI helpers; capnwasm
   # works in UTF-8 only and does encode/decode on the JS side via TextEncoder.
   # io.c++ removed — only referenced from POSIX paths in exception.c++ we no-op.
@@ -62,8 +91,6 @@ KJ_SOURCES=(
   # time.c++ skipped: no time syscalls needed for serialize/deserialize.
   "$CAPNP_SRC/kj/arena.c++"
   "$CAPNP_SRC/kj/table.c++"
-  "$CAPNP_SRC/kj/list.c++"
-  "$CAPNP_SRC/kj/refcount.c++"
 )
 # Sources we're investigating for removal — flip to comment-out and rebuild
 # to measure impact. Keep the canonical list above stable.
