@@ -27,7 +27,10 @@
     .status.error { color: #b00020; }
     pre.code { background: #f5f5f5; padding: 0.8em 1em; border-radius: 4px; overflow-x: auto; font-size: 12px; line-height: 1.4; }
     .panels { display: grid; grid-template-columns: 1fr; gap: 1.5em; margin-top: 1.5em; }
-    @media (min-width: 760px) { .panels { grid-template-columns: 1fr 1fr; } }
+    @media (min-width: 960px) {
+      body { max-width: 960px; }
+      .panels { grid-template-columns: minmax(320px, 0.8fr) minmax(520px, 1.2fr); align-items: start; }
+    }
     h3 { font-size: 1em; margin: 0 0 0.5em; }
   </style>
 </head>
@@ -61,6 +64,7 @@
     <div>
       <h3>The whole client, more or less</h3>
       <pre class="code">import { createClient, subscribeQuery, optimistic } from "capnwasm/client";
+import { PostParamsBuilder } from "./chat.capnp.gen.mjs";
 
 const { cap } = await createClient("/chat-ws");
 
@@ -71,7 +75,12 @@ for await (const chunk of sub.updates) {
 
 await optimistic({
   apply: () =&gt; renderPending(text),
-  send:  () =&gt; cap.call(IFC, METHOD_POST, encodeJson({ author, text })).promise,
+  send:  () =&gt; {
+    const r = cap.callBuilder(IFC, METHOD_POST, PostParamsBuilder);
+    r.params.author = author;
+    r.params.text = text;
+    return r.send().promise;
+  },
   revert: () =&gt; markFailed(text),
 });</pre>
     </div>

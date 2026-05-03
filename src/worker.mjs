@@ -190,7 +190,8 @@ function buildRegistry() {
   reg.register(IFC, M_GET_CHILD, () => ({ caps: [{ kind: "child" }] }));
 
   reg.register(CHAT_IFC, CHAT_M_POST, (_target, ctx) => {
-    const params = JSON.parse(new TextDecoder().decode(ctx.paramsBytes()));
+    const p = ctx.openParams(PrimitivesReader);
+    const params = JSON.parse(new TextDecoder().decode(p.data));
     if (typeof params.author !== "string" || typeof params.text !== "string" || !params.text.trim()) {
       throw new Error("invalid post: need {author, text}");
     }

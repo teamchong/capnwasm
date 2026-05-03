@@ -8,6 +8,8 @@
 // schema for `Message` and `PostParams` and skip the JSON encode/decode.
 
 import { load } from "../../../js/browser.mjs";
+// @ts-ignore — generated primitive wrapper reused as a small bytes envelope.
+import { PrimitivesBuilder } from "../../../js/conformance_schema.gen.mjs";
 // connectWebSocket and subscribeQuery imports are intentionally written
 // against the source files — when this is published the same code paths
 // resolve through the published `capnwasm/client` entry. The dev server
@@ -158,7 +160,11 @@ async function main() {
     try {
       await optimistic({
         apply: () => { pendingKey = renderPending(author, text).key; },
-        send: () => cap.call(CHAT_IFC, M_POST, encoder.encode(JSON.stringify({ author, text }))).promise,
+        send: () => {
+          const r = cap.callBuilder(CHAT_IFC, M_POST, PrimitivesBuilder);
+          r.params.data = encoder.encode(JSON.stringify({ author, text }));
+          return r.send().promise;
+        },
         revert: () => { markFailed(pendingKey, "send failed"); },
       });
     } catch (err) {

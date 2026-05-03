@@ -142,7 +142,8 @@ function buildRegistry() {
   // about wire format. A production app would use a Cap'n Proto schema
   // for the message struct and skip the JSON encode/decode.
   reg.register(CHAT_IFC, CHAT_M_POST, (_t, ctx) => {
-    const params = JSON.parse(new TextDecoder().decode(ctx.paramsBytes()));
+    const p = ctx.openParams(PrimitivesReader);
+    const params = JSON.parse(new TextDecoder().decode(p.data));
     if (typeof params.author !== "string" || typeof params.text !== "string" || !params.text.trim()) {
       throw new Error("invalid post: need {author, text}");
     }
