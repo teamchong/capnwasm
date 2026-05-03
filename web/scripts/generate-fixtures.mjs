@@ -130,6 +130,14 @@ const capnwasmRpcGzip =
 const capnwasmRpcBr =
   capnwasmBrowserBr +
   await brotliSize(resolve(root, "dist", "rpc.mjs"));
+const capnwasmTypicalGzip =
+  capnwasmBrowserGzip +
+  await gzipSize(resolve(root, "dist", "typed.mjs")) +
+  await gzipSize(resolve(root, "dist", "http_batch.mjs"));
+const capnwasmTypicalBr =
+  capnwasmBrowserBr +
+  await brotliSize(resolve(root, "dist", "typed.mjs")) +
+  await brotliSize(resolve(root, "dist", "http_batch.mjs"));
 const capnwebGzip = await gzipSize(resolve(root, "web", "node_modules", "capnweb", "dist", "index.js"));
 const capnwebBr = await brotliSize(resolve(root, "web", "node_modules", "capnweb", "dist", "index.js"));
 
@@ -143,11 +151,13 @@ await writeFile(resolve(metricsDir, "build.json"), JSON.stringify({
     gzip: {
       capnwasmBrowser: capnwasmBrowserGzip,
       capnwasmRpc: capnwasmRpcGzip,
+      capnwasmTypical: capnwasmTypicalGzip,
       capnweb: capnwebGzip,
     },
     brotli: {
       capnwasmBrowser: capnwasmBrowserBr,
       capnwasmRpc: capnwasmRpcBr,
+      capnwasmTypical: capnwasmTypicalBr,
       capnweb: capnwebBr,
     },
     ratios: {
