@@ -1,6 +1,12 @@
 # capnwasm
 
-Typed RPC for the browser, with a real Cap'n Proto C++ runtime in 34 KB gz (28 KB brotli) for the wasm-only path; **41 KB gz** for the typical typed-proxy + HTTP-batch shape. Talks to non-JS services. Beats capnweb 1.7-3.7× on real workloads, 29× on sequential HTTP-batch calls.
+> **When this matters:** you're moving binary data (no base64 tax), doing sparse reads on large payloads, or talking to non-JS services over the Cap'n Proto wire. If your traffic is pure JS-to-JS text and you want the smallest possible bundle, capnweb is the right call.
+
+I built this to learn how Cloudflare's [capnweb](https://github.com/cloudflare/capnweb) works under the hood and to understand the tradeoffs it makes. capnweb deliberately dropped Cap'n Proto's binary wire format to fit a 21 KB JS-only bundle; I wanted to see what the inverse experiment looks like, keep the binary wire and statically compile the upstream Cap'n Proto C++ to wasm, and measure what that costs and what it buys.
+
+Both points on the curve are valid. capnwasm sits at: ~17 KB more brotli than capnweb, but a real Cap'n Proto runtime in the browser, raw bytes for binary data, sparse-access reads on large payloads, and wire interop with C++/Rust/Go services. The numbers below are findings from this exploration, not a scoreboard.
+
+Slim runtime: 33 KB gz / 28 KB brotli for the wasm-only path; 41 KB gz / 35 KB brotli for the typical typed-proxy + HTTP-batch shape.
 
 ```js
 // 1. Write a schema:           user.capnp
@@ -35,12 +41,13 @@ That's the whole core API. Same shape for RPC (`session.callBuilder(IFC, METHOD,
 Real upstream Cap'n Proto C++ is statically compiled to WebAssembly via `zig cc`. No `capnp` binary, no version skew, no `emscripten`. The schema compiler itself runs in wasm, including in the browser.
 
 ```bash
-npm install capnwasm
+pnpm add capnwasm
 ```
 
 **Docs:**
 [Zero to RPC](docs/zero-to-rpc.md) ·
 [Dynamic (no codegen)](docs/dynamic.md) ·
+[Decode model (how reads actually work)](docs/decode-model.md) ·
 [Cloudflare Workers](docs/workers.md) ·
 [API gateway pattern](docs/api-gateway-pattern.md) ·
 [Transports (WS / HTTP batch / HTTP stream)](docs/transports.md) ·
@@ -49,7 +56,8 @@ npm install capnwasm
 [Production deployment](docs/deployment.md) ·
 [vs gRPC-Web](docs/grpc-web-comparison.md) ·
 [vs capnweb](docs/vs-capnweb.md) ·
-[Schema truth & conformance](docs/schema-truth-and-conformance.md)
+[Schema checks & conformance limits](docs/schema-truth-and-conformance.md) ·
+[Notes from the trenches](docs/notes-from-the-trenches.md)
 
 ---
 
@@ -114,25 +122,29 @@ const charge = await stripe.retrieveCharge("ch_abc123");
 for await (const event of stripe.listEvents()) console.log(event.id);
 ```
 
-**Plus: manifest → contract harness → drift probe**. The same internal model that drives codegen, chained into three CLI commands that close the loop from "schema exists" to "schema is verifiably matched by the runtime":
+**Optional: manifest → compatibility diff → contract harness → probe**. The same internal model that drives codegen can also produce checks. This is intentionally modest: it does not prove business behavior is correct. It answers two narrower classes of questions: did the contract change in a way that can break existing generated clients, and does a live runtime still look compatible with the current schema?
 
 ```bash
 # 1) Canonical manifest from any input format (.capnp, .ts @rest, OpenAPI)
 npx capnwasm manifest user.capnp                  # → user.manifest.json
 
-# 2) Generate a Node --test contract harness from it. Capnp methods run
+# 2) Compare old/new manifests before release. This produces stable
+#    fingerprints plus a breaking/non-breaking changeset.
+npx capnwasm compat old.manifest.json user.manifest.json
+
+# 3) Generate a Node --test contract harness from it. Capnp methods run
 #    against an in-process mock by default (zero infra); REST methods
 #    need CAPNWASM_HARNESS_REST_TARGET=https://... to run.
 npx capnwasm harness user.manifest.json --gen ./user.gen.mjs
 node --test user.contract.test.mjs
 
-# 3) Probe a live target, report drift between schema and runtime.
-#    Exit code 2 on any drift. CI can gate on it.
+# 4) Probe a live target and write a per-operation report.
+#    Exit code 2 when observable drift is found.
 npx capnwasm probe user.manifest.json --target ws://staging/rpc \
                                        --rest-target https://staging
 ```
 
-Closes the SDK-isn't-runnable gap (the runnable thing is the harness, not the SDK) and the schema-may-be-lying gap (the probe tells you when the runtime stops matching). See [Schema truth & conformance](docs/schema-truth-and-conformance.md) for the full framing. What this pipeline covers, where the limits are (capnp wire format can't surface "extra fields the runtime sent" because messages are positional), and how it fits the broader "schema → all surfaces" picture.
+In plain English, `compat` is the old-contract vs new-contract check: removed operations, changed paths, newly-required params, removed fields, changed field types, and ordinal shifts are reported as breaking; additions are usually non-breaking. `probe` is the current-schema vs current-runtime check: for REST it records status, content-type, observed top-level JSON keys, and missing/extra keys when the manifest has a known object shape; for Cap'n Proto RPC it records call/decode success and which declared result fields were readable. Both are useful for catching drift early, but neither replaces product tests, examples, rollout policy, or human review. See [Schema checks & conformance limits](docs/schema-truth-and-conformance.md) for the longer framing and limits.
 
 ---
 
@@ -142,16 +154,16 @@ All entry-point sizes are minified-then-gzipped (the `dist/` build that ships in
 
 | | what | gzip | brotli |
 |---|---|---|---|
-| `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, brotli+base64-inlined wasm). Requires Chrome 124+ / FF 126+ / Safari 18+ / Node 18+ for `DecompressionStream("brotli")`. Older runtimes: use `capnwasm/browser`. **Not Workers-compatible at runtime** - uses `WebAssembly.compile(bytes)` which Workers blocks (dynamic codegen). | **39 KB** | **38 KB** |
-| `import "capnwasm/browser"` | wasm-only path: shim + loader + slim wasm. Read capnp messages, no RPC. **Workers-compatible** when paired with `import wasm from "capnwasm/capnp.slim.wasm"` (Wrangler bundles + precompiles the .wasm). | **34 KB** | **28 KB** |
+| `import "capnwasm"` | full runtime: capnp wire, RPC, codegen helpers (Node-friendly, single-file, brotli+base64-inlined wasm). Requires Chrome 124+ / FF 126+ / Safari 18+ / Node 18+ for `DecompressionStream("brotli")`. Older runtimes: use `capnwasm/browser`. **Not Workers-compatible at runtime** - uses `WebAssembly.compile(bytes)` which Workers blocks (dynamic codegen). | **38 KB** | **36 KB** |
+| `import "capnwasm/browser"` | wasm-only path: shim + loader + slim wasm. Read capnp messages, no RPC. **Workers-compatible** when paired with `import wasm from "capnwasm/capnp.slim.wasm"` (Wrangler bundles + precompiles the .wasm). | **33 KB** | **28 KB** |
 | `+ "capnwasm/rpc"` | adds the RPC layer (sessions, caps, streaming, all wire-conformance handlers) | **39 KB** | **33 KB** |
 | `+ "capnwasm/typed" + "capnwasm/http-batch"` | typed proxy + HTTP-batch transport - the typical browser app shape | **41 KB** | **35 KB** |
-| All four transports + typed + dynamic | every transport (WS, HTTP-batch, HTTP-stream, postMessage) + typed proxy + dynamic-schema reader | **47 KB** | **40 KB** |
+| All four transports + typed + dynamic | every transport (WS, HTTP-batch, HTTP-stream, postMessage) + typed proxy + dynamic-schema reader | **46 KB** | **40 KB** |
 
 The gzip column is what Cloudflare Workers measures against the deploy bundle limit (1 MB Free / 10 MB Paid, per `wrangler deploy`). The brotli column is what modern browsers actually receive over the wire (Cloudflare/Vercel/Netlify all serve `Content-Encoding: br` automatically).
 | `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | 2.6 KB | 2.4 KB |
 | `import "capnwasm/dynamic"` | runtime-schema reader - schema is data, no codegen step ([docs](docs/dynamic.md)) | 3.9 KB | 3.6 KB |
-| `import "capnwasm/codegen"` | wasm-built capnp schema compiler - runs in browser | 356 KB | - |
+| `import "capnwasm/codegen"` | wasm-built capnp schema compiler - runs in browser | 257 KB | 254 KB |
 | `import "capnwasm/vite-plugin"` | Vite plugin: schemas regenerate on save, no manual `npx capnwasm gen` ([docs](docs/vite-plugin.md)) | dev-only | dev-only |
 
 Subpath imports also work standalone (`capnwasm/http-batch` alone is 1.3 KB gz, `capnwasm/postmessage` is 0.6 KB). Pull only what you use.
@@ -169,6 +181,21 @@ Subpath imports also work standalone (`capnwasm/http-batch` alone is 1.3 KB gz, 
 | `capnwasm/mcp` | convert a manifest into Anthropic / MCP tool definitions |
 | `capnwasm/capnweb-wire` | client that speaks capnweb's JSON wire - drop into existing capnweb deployments |
 
+**Build-time emitters** (Node-only; never imported from browser code, so the slim runtime stays untouched):
+
+| import / CLI | what it does |
+|---|---|
+| `capnwasm/emit-openapi` / `npx capnwasm emit-openapi` | manifest → canonical OpenAPI 3.x. Round-trip lossless from an OpenAPI source. |
+| `capnwasm/emit-capnp` / `npx capnwasm emit-capnp` | manifest → canonical `.capnp`. Hand-off into the upstream capnp generator ecosystem (capnp-rust / -python / -go / -cxx / -java). |
+| `capnwasm/emit-agents` / `npx capnwasm emit-agents` | manifest → AGENTS.md / skill.md / llms.txt. |
+| `capnwasm/emit-codec` / `npx capnwasm emit-codec` | manifest → JSON ↔ capnp wire-bytes converters per top-level struct. |
+| `capnwasm/adapter` / `npx capnwasm adapt` | detect-and-adapt for pagination + error envelopes per operation. |
+| `capnwasm/lock` / `npx capnwasm lock` | field-ID / op-ID lock file engine. Pins capnp `@N` ordinals across schema edits. Optional rename detection via `--detect-renames`. |
+| `capnwasm/run-pipeline` / `npx capnwasm pipeline` | one-shot manifest → adapt → lock → emit-capnp → emit-openapi → emit-agents driven by `capnwasm.config.json`. |
+| `capnwasm/harness/snapshot` / `npx capnwasm harness --replay` | failure-replay snapshots for the contract harness. |
+| `capnwasm/manifest.schema.json` | published JSON Schema for the manifest IR. Lets non-JS consumers validate manifests without the runtime. |
+| `capnwasm/compat` / `npx capnwasm compat` | manifest fingerprint + conservative breaking/non-breaking changeset between two schema versions. |
+
 **Wire inspector** for debugging. Not bundled in the package, hosted as a single file. Paste this into DevTools when you want to see decoded capnp bytes ([docs](docs/inspect.md)):
 
 ```js
@@ -176,7 +203,7 @@ const cw = await import("https://teamchong.github.io/capnwasm/inspect.js");
 cw.inspect(fetch("/api/user.capnp"));   // expandable tree in the console
 ```
 
-**Live three-way playground** at [teamchong.github.io/capnwasm](https://teamchong.github.io/capnwasm/). REST/JSON vs capnweb vs capnwasm side-by-side, fetching the same fixtures and rendering to DOM in your browser. Plus a [WebSocket RPC bench](https://teamchong.github.io/capnwasm/rpc.html) that runs burst, pipelining, and 64 KB binary-echo workloads against a real RPC server (capnwasm wins ~5× on burst). Source in [`web/`](web/). `cd web && npm run dev` to run it locally.
+**Live three-way playground** at [teamchong.github.io/capnwasm](https://teamchong.github.io/capnwasm/). REST/JSON vs capnweb vs capnwasm side-by-side, fetching the same fixtures and rendering to DOM in your browser. Plus a [WebSocket RPC bench](https://teamchong.github.io/capnwasm/rpc.html) that runs burst, pipelining, and 64 KB binary-echo workloads against the same Worker endpoints used after deploy. Source in [`web/`](web/). `pnpm dev` runs the Wrangler-backed local server.
 
 **End-to-end render bench** at [teamchong.github.io/capnwasm/render-bench.html](https://teamchong.github.io/capnwasm/render-bench.html). Capnweb × capnwasm × WS × HTTP-batch × small/medium/large × cold/warm, all in one page. Measures the full pipeline (request → wire → decode → field reads → DOM mutation → forced layout). **Both libraries win some, lose some**: capnwasm leads on binary blobs and sparse reads, capnweb leads on re-read storms and large-list rendering. The page shows every cell. No averages, no cherry-picking. See [`docs/vs-capnweb.md`](docs/vs-capnweb.md) for the writeup or click through to the live page to run it yourself.
 
@@ -196,22 +223,23 @@ GitHub Pages / plain nginx without brotli fall back to the gzip column in the ta
 
 ---
 
-## Why this exists / when to choose it
+## Findings: where each approach wins
 
-Microsecond per-call differences vanish behind any real network. The cases where capnwasm matters at user-perceived scale:
+These are measurements from the exploration above, not a competition. Microsecond per-call differences vanish behind any real network; what shows up at user-perceived scale are the cases where the binary-wire-plus-wasm approach buys something concrete. The workloads below are where that's true:
 
 | workload | capnweb (JSON) | capnwasm (binary) | win |
 |---|---|---|---|
-| **Decode 1000 records, read 5 fields each** (sparse access) | 20.4 ms | 1.7 ms | **12× faster** |
+| **Decode 1000 records, read 5 fields each** (sparse access) | 21.6 ms | 1.4 ms | **15.4× faster** |
 | **5 MB binary asset** over 10 Mbps link | 5.33 s | 4.00 s | **1.33 s saved per asset** (no base64 bloat) |
-| **10K-msg/s telemetry stream decode** | 1.0 M msgs/sec | 3.3 M msgs/sec | **3.2× throughput** |
-| **In-process RPC, 64 KB text echo** | 352 µs | 93.5 µs | **3.77× faster** |
-| **In-process RPC, 4 KB text echo** | 26.8 µs | 17.2 µs | **1.56× faster** |
-| **In-process RPC, 256 B text echo** | 8.05 µs | 4.84 µs | **1.66× faster** |
-| **In-process RPC, single tiny call** | 14.17 µs | 7.93 µs | **1.79× faster** |
-| **In-process RPC, burst 1000 calls (per-call)** | 7.47 µs | 2.67 µs | **2.80× faster** |
-| **HTTP batch, sequential single call** | 1187 µs | 43.8 µs | **27× faster** |
-| **HTTP batch, burst of 100 calls** | 19.5 µs | 13.2 µs | **1.48× faster** |
+| **10K-msg/s telemetry stream decode** (32 fields, read 3) | 1.01 M msgs/sec | 1.67 M msgs/sec | **1.65× throughput** |
+| **In-process RPC, 64 KB text echo** | 358 µs | 96.2 µs | **3.72× faster** |
+| **In-process RPC, 4 KB text echo** | 27.6 µs | 20.0 µs | **1.38× faster** |
+| **In-process RPC, 256 B text echo** | 8.53 µs | 6.51 µs | **1.31× faster** |
+| **In-process RPC, single tiny call** | 18.05 µs | 9.22 µs | **1.96× faster** |
+| **In-process RPC, burst 1000 calls (per-call)** | 7.26 µs | 2.95 µs | **2.46× faster** |
+| **HTTP batch, sequential single call** | 1206 µs | 46.1 µs | **26.2× faster** |
+| **HTTP batch, burst of 100 calls** | 18.6 µs | 16.3 µs | **1.14× faster** |
+| **HTTP batch, 10 KB string echo (sequential)** | 1210 µs | 63.5 µs | **19.1× faster** |
 
 Choose capnwasm when:
 - You're moving binary data (images, audio, models, embeddings) and want raw bytes on the wire
@@ -324,7 +352,7 @@ const bytes = b.finalize();   // framed Cap'n Proto bytes, wire-compatible with 
 
 Builders cover primitives + text + data. Lists and nested-struct builders aren't in this pass. Codegen still wins for those write paths.
 
-**How fast?** Bench on Node 22, conformance schema's 13-field Primitives struct, isolated subprocesses (`npm run bench:dynamic`):
+**How fast?** Bench on Node 22, conformance schema's 13-field Primitives struct, isolated subprocesses (`pnpm bench:dynamic`):
 
 ```
 read all 13 fields           codegen ~476 ns,  dynamic ~531 ns/call    (codegen 1.12× faster)
@@ -380,14 +408,15 @@ Verified end-to-end via headless Chromium tests.
 bash cpp/build.sh             # builds runtime wasm + dist/inlined.mjs (full + slim)
 bash cpp/build_capnpc.sh      # builds compiler wasm
 node js/build_codegen_inlined.mjs   # builds dist/codegen.mjs (inlined compiler)
-npm test                      # 77 tests across runtime, RPC, REST, OpenAPI, browser
+pnpm dev                     # build web/ and run Wrangler locally at http://127.0.0.1:8787
+pnpm test                     # 400+ tests; installs Playwright Chromium on first run if missing
 ```
 
 Requires:
 - `zig` 0.16+ (provides clang 21 + libc++ for `wasm32-wasi-musl`)
 - `wasm-opt` (Binaryen)
 - `node` 22+ (for `--test`)
-- `playwright` (for the browser tests)
+- `playwright` (for browser tests; `pnpm test` installs Chromium on first run if missing)
 
 For development against capnweb comparison benches, also needs sibling clones of `../capnweb` and `../capnproto`.
 
@@ -425,4 +454,21 @@ All wasm modules are built from one vendored copy of Cap'n Proto's C++ source tr
 
 ## License
 
-MIT.
+MIT (see `LICENSE.txt`).
+
+`cpp/vendor/capnp/` and `cpp/vendor/kj/` are vendored from
+[capnproto/capnproto](https://github.com/capnproto/capnproto) and ship inside
+the wasm binaries we distribute. That code stays under its original MIT
+license; the upstream copyright notice is preserved in `cpp/vendor/LICENSE`.
+
+## Not affiliated
+
+This is an independent personal project. It is **not affiliated with, endorsed
+by, or sponsored by** Cloudflare, Inc., the Cap'n Proto project, or any other
+organization. The author works at Cloudflare; this repo is unrelated to that
+employment and was built on personal time. References to capnweb
+(github.com/cloudflare/capnweb) and Cap'n Proto (github.com/capnproto/capnproto)
+are made because those projects are public, MIT-licensed, and the natural
+points of comparison; nothing in this repo represents Cloudflare or speaks for
+it. Bug reports, feature requests, and pull requests should be filed against
+this repository, not against either upstream.

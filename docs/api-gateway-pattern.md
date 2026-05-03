@@ -293,7 +293,7 @@ This pattern doesn't get you everything you'd want from a full API gateway produ
 - **No GraphQL / federation.** If your public surface needs to be GraphQL, this isn't the tool.
 - **No managed deploys.** This is library code. Your Worker is your Worker; capnwasm doesn't run it for you.
 - **gRPC upstream codegen** isn't built. The shape (`fetch` shim that conforms to the same Promise-returning method interface) is straightforward to hand-write per service.
-- **Schema versioning / breaking-change detection.** Cap'n Proto's wire format is famously evolution-friendly (add fields, never reorder), but capnwasm doesn't ship a `capnwasm diff` linter to flag breaking changes between schema versions.
+- **Schema versioning / breaking-change detection.** Cap'n Proto's wire format is famously evolution-friendly (add fields, never reorder). capnwasm now ships `npx capnwasm compat old.manifest.json new.manifest.json` as a conservative old/new manifest diff, but rollout policy is still on the application: v2 interface, adapter, migration window, or rejection of the break.
 
 If you need a polished commercial gateway, the right answer is a polished commercial gateway. capnwasm is the answer when you want to own the wire format end-to-end, the public surface is JS-consumed, and the gateway box is a Worker (or any Node-shaped runtime).
 

@@ -1,7 +1,14 @@
 {
   "name": "capnwasm",
   "version": "0.0.1",
+  "packageManager": "pnpm@10.33.2",
   "description": "Real Cap'n Proto C++ compiled to wasm + npx CLI for typed JS bindings",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/teamchong/capnwasm.git"
+  },
+  "homepage": "https://github.com/teamchong/capnwasm",
   "type": "module",
   "main": "js/index.mjs",
   "exports": {
@@ -58,11 +65,20 @@
     },
     "./manifest": "./js/manifest.mjs",
     "./harness": "./js/harness.mjs",
+    "./harness/snapshot": "./js/harness_snapshot.mjs",
     "./probe": "./js/probe.mjs",
+    "./compat": "./js/compat.mjs",
     "./sturdyref": "./js/sturdyref.mjs",
     "./pipeline": "./js/pipeline.mjs",
     "./handoff": "./js/handoff.mjs",
     "./mcp": "./js/mcp.mjs",
+    "./emit-openapi": "./js/emit_openapi.mjs",
+    "./emit-capnp": "./js/emit_capnp.mjs",
+    "./emit-agents": "./js/emit_agents.mjs",
+    "./emit-codec": "./js/emit_codec.mjs",
+    "./adapter": "./js/adapter.mjs",
+    "./lock": "./js/lock.mjs",
+    "./run-pipeline": "./js/run_pipeline.mjs",
     "./capnweb-wire": "./js/capnweb_wire.mjs",
     "./metrics": "./js/metrics.mjs",
     "./reconnect": {
@@ -73,7 +89,8 @@
       "development": "./js/router.mjs",
       "default": "./dist/router.mjs"
     },
-    "./capnp.slim.wasm": "./dist/capnp.slim.wasm"
+    "./capnp.slim.wasm": "./dist/capnp.slim.wasm",
+    "./manifest.schema.json": "./schemas/manifest.schema.json"
   },
   "bin": {
     "capnwasm": "./bin/capnwasm.mjs"
@@ -82,6 +99,7 @@
     "js",
     "bin",
     "dist",
+    "schemas",
     "!dist/*.map",
     "!js/*.gen.mjs",
     "!js/*.gen.d.ts",
@@ -101,11 +119,20 @@
     "bench:rpc:node": "node bench/rpc_bench.mjs",
     "bench:realistic": "node bench/realistic.mjs",
     "bench:dynamic": "node bench/dynamic_bench_isolated.mjs",
-    "test": "node --test test/*.test.mjs"
+    "dev": "pnpm run build:web && wrangler dev --local --ip 127.0.0.1 --port 8787 --show-interactive-dev-session=false",
+    "dev:vite": "pnpm -C web dev",
+    "pretest": "node scripts/ensure-playwright-chromium.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:browser": "node --test test/browser_*.test.mjs",
+    "install:browsers": "playwright install chromium",
+    "build:web": "pnpm -C web build",
+    "deploy:dryrun": "pnpm run build:web && wrangler deploy --dry-run --outdir=.wrangler/dryrun",
+    "deploy": "pnpm run build:web && wrangler deploy"
   },
-  "license": "MIT",
   "devDependencies": {
+    "capnweb": "^0.7.0",
     "playwright": "^1.56.1",
-    "terser": "^5.46.2"
+    "terser": "^5.46.2",
+    "wrangler": "^4.87.0"
   }
 }

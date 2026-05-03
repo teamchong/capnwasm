@@ -1,4 +1,11 @@
-// Verify pick() saves wasm boundary crossings vs per-field access.
+// Generated codegen Reader: draft() projection round-trips, materialize-all
+// via toObject() agrees with per-field getters. Pinned here because draft()
+// is the only documented projection API on codegen readers — pick/access/apply
+// were removed once draft() landed, and these tests are the regression net for
+// "draft picks the same values per-field getters would have read".
+//
+// The dynamic reader (js/dynamic.mjs) keeps pick() and is exercised in
+// test/dynamic.test.mjs.
 
 import { test, before } from "node:test";
 import { strict as assert } from "node:assert";
@@ -10,7 +17,9 @@ let cpp, bytes;
 before(async () => {
   cpp = await loadWasm();
 
-  // Build a Primitives message we can pick from.
+  // Build a Primitives message we can project from. Same byte layout the
+  // dynamic reader's tests use; the C++ side cpp_conformance_serialize
+  // hands back a framed message we can re-open.
   const u8 = cpp._u8;
   const inPtr = cpp._exports.cpp_in_ptr();
   const buf = u8.subarray(inPtr, inPtr + cpp._exports.cpp_in_capacity());
@@ -31,18 +40,24 @@ before(async () => {
   bytes = cpp._u8.slice(cpp._exports.cpp_out_ptr(), cpp._exports.cpp_out_ptr() + len);
 });
 
-test("pick returns same values as per-field getters", () => {
+test("draft returns same values as per-field getters", () => {
+  // Sanity: read fields one at a time, then read the same set in a single
+  // batched draft() call. Both paths share `_capnwasmPick` underneath, so
+  // any drift between them surfaces as deepEqual mismatch.
   const r = openPrimitives(cpp, bytes);
   const expected = { u8: r.u8, i8: r.i8, u16: r.u16, text: r.text, flag0: r.flag0 };
-  // Re-open because per-field getters above re-staged input via cpp_any_open.
   const r2 = openPrimitives(cpp, bytes);
-  const got = r2.pick(["u8", "i8", "u16", "text", "flag0"]);
+  const got = r2.draft((p) => ({
+    u8: p.u8, i8: p.i8, u16: p.u16, text: p.text, flag0: p.flag0,
+  }));
   assert.deepEqual(got, expected);
 });
 
 test("toObject contains every field reachable through per-field getters", () => {
-  // Read every field via the per-field accessors, then verify toObject's
-  // returned object exposes the same set of keys with the same values.
+  // toObject() is the "give me everything" helper. It's a thin wrapper
+  // around the same batched-pick primitive that draft() uses, but skips
+  // the recording-Proxy planning step because the field set is fixed at
+  // codegen time.
   const r = openPrimitives(cpp, bytes);
   const expected = {
     u8: r.u8, i8: r.i8, u16: r.u16, i16: r.i16,
@@ -54,10 +69,6 @@ test("toObject contains every field reachable through per-field getters", () => 
   };
   const r2 = openPrimitives(cpp, bytes);
   const got = r2.toObject();
-  // Compare key-by-key. Uint8Array → array equality. Numerics → cast both
-  // sides through Number so a Number/BigInt 12345 compares equal across
-  // the per-field-getter and toObject paths (one returns u64 as BigInt
-  // when full precision matters, the other coerces small values).
   for (const k of Object.keys(expected)) {
     if (got[k] instanceof Uint8Array) {
       assert.deepEqual(Array.from(got[k]), expected[k], `field ${k}`);
@@ -69,13 +80,25 @@ test("toObject contains every field reachable through per-field getters", () => 
   }
 });
 
-test("pick with one field works", () => {
+test("draft with a single field returns the same shape the callback declares", () => {
+  // Verifies single-field projections work: both the {key: value} object
+  // form and the bare-value form (callback returns the field directly).
   const r = openPrimitives(cpp, bytes);
-  const got = r.pick(["text"]);
-  assert.equal(got.text, "hello");
+  const wrapped = r.draft((p) => ({ text: p.text }));
+  assert.equal(wrapped.text, "hello");
+  const r2 = openPrimitives(cpp, bytes);
+  // Returning the value directly works — the planner records the access
+  // and the materialize step hands back the value, no wrapping object.
+  const direct = r2.draft((p) => p.text);
+  assert.equal(direct, "hello");
 });
 
-test("pick raises on unknown field name", () => {
+test("draft with an unknown field does not throw and returns undefined", () => {
+  // Reading a non-existent field via the recording Proxy is silently
+  // ignored (no plan entry is added for it), so during materialize the
+  // result simply lacks the key. This matches plain object semantics.
   const r = openPrimitives(cpp, bytes);
-  assert.throws(() => r.pick(["doesNotExist"]), /unknown field/);
+  const got = r.draft((p) => ({ text: p.text, missing: p.doesNotExist }));
+  assert.equal(got.text, "hello");
+  assert.equal(got.missing, undefined);
 });

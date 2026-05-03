@@ -18,35 +18,44 @@ const _F64_VIEW_F64 = new Float64Array(_F64_VIEW_BUF);
 // We key on a frozen Uint8Array of the descriptor bytes so identical field
 // sets (the common case in batch processing) hit the cache.
 const _PICK_REQ_CACHE = new WeakMap();  // fields -> Map<namesKey, Uint8Array>
+const _DRAFT_PLAN_CACHE = new WeakMap(); // fields -> WeakMap<fn, plan>
 
 function _getPickRequest(fields, names) {
   let perFields = _PICK_REQ_CACHE.get(fields);
   if (!perFields) { perFields = new Map(); _PICK_REQ_CACHE.set(fields, perFields); }
   const key = names.join("\0");
-  let req = perFields.get(key);
-  if (req) return req;
+  let entry = perFields.get(key);
+  if (entry) return entry;
   const buf = new Uint8Array(4 + names.length * 5);
   const dv = new DataView(buf.buffer);
   dv.setUint32(0, names.length, true);
+  // Precompute the field-descriptor array alongside the request bytes. Both
+  // are pure functions of (fields, names); caching them together means the
+  // hot pick path skips a names.length-iteration property-lookup loop on
+  // every call. The cached entry shape is { req: Uint8Array, descs: Array }.
+  const descs = new Array(names.length);
   let pos = 4;
   for (let i = 0; i < names.length; i++) {
     const d = fields[names[i]];
     if (!d) throw new Error("unknown field: " + names[i]);
+    descs[i] = d;
     buf[pos] = d.kind; pos += 1;
     dv.setUint32(pos, d.off, true); pos += 4;
   }
-  perFields.set(key, buf);
-  return buf;
+  entry = { req: buf, descs };
+  perFields.set(key, entry);
+  return entry;
 }
 
 function _capnwasmPick(cpp, fields, names) {
-  // Cached request prep. Same names hit the WeakMap and skip the encode loop.
-  const req = _getPickRequest(fields, names);
+  // Cached request prep + descriptor array. Same names hit the WeakMap and
+  // skip both the encode loop and the per-call descs-rebuild.
+  const entry = _getPickRequest(fields, names);
+  const req = entry.req;
+  const descs = entry.descs;
   const u8 = cpp._u8;
   const aux = cpp._auxPtr;
   u8.set(req, aux);
-  const descs = new Array(names.length);
-  for (let i = 0; i < names.length; i++) descs[i] = fields[names[i]];
   const written = cpp._exports.cpp_any_batch_read(req.length);
   if (!written) return Object.fromEntries(names.map((n) => [n, undefined]));
   const out = cpp._outPtr;
@@ -98,6 +107,104 @@ function _capnwasmPick(cpp, fields, names) {
     }
   }
   return result;
+}
+
+const _STRUCT_FIELDS = Object.create(null);
+function _planRaw(fields, fn) {
+  const selected = [];
+  const seen = new Set();
+  const make = (schema, path) => new Proxy(Object.create(null), {
+    get(_, name) {
+      if (typeof name !== "string") return undefined;
+      const desc = schema[name];
+      if (!desc) return undefined;
+      const nextPath = path.concat(name);
+      const list = /^List\(([^)]+)\)$/.exec(desc.type);
+      if (list && _STRUCT_FIELDS[list[1]]) {
+        return { map(childFn) { selected.push({ kind: "listMap", path: nextPath, inner: list[1], fn: childFn }); return []; } };
+      }
+      if (_STRUCT_FIELDS[desc.type]) return make(_STRUCT_FIELDS[desc.type], nextPath);
+      const key = nextPath.join(".");
+      if (!seen.has(key)) { seen.add(key); selected.push({ kind: "field", path: nextPath }); }
+      return undefined;
+    }
+  });
+  fn(make(fields, []));
+  return selected;
+}
+function _compilePlan(selected) {
+  const leaf = [];
+  const nestedRaw = new Map();
+  const listMapRaw = [];
+  for (let i = 0; i < selected.length; i++) {
+    const item = selected[i];
+    const head = item.path[0];
+    if (!head) continue;
+    if (item.kind === "field" && item.path.length === 1) {
+      leaf.push(head);
+    } else if (item.kind === "listMap" && item.path.length === 1) {
+      listMapRaw.push({ name: head, inner: item.inner, fn: item.fn });
+    } else {
+      let entry = nestedRaw.get(head);
+      if (!entry) { entry = []; nestedRaw.set(head, entry); }
+      const sliced = { kind: item.kind, path: item.path.slice(1) };
+      if (item.kind === "listMap") { sliced.inner = item.inner; sliced.fn = item.fn; }
+      entry.push(sliced);
+    }
+  }
+  const nested = [];
+  for (const [name, raw] of nestedRaw) nested.push({ name, plan: _compilePlan(raw) });
+  const listMap = listMapRaw.map(({ name, inner, fn }) => ({
+    name, inner, fn,
+    plan: _planDraft(_STRUCT_FIELDS[inner], fn),
+  }));
+  return { leaf, nested, listMap };
+}
+function _planDraft(fields, fn) {
+  return _compilePlan(_planRaw(fields, fn));
+}
+function _getDraftPlan(fields, fn) {
+  let perFields = _DRAFT_PLAN_CACHE.get(fields);
+  if (!perFields) { perFields = new WeakMap(); _DRAFT_PLAN_CACHE.set(fields, perFields); }
+  let plan = perFields.get(fn);
+  if (!plan) { plan = _planDraft(fields, fn); perFields.set(fn, plan); }
+  return plan;
+}
+function _materializeDraft(cpp, fields, plan) {
+  const out = {};
+  if (plan.leaf.length > 0) Object.assign(out, _capnwasmPick(cpp, fields, plan.leaf));
+  const exp = cpp._exports;
+  for (let i = 0; i < plan.nested.length; i++) {
+    const sub = plan.nested[i];
+    const desc = fields[sub.name];
+    if (!desc || !_STRUCT_FIELDS[desc.type]) { out[sub.name] = undefined; continue; }
+    if (exp.cpp_any_enter_struct(desc.off) !== 1) { out[sub.name] = null; continue; }
+    try { out[sub.name] = _materializeDraft(cpp, _STRUCT_FIELDS[desc.type], sub.plan); }
+    finally { exp.cpp_any_leave_struct(); }
+  }
+  for (let i = 0; i < plan.listMap.length; i++) {
+    const item = plan.listMap[i];
+    const desc = fields[item.name];
+    if (!desc || !_STRUCT_FIELDS[item.inner]) { out[item.name] = []; continue; }
+    const innerFields = _STRUCT_FIELDS[item.inner];
+    const size = exp.cpp_any_open_list(desc.off);
+    const arr = new Array(size);
+    for (let j = 0; j < size; j++) {
+      exp.cpp_any_open_list(desc.off);
+      if (exp.cpp_any_enter_list_at(j) !== 1) { arr[j] = null; continue; }
+      try { arr[j] = _materializeDraft(cpp, innerFields, item.plan); }
+      finally { exp.cpp_any_leave_struct(); }
+    }
+    out[item.name] = arr;
+  }
+  return out;
+}
+function _runDraft(cpp, fields, fn) {
+  const plan = _getDraftPlan(fields, fn);
+  if (plan.nested.length === 0 && plan.listMap.length === 0) {
+    return fn(_capnwasmPick(cpp, fields, plan.leaf));
+  }
+  return fn(_materializeDraft(cpp, fields, plan));
 }
 
 export class WideUserDataReader {
@@ -369,41 +476,16 @@ export class WideUserDataReader {
     field31: {"kind":0,"off":31,"type":"text"},
   };
 
-  pick(names) {
-    return WideUserDataReader._pickImpl(this._cpp, names);
-  }
-
-  static _pickImpl(cpp, names) {
-    return _capnwasmPick(cpp, WideUserDataReader._FIELDS, names);
-  }
-
-  get access() {
-    if (!this._plan) {
-      this._plan = [];
-      const recorded = this._plan;
-      const fields = WideUserDataReader._FIELDS;
-      this._access = new Proxy(Object.create(null), {
-        get(_, name) {
-          if (typeof name === "string" && (name in fields)) recorded.push(name);
-          return undefined;
-        }
-      });
-    }
-    return this._access;
-  }
-
-  apply() {
-    if (!this._plan || this._plan.length === 0) return {};
-    const result = WideUserDataReader._pickImpl(this._cpp, this._plan);
-    this._plan = null;
-    this._access = null;
-    return result;
+  draft(fn) {
+    return _runDraft(this._cpp, WideUserDataReader._FIELDS, fn);
   }
 
   toObject() {
-    return WideUserDataReader._pickImpl(this._cpp, Object.keys(WideUserDataReader._FIELDS));
+    return _capnwasmPick(this._cpp, WideUserDataReader._FIELDS, Object.keys(WideUserDataReader._FIELDS));
   }
 }
+
+_STRUCT_FIELDS["WideUserData"] = WideUserDataReader._FIELDS;
 
 export class WideUserDataBuilder {
   static _DATA_WORDS = 0;

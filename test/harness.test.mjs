@@ -75,7 +75,10 @@ test("buildHarness: emits REST test that needs CAPNWASM_HARNESS_REST_TARGET", ()
   const src = buildHarness(m, { genImport: "./api.gen.mjs" });
   assert.match(src, /test\("MyAPI\.getUser: GET \/users\/\{id\}"/);
   assert.match(src, /CAPNWASM_HARNESS_REST_TARGET/);
-  assert.match(src, /createMyAPIClient\({ baseUrl: REST_TARGET }\)/);
+  // Generated client is now constructed with the recording fetch wrapper
+  // so failed tests can write replay snapshots.
+  assert.match(src, /createMyAPIClient\(\{ baseUrl: REST_TARGET, fetch: recordingFetch\(\) \}\)/);
+  assert.match(src, /recordOnFailure\(/);
   assert.match(src, /client\.getUser\("contract-test"\)/);
 });
 
@@ -148,8 +151,8 @@ interface UserService {
   // Both tests should have passed (one per method).
   assert.match(r.stdout, /UserService\.getUser: call returns a parseable response/);
   assert.match(r.stdout, /UserService\.ping: call returns a parseable response/);
-  assert.match(r.stdout, /# pass 2/);
-  assert.match(r.stdout, /# fail 0/);
+  assert.match(r.stdout, /\bpass 2\b/);
+  assert.match(r.stdout, /\bfail 0\b/);
 });
 
 test("end-to-end: REST manifest → harness emits skip when target unset", () => {
@@ -187,5 +190,5 @@ interface MyAPI {
     `harness run failed unexpectedly:\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
   assert.match(r.stdout, /MyAPI\.getUser: GET \/users\/\{id\}/);
   assert.match(r.stdout, /set CAPNWASM_HARNESS_REST_TARGET to run/);
-  assert.match(r.stdout, /# fail 0/);
+  assert.match(r.stdout, /\bfail 0\b/);
 });

@@ -258,8 +258,8 @@
         <li>&ldquo;vs capnweb&rdquo; assumes capnweb is checked out at <code>../capnweb</code> (sibling repo).</li>
         <li>All wins reported are median of multiple runs; outliers from GC pauses excluded.</li>
         <li>Bundle sizes measured on <code>dist/inlined.mjs</code> (capnwasm) and <code>../capnweb/dist/index.js</code> (capnweb) post-gzip-9.</li>
-        <li>In-browser numbers: <code>cd web &amp;&amp; npm run build &amp;&amp; npm run preview</code>, then run the playground in Chromium.</li>
-        <li>End-to-end render bench: <code>cd web &amp;&amp; npm run dev</code>, then visit <code>/render-bench.html</code> and click Run. Source at <code>web/render-bench.html</code> + <code>web/src/render-bench/main.ts</code>; server endpoints at <code>web/vite-rpc-server.mjs</code>.</li>
+        <li>In-browser numbers: <code>pnpm dev</code>, then run the playground in Chromium against Wrangler.</li>
+        <li>End-to-end render bench: <code>pnpm dev</code>, then visit <code>/render-bench.html</code> and click Run. Source at <code>web/render-bench.html</code> + <code>web/src/render-bench/main.ts</code>; Worker endpoints are in <code>src/worker.mjs</code>.</li>
       </ul>
     </section>
 

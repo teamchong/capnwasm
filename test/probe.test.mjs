@@ -156,6 +156,14 @@ function mockHttpServer(handler) {
 
 test("probe: REST endpoint with matching shape reports ok + observed keys", async () => {
   const manifest = buildManifest({
+    structs: [{
+      name: "User", dataWords: 0, ptrWords: 3,
+      fields: [
+        { name: "id", ordinal: 0, type: "Text", kind: "pointer", ptrIndex: 0 },
+        { name: "name", ordinal: 1, type: "Text", kind: "pointer", ptrIndex: 1 },
+        { name: "email", ordinal: 2, type: "Text", kind: "pointer", ptrIndex: 2 },
+      ],
+    }],
     restApis: [{
       name: "MyAPI", baseUrl: null, defaults: {},
       methods: [{
@@ -182,7 +190,51 @@ test("probe: REST endpoint with matching shape reports ok + observed keys", asyn
     const r = report.results[0];
     assert.equal(r.operationId, "MyAPI.getUser");
     assert.equal(r.httpStatus, 200);
+    assert.deepEqual(r.declaredKeys, ["id", "name", "email"]);
     assert.deepEqual(r.observedKeys.sort(), ["email", "id", "name"]);
+    assert.deepEqual(r.missingKeys, []);
+    assert.deepEqual(r.extraKeys, []);
+  } finally {
+    await mock.close();
+  }
+});
+
+test("probe: REST endpoint with missing and extra keys reports drift", async () => {
+  const manifest = buildManifest({
+    structs: [{
+      name: "User", dataWords: 0, ptrWords: 3,
+      fields: [
+        { name: "id", ordinal: 0, type: "Text", kind: "pointer", ptrIndex: 0 },
+        { name: "name", ordinal: 1, type: "Text", kind: "pointer", ptrIndex: 1 },
+        { name: "email", ordinal: 2, type: "Text", kind: "pointer", ptrIndex: 2 },
+      ],
+    }],
+    restApis: [{
+      name: "MyAPI", baseUrl: null, defaults: {},
+      methods: [{
+        name: "getUser", method: "GET", path: "/users/{id}",
+        params: [{ name: "id", role: "path", type: "string", optional: false }],
+        returnType: "User",
+      }],
+    }],
+  }, { source: { name: "api.ts", format: "typescript-rest" } });
+
+  const mock = await mockHttpServer(async () => ({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ id: "probe-test", name: "Probe Bot", nickname: "bot" }),
+  }));
+  try {
+    const report = await probe(await getCpp(), manifest, { restTarget: mock.url });
+    assert.equal(report.summary.total, 1);
+    assert.equal(report.summary.ok, 1);
+    assert.equal(report.summary.error, 0);
+    assert.equal(report.summary.drift, 1);
+    const r = report.results[0];
+    assert.equal(r.outcome, "ok");
+    assert.equal(r.drift, true);
+    assert.deepEqual(r.missingKeys, ["email"]);
+    assert.deepEqual(r.extraKeys, ["nickname"]);
   } finally {
     await mock.close();
   }

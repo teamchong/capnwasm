@@ -1,67 +1,62 @@
 # web/
 
-Vite-built docs site for capnwasm. Three pages:
+Wrangler-served docs site for capnwasm. The static assets are built with Vite, then served through the Worker configured in `../wrangler.json`.
 
-- `/` &mdash; landing with overview and headline numbers vs capnweb
-- `/playground.html` &mdash; live in-browser bench (REST + capnweb + capnwasm)
-- `/vs-capnweb.html` &mdash; full comparison: where capnwasm wins, loses, and ties
+- `/`; landing with overview and headline numbers vs capnweb
+- `/playground.html`; live in-browser bench (REST + capnweb + capnwasm)
+- `/vs-capnweb.html`; full comparison: where capnwasm wins, loses, and ties
 
 ## Run locally
 
 ```bash
-cd web
-npm install
-npm run dev          # vite dev server at http://localhost:5173
+pnpm install
+pnpm dev          # builds web/dist and runs Wrangler at http://127.0.0.1:8787
 ```
 
-`npm run dev` first runs `npm run prepare`, which:
+`pnpm dev` runs from the repo root. It first builds `web/dist`, then starts Wrangler so the same Worker entrypoint handles `/api/*`, `/capnwasm`, `/capnweb`, `/chat`, `/capnwasm-http`, and `/capnweb-http` locally.
+
+The Vite build first runs `web`'s `prepare` script, which:
 
 1. Copies `../dist/capnp.slim.wasm` into `web/public/`.
 2. Generates fixture data into `web/public/data/` (200 small + 50 blob user
    records, each emitted in JSON, capnweb, and Cap'n Proto formats).
 
-If you change the runtime wasm or the fixture script, re-run `npm run prepare`
-or just restart `npm run dev`.
+If you only need frontend/HMR iteration, use `pnpm dev:vite` from the repo root. That starts Vite at `http://127.0.0.1:5173` with a matching Node-side RPC shim, but Wrangler is the source of truth for deployed behavior.
 
 ## Production build
 
 ```bash
-npm run build        # static output in web/dist
-npm run preview      # serve the built site at http://localhost:4173
+pnpm build        # static output in web/dist
+pnpm preview      # serve the built site at http://localhost:4173
 ```
 
-`npm run preview` also attaches the RPC bench server to its HTTP port,
-so `/rpc.html` works against the production build out of the box. The
-build emits hashed asset filenames for the wasm + JS, so the static
-`dist/` is safe to drop behind any CDN with long-cache headers.
-
-If you do drop the static `dist/` behind a CDN, the RPC bench page
-will need a real WebSocket backend somewhere &mdash; `npm run server` runs
-the same handlers as a standalone process at `ws://HOST:8081`. Or wire
-the handlers in `vite-rpc-server.mjs` into your own deployment.
+`pnpm preview` is useful for static Vite preview, but the deploy-shaped
+path is `pnpm dev` / Wrangler. The build emits hashed asset filenames
+for the wasm + JS, and Wrangler serves them through the configured
+assets binding.
 
 ## Wiring
 
-- `users.capnp` &mdash; the demo schema. `npm run codegen` runs `npx
+- `users.capnp`; the demo schema. `pnpm codegen` runs `npx
   capnwasm gen users.capnp` to produce `src/playground/users.gen.mjs`,
   and the `capnwasm/vite-plugin` plugin regenerates it on save during
   dev. The generated file is gitignored.
-- `scripts/generate-fixtures.mjs` &mdash; emits the static `.json`, `.cwb`,
+- `scripts/generate-fixtures.mjs`; emits the static `.json`, `.cwb`,
   and `.capnp` fixture files. Edit the record counts / avatar sizes
   here to change the bench surface.
-- `src/playground/main.ts` &mdash; runs all three protocols, measures
+- `src/playground/main.ts`; runs all three protocols, measures
   `fetch` + `decode` + `render` per phase, picks the winner per row.
-- `vite-rpc-server.mjs` &mdash; the bench WebSocket server, attached to
-  Vite&apos;s HTTP server in both dev and preview.
+- `vite-rpc-server.mjs`; the Vite-only RPC shim used by `pnpm dev:vite`.
+  The deployed Worker has matching handlers in `../src/worker.mjs`.
 
 ## What this measures
 
 The playground fetches static files from localhost. The numbers it reports
 end up within ~3% across all three protocols because network is essentially
 free in that setup. capnwasm consistently has the smallest wire bytes
-(2&times; smaller for binary blobs after gzip) but can&rsquo;t turn that into
+(2x smaller for binary blobs after gzip) but can't turn that into
 a faster end-to-end time when the network has zero RTT. See `/vs-capnweb.html`
 for where each protocol actually wins under realistic conditions.
 
-A second playground page that runs RPC over WebSocket (where capnwasm&rsquo;s
+A second playground page that runs RPC over WebSocket (where capnwasm's
 batching and pipelining matter) is a follow-up.

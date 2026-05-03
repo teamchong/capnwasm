@@ -1,11 +1,11 @@
 // Vite plugin that mounts the playground's RPC server onto Vite's own
 // HTTP server. Two attach points:
 //
-//   configureServer        — `vite dev`. RPC endpoints sit alongside
+//   configureServer       ; `vite dev`. RPC endpoints sit alongside
 //                            HMR on the same port.
-//   configurePreviewServer — `vite preview`. Same endpoints attached
+//   configurePreviewServer; `vite preview`. Same endpoints attached
 //                            to the static-file server, so the same
-//                            `npm run preview` produces a working
+//                            `pnpm -C web preview` produces a working
 //                            production-shaped bench without anyone
 //                            running a second process.
 //
@@ -70,7 +70,7 @@ function makeUser(i) {
   };
 }
 
-// 32-field metadata payload — matches the WideUserData schema so the
+// 32-field metadata payload; matches the WideUserData schema so the
 // client can read it via the codegen reader. Fields are uniform so the
 // only thing varying between iterations is the wire path / decode cost.
 function makeMetadata() {
@@ -88,7 +88,7 @@ function makeBlob(n) {
   return out;
 }
 
-// Chat IFC — used by web/chat.html. Constants must agree with web/src/chat/main.ts.
+// Chat IFC; used by web/chat.html. Constants must agree with web/src/chat/main.ts.
 const CHAT_IFC      = 0xc4a7c4a7c4a7c4a7n;
 const CHAT_M_POST   = 0;
 const CHAT_M_SUBSCR = 1;
@@ -98,7 +98,7 @@ const CHAT_M_SUBSCR = 1;
 // callbacks parked on "next post". When a post lands the snapshot of
 // listeners fires; each one immediately re-arms by waiting on a fresh
 // promise via nextChatMessage(). Production would back this with a
-// real broker — Redis Streams, Postgres LISTEN/NOTIFY, etc.
+// real broker; Redis Streams, Postgres LISTEN/NOTIFY, etc.
 const CHAT_HISTORY_LIMIT = 100;
 const chatHistory = [];
 const chatListeners = new Set();
@@ -108,7 +108,7 @@ function postChatMessage(author, text) {
   const m = { id: nextChatId++, author, text, ts: Date.now() };
   chatHistory.push(m);
   if (chatHistory.length > CHAT_HISTORY_LIMIT) chatHistory.shift();
-  // Snapshot before firing — a listener that re-subscribes during its
+  // Snapshot before firing; a listener that re-subscribes during its
   // callback can't re-enter mid-loop.
   const fire = Array.from(chatListeners);
   chatListeners.clear();
@@ -137,7 +137,7 @@ function buildRegistry() {
   reg.register(IFC, M_GET_CHILD, () => ({ caps: [{ kind: "child" }] }));
 
   // Chat handlers. The wire format here is plain JSON inside Cap'n Proto
-  // text fields — the helpers (subscribeQuery, optimistic) don't care
+  // text fields; the helpers (subscribeQuery, optimistic) don't care
   // about wire format. A production app would use a Cap'n Proto schema
   // for the message struct and skip the JSON encode/decode.
   reg.register(CHAT_IFC, CHAT_M_POST, (_t, ctx) => {
@@ -172,7 +172,7 @@ function buildRegistry() {
   // (separate connections never share scratch buffers).
   // Params shape for getUserList/getBlob is `CountParams { n :UInt32 }`.
   // Skip the codegen reader and pull the first u32 out of the params'
-  // data section directly — saves one wasm boundary call. The framed
+  // data section directly; saves one wasm boundary call. The framed
   // Call params start with: 4 B segCount-1 | 4 B segLen | 8 B root ptr,
   // so the data section starts at byte 16.
   function paramN(pBytes, fallback) {
@@ -211,7 +211,7 @@ class CapnwebEcho extends RpcTarget {
 
   // Render-bench methods. Same shape as the capnwasm side so the
   // browser bench can hit either library with one method-name table.
-  // capnweb sends JSON, so the response is a plain JS object — the
+  // capnweb sends JSON, so the response is a plain JS object; the
   // page renders both libraries' results identically.
   getUserList(n) {
     const out = new Array(n);
@@ -272,16 +272,16 @@ function attachRpc(httpServer, registry, label, log) {
 }
 
 // Mount the HTTP batch endpoints on Vite's connect middleware stack.
-// /capnwasm-http: capnwasm createHttpBatchHandler — each request is a
+// /capnwasm-http: capnwasm createHttpBatchHandler; each request is a
 //                 fresh stateless RpcSession over a per-request wasm.
-// /capnweb-http:  capnweb nodeHttpBatchRpcResponse — same per-request
+// /capnweb-http:  capnweb nodeHttpBatchRpcResponse; same per-request
 //                 isolation, takes Node IncomingMessage directly.
 // Both handlers pre-load their state once at startup so the cold call
 // from a fresh tab still includes wasm-load time on the first hit.
 function attachHttp(middlewares, registry, log) {
   // Per-request capnwasm session via createHttpBatchHandler. Wasm is
   // loaded once and reused across requests (the handler creates a fresh
-  // RpcSession per call — only the wasm linear memory is shared).
+  // RpcSession per call; only the wasm linear memory is shared).
   let cppPromise = null;
   function getCpp() {
     if (!cppPromise) cppPromise = loadWasm();

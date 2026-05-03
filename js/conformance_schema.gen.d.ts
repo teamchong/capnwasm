@@ -40,9 +40,7 @@ export declare class PrimitivesReader {
     emptyText: string;
     emptyData: Uint8Array;
   };
-  pick<K extends "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | "flag0" | "flag1" | "flag2" | "text" | "data" | "emptyText" | "emptyData">(names: K[]): { [P in K]: this[P] };
-  readonly access: { readonly [P in "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | "flag0" | "flag1" | "flag2" | "text" | "data" | "emptyText" | "emptyData"]: undefined };
-  apply(): Partial<{ [P in "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | "flag0" | "flag1" | "flag2" | "text" | "data" | "emptyText" | "emptyData"]: this[P] }>;
+  draft<T>(fn: (draft: any) => T): T;
 }
 
 export declare function openPrimitives(cpp: CapnCpp, bytes: Uint8Array): PrimitivesReader;

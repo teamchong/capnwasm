@@ -1,6 +1,8 @@
 # capnwasm vs capnweb vs REST/JSON
 
-Numbers from in-process Node bench (Apple Silicon, M-series, Node 22). Run `node bench/rpc_bench.mjs`, `node bench/realistic.mjs`, and `node bench/http_batch_bench.mjs` to reproduce. Last refreshed 2026-04-30 against capnweb HEAD checked out at `../capnweb`.
+I built capnwasm to learn how capnweb works under the hood and to understand the tradeoffs it made by dropping the Cap'n Proto binary wire format. This page is the side-by-side that exploration produced. It's not a scoreboard; both libraries are valid points on the curve. Where capnweb wins is called out as plainly as where capnwasm wins.
+
+Numbers from in-process Node bench (Apple Silicon, M-series, Node 22). Run `node bench/rpc_bench.mjs`, `node bench/realistic.mjs`, and `node bench/http_batch_bench.mjs` to reproduce. Last refreshed 2026-05-02 against capnweb HEAD checked out at `../capnweb`. Numbers vary by machine and Node version; the qualitative picture (capnwasm faster on burst / large payloads / HTTP-batch sequential, tied or close on tiny payloads) is what holds across runs.
 
 ## Where capnwasm wins (WebSocket, in-process)
 
@@ -8,17 +10,17 @@ Numbers from in-process Node bench (Apple Silicon, M-series, Node 22). Run `node
 
 | workload | capnwasm | capnweb | win |
 |---|---|---|---|
-| Burst 1000 calls (per-call) | **2.67 µs** | 7.47 µs | 2.80× faster |
-| Burst 100 calls (per-call) | **2.97 µs** | 6.8 µs | 2.30× faster |
-| 64 KB text echo (round-trip) | **93.5 µs** | 352 µs | 3.77× faster |
-| 4 KB text echo | **17.2 µs** | 26.8 µs | 1.56× faster |
-| 256 B text echo | **4.84 µs** | 8.05 µs | 1.66× faster |
-| 16 B text echo | **6.52 µs** | 7.91 µs | 1.21× faster |
-| Single tiny call (u8 echo) | **7.93 µs** | 14.17 µs | 1.79× faster |
+| Burst 1000 calls (per-call) | **2.95 µs** | 7.26 µs | 2.46× faster |
+| Burst 100 calls (per-call) | **2.80 µs** | 7.26 µs | 2.59× faster |
+| 64 KB text echo (round-trip) | **96.2 µs** | 358 µs | 3.72× faster |
+| 4 KB text echo | **20.0 µs** | 27.6 µs | 1.38× faster |
+| 256 B text echo | **6.51 µs** | 8.53 µs | 1.31× faster |
+| 16 B text echo | **6.83 µs** | 8.05 µs | 1.18× faster |
+| Single tiny call (u8 echo) | **9.22 µs** | 18.05 µs | 1.96× faster |
 | Wire bytes, 64 KB binary blob | **65.9 KB** | 468 KB | 7.1× smaller |
 | Wire bytes, 4 KB text | **4.5 KB** | 8.3 KB | 1.9× smaller |
-| Sparse field access (read 3 of 32) | 27 µs | 26 µs | tied (within noise) |
-| Cap-passing (`getChild` + echo) | 12.49 µs | 12.47 µs | tied (was capnweb 1.1× faster - closed the gap) |
+| Sparse field access (read 3 of 32) | 26.4 µs | 25.7 µs | tied (within noise) |
+| Cap-passing (`getChild` + echo) | 12.68 µs | 12.69 µs | tied (was capnweb 1.1× faster; gap closed) |
 
 **This pass shaved 34% off tiny-call latency, closed the cap-passing gap.** The compounding boundary-call reductions + per-call allocation cleanups:
 
@@ -50,13 +52,13 @@ capnweb wins or ties on:
 
 | workload | capnwasm | capnweb | win |
 |---|---|---|---|
-| Single sequential call (tiny) | **43.8 µs** | 1187 µs | **27× faster** |
-| 10 KB string echo (sequential) | **66 µs** | 1192 µs | **18× faster** |
-| Burst of 100 calls in 1 tick | **13.2 µs** | 19.5 µs | **1.48× faster** ↑↑ |
+| Single sequential call (tiny) | **46.1 µs** | 1206 µs | **26.2× faster** |
+| 10 KB string echo (sequential) | **63.5 µs** | 1210 µs | **19.1× faster** |
+| Burst of 100 calls in 1 tick | **16.3 µs** | 18.6 µs | **1.14× faster** |
 
 Burst 100 picked up wins from two passes: (1) WebSocket-side boundary-call reductions (lower per-call wasm crossings, fewer JS allocations), and (2) a stateless mode flag that skips Finish/Release frame generation. Was tied at session start; now 1.48× faster than capnweb.
 
-The 29× sequential gap is structural, not implementation: capnweb's `BatchClientTransport` waits for a `setTimeout(0)` macrotask before sending so multiple in-tick calls coalesce into one POST. That gives every sequential `await` ~1 ms of macrotask delay before any bytes hit the wire. capnwasm uses `queueMicrotask`, so a single `await` round-trips fast. Burst workloads amortize the macrotask cost. That's the regime where capnweb catches up.
+The 26× sequential gap is structural, not implementation: capnweb's `BatchClientTransport` waits for a `setTimeout(0)` macrotask before sending so multiple in-tick calls coalesce into one POST. That gives every sequential `await` ~1 ms of macrotask delay before any bytes hit the wire. capnwasm uses `queueMicrotask`, so a single `await` round-trips fast. Burst workloads amortize the macrotask cost. That's the regime where capnweb catches up.
 
 ## Where capnwasm loses
 
@@ -80,7 +82,7 @@ falls back to gzip).
 | Wasm runtime only (read capnp messages) | n/a | **34 / 28 KB** | - |
 | WebSocket RPC (transport + sessions + caps) | 21 / 18 KB | **39 / 33 KB** | 1.9× / 1.8× |
 | Typed proxy + HTTP-batch (typical browser shape) | 21 / 18 KB | **41 / 35 KB** | 1.95× / 1.96× |
-| All four transports + typed + dynamic | 21 / 18 KB | **47 / 40 KB** | 2.2× / 2.2× |
+| All four transports + typed + dynamic | 21 / 18 KB | **46 / 40 KB** | 2.2× / 2.2× |
 
 Brotli does **not** close the gap meaningfully. Capnweb compresses about
 as well with brotli as we do, so the ratios stay roughly constant. The
@@ -186,7 +188,7 @@ Each row was a real HN-thread concern about capnweb. Both libraries' answers:
 | Multi-language wire interop | JS-only | proven against upstream `capnp` 1.3.0 (`test/interop.test.mjs`) |
 | Schema evolution (add fields without breaking old peers) | no schema, no evolution | proven both directions of skew (`test/schema_evolution.test.mjs`) |
 
-These are 12 separate gaps capnweb shares but doesn't address. capnwasm shipped fixes for all of them as opt-in subpath imports. They don't bloat the default bundle.
+These are operational concerns that came up while studying capnweb and browser/RPC tradeoffs. capnwasm explores opt-in answers as subpath imports so they do not bloat the default bundle.
 
 ## Where REST/JSON loses to both
 
@@ -230,7 +232,7 @@ by render, the DOM mutation, and forced layout. The
 **capnweb × capnwasm × (WebSocket, HTTP-batch) × (small, medium, large) ×
 (cold, warm)**. Every cell. No averages.
 
-`cd web && npm run dev`, open `/render-bench.html`, click Run. Numbers
+`pnpm -C web dev`, open `/render-bench.html`, click Run. Numbers
 below are warm medians from one run on Apple Silicon, Chromium prod
 build, localhost (10 iter per cell). Cold is the first call after the
 transport opens. Handshake + JIT + wasm fetch all baked in.
@@ -291,7 +293,7 @@ the library-level delta only shows up when those two are small.
 - All wins reported are median of multiple runs; outliers from GC pauses excluded.
 - Bundle sizes measured on `dist/inlined.mjs` (capnwasm) and `../capnweb/dist/index.js`
   (capnweb) post-gzip-9.
-- End-to-end render bench: `cd web && npm run dev`, open `/render-bench.html`,
+- End-to-end render bench: `pnpm -C web dev`, open `/render-bench.html`,
   click Run. Source: `web/render-bench.html` + `web/src/render-bench/main.ts`.
   Server endpoints (HTTP-batch + WebSocket for both libraries):
   `web/vite-rpc-server.mjs`.

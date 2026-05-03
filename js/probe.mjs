@@ -14,9 +14,9 @@
 // you need either a newer schema to compare against, or a wire-byte
 // audit of the response that's beyond this probe's scope.
 //
-// REST drift detection is much fuller because JSON is keyed: the probe
-// observes every top-level response key, diffs against the manifest's
-// declared returnType, and reports both missing and extra keys.
+// REST drift detection can be more explicit because JSON is keyed: the
+// probe observes top-level response keys and, when the manifest has a
+// named object shape for the return type, reports missing and extra keys.
 
 import { performance } from "node:perf_hooks";
 import { defineSchema, buildDynamic, openDynamic } from "./dynamic.mjs";
@@ -33,17 +33,28 @@ import { defineSchema, buildDynamic, openDynamic } from "./dynamic.mjs";
  * @param {string} [opts.restTarget] - HTTPS base URL for REST APIs
  *        (e.g. "https://staging.example.com"). Required when manifest
  *        has any REST APIs.
+ * @param {object} [opts.auth] - auth config applied to REST requests
+ *        and forwarded as headers on capnp WS connect.
+ *        Shape: { type, token, in?, name? } where:
+ *          type: "bearer" | "apikey" | "basic" | "none"
+ *          token: secret value (already-resolved from env / config)
+ *          in:    "header" | "query" | "cookie" (for type=apikey)
+ *          name:  header / query / cookie name (for type=apikey)
+ *        For basic auth, token is a "user:pass" string.
  * @param {Function} [opts.fetch] - fetch implementation (defaults to
  *        globalThis.fetch).
  * @param {Function} [opts.connectWebSocket] - injected WS connector
  *        (defaults to dynamic import of capnwasm/rpc). Tests inject
  *        their own to avoid spinning a real server.
  * @param {number} [opts.timeoutMs=10000] - per-operation timeout.
- * @returns {Promise<object>} structured report
+ * @param {number} [opts.maxRetries=3] - max 429 / 5xx retries per op.
+ * @returns {Promise<object>} structured report (with secrets masked)
  */
 export async function probe(cpp, manifest, opts = {}) {
   const fetchFn = opts.fetch ?? globalThis.fetch;
   const timeoutMs = opts.timeoutMs ?? 10_000;
+  const auth = opts.auth ?? null;
+  const maxRetries = opts.maxRetries ?? 3;
 
   const results = [];
 
@@ -79,20 +90,22 @@ export async function probe(cpp, manifest, opts = {}) {
     }
     for (const api of apis) {
       for (const m of api.methods ?? []) {
-        results.push(await probeRestMethod(opts.restTarget, fetchFn, m, manifest, timeoutMs));
+        results.push(await probeRestMethod(opts.restTarget, fetchFn, m, manifest, timeoutMs, auth, maxRetries));
       }
     }
   }
 
   const summary = summarize(results);
-  return {
+  const report = {
     probedAt: new Date().toISOString(),
     manifest: manifest.source?.name ?? null,
     capnpTarget: opts.capnpTarget ?? null,
     restTarget: opts.restTarget ?? null,
+    auth: auth ? { type: auth.type, in: auth.in ?? null, name: auth.name ?? null } : null,
     results,
     summary,
   };
+  return maskSecrets(report, auth);
 }
 
 async function probeCapnpMethod(cpp, root, iface, method, manifest, timeoutMs) {
@@ -144,8 +157,9 @@ async function probeCapnpMethod(cpp, root, iface, method, manifest, timeoutMs) {
   return result;
 }
 
-async function probeRestMethod(baseUrl, fetchFn, method, _manifest, timeoutMs) {
+async function probeRestMethod(baseUrl, fetchFn, method, manifest, timeoutMs, auth, maxRetries) {
   const t0 = performance.now();
+  const declaredKeys = declaredRestKeysForReturnType(method, manifest);
   const result = {
     operationId: method.operationId,
     transport: "rest",
@@ -155,17 +169,24 @@ async function probeRestMethod(baseUrl, fetchFn, method, _manifest, timeoutMs) {
     ms: 0,
     httpStatus: null,
     contentType: null,
+    retries: 0,
     declaredReturnType: method.returnType ?? null,
+    declaredKeys,
     observedKeys: [],
+    missingKeys: [],
     extraKeys: [],
     drift: false,
   };
   try {
     const { url, body, headers } = buildRestRequest(baseUrl, method);
-    const res = await withTimeout(
-      fetchFn(url, { method: method.httpMethod, headers, body }),
-      timeoutMs,
-      method.operationId,
+    applyAuth({ url, headers }, auth);
+    const res = await withRetry(
+      () => withTimeout(
+        fetchFn(applyAuthUrl(url, auth), { method: method.httpMethod, headers, body }),
+        timeoutMs,
+        method.operationId,
+      ),
+      { maxRetries, label: method.operationId, onRetry: () => { result.retries++; } },
     );
     result.httpStatus = res.status;
     result.contentType = res.headers.get("content-type");
@@ -177,15 +198,26 @@ async function probeRestMethod(baseUrl, fetchFn, method, _manifest, timeoutMs) {
       const text = await res.text();
       try {
         const parsed = JSON.parse(text);
+        let observedShapeAvailable = false;
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
           result.observedKeys = Object.keys(parsed);
+          observedShapeAvailable = true;
         } else if (Array.isArray(parsed)) {
           // Array response. ObservedKeys reflects the FIRST element's
           // keys (representative of the row shape) so the report can
           // still surface field-level drift on list endpoints.
-          result.observedKeys = parsed.length > 0 && parsed[0] && typeof parsed[0] === "object"
-            ? Object.keys(parsed[0])
-            : [];
+          const first = parsed[0];
+          observedShapeAvailable = first && typeof first === "object";
+          result.observedKeys = observedShapeAvailable ? Object.keys(first) : [];
+        }
+        if (declaredKeys && observedShapeAvailable) {
+          const declared = new Set(declaredKeys);
+          const observed = new Set(result.observedKeys);
+          result.missingKeys = declaredKeys.filter((k) => !observed.has(k));
+          result.extraKeys = result.observedKeys.filter((k) => !declared.has(k));
+          if (result.missingKeys.length > 0 || result.extraKeys.length > 0) {
+            result.drift = true;
+          }
         }
       } catch (err) {
         result.outcome = "error";
@@ -332,6 +364,65 @@ function synthesizeRestParamValue(param) {
   return {};
 }
 
+function declaredRestKeysForReturnType(method, manifest) {
+  const typeName = unwrapRestReturnType(method.returnType);
+  if (!typeName) return null;
+
+  const struct = lookupStruct(typeName, manifest);
+  if (struct) return (struct.fields ?? []).map((f) => f.name);
+
+  return openApiDeclaredKeys(typeName, manifest);
+}
+
+function unwrapRestReturnType(returnType) {
+  let t = String(returnType ?? "").trim();
+  if (!t) return null;
+  t = t.replace(/\s*\|\s*null\s*$/, "").trim();
+
+  const arraySuffix = t.match(/^(.+)\[\]$/);
+  if (arraySuffix) t = arraySuffix[1].trim();
+
+  const arrayGeneric = t.match(/^Array<\s*(.+?)\s*>$/);
+  if (arrayGeneric) t = arrayGeneric[1].trim();
+
+  if (["void", "unknown", "string", "number", "boolean", "Uint8Array"].includes(t)) return null;
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(t)) return null;
+  return t;
+}
+
+function openApiDeclaredKeys(typeName, manifest) {
+  const schema = manifest.openapi?.components?.schemas?.[typeName];
+  if (!schema) return null;
+  return openApiSchemaKeys(schema, manifest, new Set());
+}
+
+function openApiSchemaKeys(schema, manifest, seen) {
+  const resolved = resolveOpenApiSchemaRef(schema, manifest, seen);
+  if (!resolved || typeof resolved !== "object") return null;
+
+  if (resolved.type === "array") return openApiSchemaKeys(resolved.items, manifest, seen);
+  if (resolved.type === "object" && resolved.properties) return Object.keys(resolved.properties);
+  if (Array.isArray(resolved.allOf)) {
+    const merged = [];
+    for (const part of resolved.allOf) {
+      const keys = openApiSchemaKeys(part, manifest, seen);
+      if (keys) merged.push(...keys.filter((k) => !merged.includes(k)));
+    }
+    return merged.length > 0 ? merged : null;
+  }
+  return null;
+}
+
+function resolveOpenApiSchemaRef(schema, manifest, seen) {
+  if (!schema || typeof schema !== "object" || typeof schema.$ref !== "string") return schema;
+  const m = schema.$ref.match(/^#\/components\/schemas\/(.+)$/);
+  if (!m) return schema;
+  const name = decodeURIComponent(m[1].replace(/~1/g, "/").replace(/~0/g, "~"));
+  if (seen.has(name)) return null;
+  seen.add(name);
+  return resolveOpenApiSchemaRef(manifest.openapi?.components?.schemas?.[name], manifest, seen);
+}
+
 // ---- helpers ---------------------------------------------------------
 
 function lookupStruct(name, manifest) {
@@ -366,6 +457,184 @@ function summarize(results) {
   }
   return { total: results.length, ok, error, drift };
 }
+
+// ---- Auth ------------------------------------------------------------
+//
+// The auth config is resolved capnwasm-side (CLI flags / env vars /
+// config file). The probe never reads from the team's spec; this
+// preserves the consume-as-is constraint.
+
+function applyAuth(req, auth) {
+  if (!auth || auth.type === "none") return;
+  if (auth.type === "bearer") {
+    req.headers["authorization"] = `Bearer ${auth.token ?? ""}`;
+    return;
+  }
+  if (auth.type === "basic") {
+    const enc = Buffer.from(String(auth.token ?? ""), "utf8").toString("base64");
+    req.headers["authorization"] = `Basic ${enc}`;
+    return;
+  }
+  if (auth.type === "apikey") {
+    const where = auth.in ?? "header";
+    const name = auth.name ?? "x-api-key";
+    if (where === "header" || where === "cookie") {
+      const headerName = where === "cookie" ? "cookie" : name;
+      const value = where === "cookie" ? `${name}=${auth.token ?? ""}` : String(auth.token ?? "");
+      req.headers[headerName] = value;
+      return;
+    }
+  }
+}
+
+function applyAuthUrl(url, auth) {
+  // apikey-in-query rewrites the URL since headers can't carry it.
+  if (!auth || auth.type !== "apikey" || (auth.in ?? "header") !== "query") return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}${encodeURIComponent(auth.name ?? "api_key")}=${encodeURIComponent(auth.token ?? "")}`;
+}
+
+/**
+ * Resolve an auth config from environment variables / file. Used by the
+ * CLI (and any other caller that wants to do the same resolution).
+ *
+ * Precedence: explicit `cli` overrides → env vars → config file.
+ */
+export function resolveAuth({ cli, env = process.env, configFile } = {}) {
+  if (cli && cli.type) return cli;
+
+  // Env-var path (supports a single env or multi-env via prefix).
+  const envName = env.CAPNWASM_PROBE_ENV;
+  const prefix = envName ? `CAPNWASM_PROBE_${envName.toUpperCase()}_` : "CAPNWASM_PROBE_";
+  const type = env[`${prefix}AUTH_TYPE`] ?? env.CAPNWASM_PROBE_AUTH_TYPE;
+  if (type) {
+    return {
+      type,
+      token: env[`${prefix}AUTH_TOKEN`] ?? env.CAPNWASM_PROBE_AUTH_TOKEN ?? "",
+      in:    env[`${prefix}AUTH_IN`]    ?? env.CAPNWASM_PROBE_AUTH_IN    ?? undefined,
+      name:  env[`${prefix}AUTH_NAME`]  ?? env.CAPNWASM_PROBE_AUTH_NAME  ?? undefined,
+    };
+  }
+
+  // Config-file path (capnwasm.config.json shape: { probe: { auth, environments: { staging, prod } } }).
+  if (configFile) {
+    const cfg = configFile;
+    if (envName && cfg?.probe?.environments?.[envName]?.auth) return cfg.probe.environments[envName].auth;
+    if (cfg?.probe?.auth) return cfg.probe.auth;
+  }
+
+  return null;
+}
+
+// ---- Rate-limit + retry ---------------------------------------------
+
+async function withRetry(fn, { maxRetries, label, onRetry }) {
+  let attempt = 0;
+  while (true) {
+    const res = await fn();
+    if (!shouldRetry(res) || attempt >= maxRetries) return res;
+    const delayMs = retryDelay(res, attempt);
+    attempt++;
+    if (onRetry) onRetry({ attempt, delayMs, status: res.status, label });
+    await sleep(delayMs);
+  }
+}
+
+function shouldRetry(res) {
+  return res && (res.status === 429 || (res.status >= 500 && res.status <= 599));
+}
+
+function retryDelay(res, attempt) {
+  // Honor Retry-After if the server sends one (seconds OR HTTP-date).
+  const ra = res.headers?.get?.("retry-after");
+  if (ra) {
+    const sec = Number(ra);
+    if (Number.isFinite(sec)) return Math.max(0, sec * 1000);
+    const ts = Date.parse(ra);
+    if (Number.isFinite(ts)) return Math.max(0, ts - Date.now());
+  }
+  // Exponential backoff with jitter, capped at 30 s.
+  const base = Math.min(30_000, 250 * Math.pow(2, attempt));
+  return base + Math.floor(Math.random() * 250);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ---- Secret masking --------------------------------------------------
+//
+// Walks the probe report and redacts anything that looks like an auth
+// secret. Two layers:
+//   1. The auth config's own header / query name → "***".
+//   2. A static blacklist of well-known sensitive header names
+//      (authorization, cookie, set-cookie, x-api-key, ...) → "***".
+
+const SENSITIVE_HEADERS = new Set([
+  "authorization", "cookie", "set-cookie",
+  "x-api-key", "x-auth-token", "x-token", "x-access-token",
+  "x-amz-security-token", "x-csrf-token",
+  "proxy-authorization", "www-authenticate",
+]);
+
+function maskSecrets(report, auth) {
+  const extra = new Set();
+  if (auth?.type === "apikey" && (auth.in ?? "header") === "header" && auth.name) {
+    extra.add(auth.name.toLowerCase());
+  }
+  return walk(report, extra);
+
+  function walk(node, sensitive) {
+    if (node === null || node === undefined) return node;
+    if (typeof node === "string") return node;
+    if (typeof node !== "object") return node;
+    if (Array.isArray(node)) return node.map((v) => walk(v, sensitive));
+    const out = {};
+    for (const [k, v] of Object.entries(node)) {
+      if (k === "headers" && v && typeof v === "object") {
+        out[k] = maskHeaderObject(v, sensitive);
+      } else if (k === "token") {
+        out[k] = v ? "***" : v;
+      } else if (k === "url" && typeof v === "string") {
+        out[k] = maskUrl(v, sensitive);
+      } else {
+        out[k] = walk(v, sensitive);
+      }
+    }
+    return out;
+  }
+}
+
+function maskHeaderObject(headers, extra) {
+  const out = {};
+  for (const [k, v] of Object.entries(headers)) {
+    const lower = k.toLowerCase();
+    out[k] = (SENSITIVE_HEADERS.has(lower) || extra.has(lower)) ? "***" : v;
+  }
+  return out;
+}
+
+function maskUrl(url, extraQueryNames) {
+  // Mask any query param whose name matches a known auth-y name or the
+  // configured apikey name.
+  const match = url.match(/^(.*?)\?(.+)$/);
+  if (!match) return url;
+  const masked = match[2].split("&").map((pair) => {
+    const eq = pair.indexOf("=");
+    if (eq < 0) return pair;
+    const k = pair.slice(0, eq);
+    const lower = decodeURIComponent(k).toLowerCase();
+    if (extraQueryNames.has(lower) || SENSITIVE_QUERY_NAMES.has(lower)) {
+      return `${k}=***`;
+    }
+    return pair;
+  }).join("&");
+  return `${match[1]}?${masked}`;
+}
+
+const SENSITIVE_QUERY_NAMES = new Set([
+  "api_key", "apikey", "access_token", "token", "auth", "key", "secret",
+]);
 
 const PRIMITIVE_KIND = {
   Bool: "bool",

@@ -87,9 +87,13 @@ const dynamicPick = timeIt("dynamic pick(13 names). Batched", N_READ, () => {
 
 console.log("\n=== Read path (open + read 3 fields. Sparse access) ===");
 const N_PICK = 100_000;
-const codegen3 = timeIt("codegen pick(['u32','flag0','text'])", N_PICK, () => {
+// Codegen reader exposes only draft() now; the inline projection records
+// the same three fields the dynamic reader's pick() asks for, so the two
+// rows below measure equivalent batched-read paths through different APIs.
+const PROJECT_3 = (p) => ({ u32: p.u32, flag0: p.flag0, text: p.text });
+const codegen3 = timeIt("codegen draft({u32,flag0,text})", N_PICK, () => {
   const r = openPrimitives(cpp, FIXTURE);
-  r.pick(["u32", "flag0", "text"]);
+  r.draft(PROJECT_3);
 });
 const dynamic3 = timeIt("dynamic pick(['u32','flag0','text'])", N_PICK, () => {
   const r = openDynamic(cpp, PrimitivesSchema, FIXTURE);

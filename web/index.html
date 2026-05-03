@@ -4,9 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>capnwasm — Cap'n Proto for the browser</title>
-  <meta name="description" content="Real Cap'n Proto C++ compiled to wasm. Type-safe binary RPC for the browser, faster than capnweb on every workload that matters." />
+  <meta name="description" content="Real Cap'n Proto C++ compiled to wasm. Type-safe binary RPC for browser workloads that need binary wire interop." />
   <meta property="og:title" content="capnwasm — Cap'n Proto for the browser" />
-  <meta property="og:description" content="Type-safe binary RPC, real Cap'n Proto wasm runtime. ~5x faster than capnweb on burst throughput, 3.8x faster on big payloads. 39 KB gzip." />
+  <meta property="og:description" content="Type-safe binary RPC, real Cap'n Proto wasm runtime. Smaller binary payloads and live browser benchmarks vs capnweb." />
   <meta property="og:image" content="/og-image.svg" />
   <meta property="og:type" content="website" />
   <meta name="twitter:card" content="summary_large_image" />
@@ -19,7 +19,7 @@
 <body>
   <div id="app">
     <h1>capn<span class="dim">wasm</span></h1>
-    <p class="tagline">Real Cap'n Proto C++ in the browser. Typed RPC, binary wire, 39 KB gzip.</p>
+    <p class="tagline">Real Cap'n Proto C++ in the browser. Typed RPC, binary wire.</p>
     <p class="description">
       One typed-client toolchain for any backend &mdash; write a <code>.capnp</code> schema, get
       a fast typed JS client back. <code>npx capnwasm gen user.capnp</code> emits a reader/builder
@@ -28,33 +28,31 @@
 
     <div class="headline">
       <h2>vs capnweb &amp; REST/JSON</h2>
+      <p class="headline-note">Every number below is measured either in this browser against the current Worker server, or generated at build time from the current assets. No hardcoded benchmark values.</p>
       <div class="headline-row">
-        <span class="label">RPC burst, 200 concurrent calls (browser&rarr;Node WS)</span>
-        <span class="value win">~4&ndash;6&times; faster than capnweb</span>
+        <span class="label">RPC burst, 200 concurrent calls (browser&rarr;Worker WS)</span>
+        <span id="metric-rpc-burst" class="value measuring">measuring…</span>
+        <span class="metric-source">live</span>
       </div>
       <div class="headline-row">
-        <span class="label">RPC 64 KB binary echo (browser&rarr;Node WS)</span>
-        <span class="value win">~1.3&ndash;1.7&times; faster, 25% less wire</span>
+        <span class="label">RPC 64 KB binary echo (browser&rarr;Worker WS)</span>
+        <span id="metric-rpc-blob" class="value measuring">measuring…</span>
+        <span class="metric-source">live</span>
       </div>
       <div class="headline-row">
         <span class="label">Wire bytes for 4 KB binary blob (gzip)</span>
-        <span class="value win">2.4&times; smaller than JSON / capnweb</span>
-      </div>
-      <div class="headline-row">
-        <span class="label">In-browser parallel HTTP fetch (small records)</span>
-        <span class="value">essentially tied &mdash; localhost network dominates</span>
+        <span id="metric-fixture-wire" class="value measuring">loading…</span>
+        <span class="metric-source">build</span>
       </div>
       <div class="headline-row">
         <span class="label">Bundle (JS + wasm, gzip)</span>
-        <span class="value lose">39 KB &mdash; 1.85&times; larger than capnweb</span>
+        <span id="metric-bundle" class="value measuring">loading…</span>
+        <span class="metric-source">build</span>
       </div>
       <div class="headline-row">
-        <span class="label">Cold start (Node, fresh process, total)</span>
-        <span class="value">~1 ms &mdash; tied with capnweb</span>
-      </div>
-      <div class="headline-row">
-        <span class="label">Cold start (browser, fresh tab w/ empty cache)</span>
-        <span class="value lose">~20 ms &mdash; wasm fetch + compile, vs capnweb&apos;s 1&ndash;3 ms JS parse</span>
+        <span class="label">Browser wasm load on this page</span>
+        <span id="metric-browser-load" class="value measuring">measuring…</span>
+        <span class="metric-source">live</span>
       </div>
     </div>
 
@@ -75,8 +73,8 @@
         <div class="demo-title">RPC bench</div>
         <div class="demo-desc">
           Live WebSocket RPC against a Node server. Three workloads:
-          200-call burst, promise pipelining, 64 KB binary echo. capnwasm
-          is supposed to win all three &mdash; see if it does.
+          200-call burst, promise pipelining, 64 KB binary echo. Runs live
+          in your browser so you can compare the current numbers.
         </div>
         <span class="demo-tag">Interactive</span>
       </a>
@@ -87,7 +85,6 @@
         <div class="demo-desc">
           <code>createClient</code> + <code>subscribeQuery</code> + <code>optimistic</code>
           in a working chat. Open in two tabs to watch messages stream live across.
-          About 30 lines of client code total.
         </div>
         <span class="demo-tag">Interactive</span>
       </a>
@@ -128,9 +125,8 @@
         <div class="demo-icon">&#x1F4DD;</div>
         <div class="demo-title">Notes from the trenches</div>
         <div class="demo-desc">
-          Field report on the perf work. Five traps (a 30&times; pessimization, 70%
-          of CPU in calloc, GC churn, a fast-path that wasn&apos;t), one negative
-          SIMD result, and the final scoreboard.
+          Field report on the perf work: allocation traps, GC churn, a fast-path
+          that wasn&apos;t, one negative SIMD result, and the tradeoff summary.
         </div>
         <span class="demo-tag">Write-up</span>
       </a>
@@ -164,6 +160,7 @@
       <a href="./render-bench.html">Render bench</a>
     </div>
   </div>
+  <script type="module" src="./src/landing/main.ts"></script>
   <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "3a5b865568b24718b7d8f62803f332fd"}'></script>
 </body>
 </html>

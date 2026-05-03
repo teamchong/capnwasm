@@ -103,12 +103,18 @@ switch (TAG) {
     });
     break;
 
-  case "codegen-pick-3":
-    bench(() => {
-      const r = openPrimitives(cpp, FIXTURE);
-      const obj = r.pick(["u32", "flag0", "text"]);
-      consume(obj.u32); consume(obj.flag0); consume(obj.text);
-    });
+  case "codegen-draft-3":
+    {
+      // Hoist the projection callback so draft() can reuse the precompiled
+      // plan from its WeakMap cache across iterations. A fresh inline
+      // arrow per iteration would force re-planning on every call.
+      const PROJECT_3 = (p) => ({ u32: p.u32, flag0: p.flag0, text: p.text });
+      bench(() => {
+        const r = openPrimitives(cpp, FIXTURE);
+        const obj = r.draft(PROJECT_3);
+        consume(obj.u32); consume(obj.flag0); consume(obj.text);
+      });
+    }
     break;
 
   case "dynamic-pick-3":

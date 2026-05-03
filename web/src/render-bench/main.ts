@@ -2,9 +2,10 @@
 //
 // Measures end-to-end timing per cell: from `cap.method()` invocation
 // through wire, decode, every field read used by the render path, the
-// DOM mutation, and forced layout via `offsetHeight`. The same server
-// (web/vite-rpc-server.mjs) backs every transport so the only independent
-// variables are the library and the wire shape.
+// DOM mutation, and forced layout via `offsetHeight`. The same Worker
+// endpoints back every transport in the deployed path (with a matching
+// Vite shim for frontend-only dev), so the only independent variables
+// are the library and the wire shape.
 //
 // Cells are reported as median of `iters` warm runs. Cold = first call
 // after the transport opens — includes WS handshake / first POST + (for
@@ -55,6 +56,33 @@ const RENDER_IFC          = 0xb1a5c0deb1a5c0den;
 const RENDER_M_USER_LIST  = 0;
 const RENDER_M_METADATA   = 1;
 const RENDER_M_BLOB       = 2;
+
+const SPARSE_FIELDS = ["field0", "field5", "field10"];
+const REREAD_FIELDS = ["field0", "field1", "field2", "field3", "field4", "field5", "field6", "field7", "field8", "field9"];
+const DENSE_FIELDS = Array.from({ length: 32 }, (_, i) => `field${i}`);
+
+const PROJECT_USER_ROW = (u: any) => ({
+  id: u.id,
+  name: u.name,
+  email: u.email,
+  active: u.active,
+});
+const PROJECT_USER_LIST = (r: any) => r.users.map(PROJECT_USER_ROW);
+const PROJECT_SPARSE = (m: any) => ({
+  field0: m.field0,
+  field5: m.field5,
+  field10: m.field10,
+});
+const PROJECT_DENSE = (m: any) => {
+  const out: Record<string, string> = {};
+  for (const name of DENSE_FIELDS) out[name] = m[name];
+  return out;
+};
+const PROJECT_REREAD = (m: any) => {
+  const out: Record<string, string> = {};
+  for (const name of REREAD_FIELDS) out[name] = m[name];
+  return out;
+};
 
 // ---- Format helpers ----------------------------------------------------
 function fmtMs(ms: number): string {
@@ -114,14 +142,7 @@ function capnwasmBundle(key: TransportKey, session: any, root: any, cpp: any): B
       const rows: { id: bigint; name: string; email: string; active: boolean }[] = await r.send({
         resultsReader: UserListReader,
         extract: (rdr: any) => {
-          const list = rdr.users;
-          const len = list.length;
-          const out: typeof rows = new Array(len);
-          for (let i = 0; i < len; i++) {
-            const u = list.at(i);
-            out[i] = { id: u.id, name: u.name, email: u.email, active: u.active };
-          }
-          return out;
+          return rdr.draft(PROJECT_USER_LIST);
         },
       }).promise;
       sinkList.replaceChildren();
@@ -141,14 +162,11 @@ function capnwasmBundle(key: TransportKey, session: any, root: any, cpp: any): B
         resultsReader: WideUserDataReader,
         extract: (rdr: any) => {
           if (mode === "sparse") {
-            // Read 3 of 32 — capnwasm's wire layout means we only cross
-            // the wasm boundary 3 times, not 32.
-            return [rdr.field0, rdr.field5, rdr.field10];
+            const p = rdr.draft(PROJECT_SPARSE);
+            return SPARSE_FIELDS.map((name) => p[name]);
           }
-          // Dense: read all 32. Each access is a wasm crossing.
-          const all: string[] = new Array(32);
-          for (let i = 0; i < 32; i++) all[i] = (rdr as any)["field" + i];
-          return all;
+          const p = rdr.draft(PROJECT_DENSE);
+          return DENSE_FIELDS.map((name) => p[name]);
         },
       }).promise;
       sinkFields.replaceChildren();
@@ -176,13 +194,13 @@ function capnwasmBundle(key: TransportKey, session: any, root: any, cpp: any): B
       r.params.n = 0;
       const { bytes }: { bytes: Uint8Array } = await r.send().promise;
       const reader = openWideUserData(cpp, bytes);
-      const fields = ["field0","field1","field2","field3","field4",
-                      "field5","field6","field7","field8","field9"];
+      const picked = reader.draft(PROJECT_REREAD);
+      const fields = REREAD_FIELDS;
       let cursor = 0;
       return () => {
         const name = fields[cursor];
         cursor = (cursor + 1) % fields.length;
-        return reader[name];
+        return picked[name];
       };
     },
     close: () => { try { session.close(); } catch {} },
@@ -522,9 +540,9 @@ async function runAll() {
     lines.push(`<strong>${w.id}</strong>: ${label}`);
   }
   summary.innerHTML = lines.join("<br>") +
-    `<br><br><em>Both libraries win some, lose some. capnwasm tends to win on binary blobs and sparse-field reads; ` +
-    `capnweb tends to win on re-read storms and small-payload cold paths. ` +
-    `Pick by your workload — there is no single winner.</em>`;
+    `<br><br><em>Both libraries win some, lose some. This bench uses capnwasm's Immer-style draft() projection API for render materialization; ` +
+    `remaining losses usually mean DOM work, transport scheduling, or JSON's eager materialization dominates the cell. ` +
+    `capnwasm tends to show up on sparse-field, binary, and batched-wire workloads. Pick by your workload — there is no single winner.</em>`;
 
   status.textContent = `done — ${iters} warm iters per cell, cold = first call after open`;
   runBtn.disabled = false;
@@ -555,10 +573,11 @@ runBtn.addEventListener("click", runSafe);
     serverDot.classList.add("up");
     serverMsg.innerHTML = `Server up at <code>${WS_ORIGIN}</code> &mdash; ready.`;
     runBtn.disabled = false;
+    setTimeout(runSafe, 100);
   } else {
     serverDot.classList.add("down");
     serverMsg.innerHTML =
-      `<strong>RPC server unreachable.</strong> Run <code>npm run dev</code> or <code>npm run preview</code> from the <code>web/</code> dir; ` +
+      `<strong>RPC server unreachable.</strong> Run <code>pnpm dev</code> from the repo root for Wrangler, or <code>pnpm dev:vite</code> for the Vite-only shim; ` +
       `the server is mounted on the same port as Vite.`;
     status.textContent = "RPC server unreachable.";
   }

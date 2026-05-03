@@ -164,7 +164,7 @@ For null-pointer slots, nested structs come back with each field at its type's d
 
 ## Performance
 
-Bench on Node 22, `Primitives` struct from `cpp/conformance_schema.capnp` (13 fields covering every primitive type). Each test runs in its own subprocess to isolate V8 state; numbers are medians across 5 runs after a 1000-iteration warmup. Reproduce with `npm run bench:dynamic`.
+Bench on Node 22, `Primitives` struct from `cpp/conformance_schema.capnp` (13 fields covering every primitive type). Each test runs in its own subprocess to isolate V8 state; numbers are medians across 5 runs after a 1000-iteration warmup. Reproduce with `pnpm bench:dynamic`.
 
 ```
 read all 13 fields           codegen ~476 ns,  dynamic ~531 ns/call    (codegen 1.12× faster)

@@ -1,5 +1,7 @@
-// Microbench: pick() in a hot loop with the cached request bytes vs
-// individual property reads. Same access pattern, run many iterations.
+// Microbench: draft() projection (the only codegen-reader projection API)
+// vs individual per-field getters in a hot loop. Same access pattern, many
+// iterations. Useful for catching regressions where draft()'s recording
+// Proxy or plan-cache lookup adds visible overhead vs raw getters.
 
 import { load as loadWasm } from "../dist/inlined.mjs";
 import { openPrimitives } from "../js/conformance_schema.gen.mjs";
@@ -39,16 +41,21 @@ function timed(label, fn, budgetMs = 200) {
   console.log(`  ${label.padEnd(38)} ${nsPerOp.toFixed(0).padStart(6)} ns/op   (${iters.toLocaleString()} iters)`);
 }
 
-const NAMES = ["u8", "i8", "u16", "u32", "i64", "text", "flag0"];
+// Hoist the projection callback so draft() can reuse its precompiled plan
+// across iterations; an inline `(p) => (...)` would force re-planning on
+// every call (different closure identity → different WeakMap key).
+const PROJECT_7 = (p) => ({
+  u8: p.u8, i8: p.i8, u16: p.u16, u32: p.u32, i64: p.i64, text: p.text, flag0: p.flag0,
+});
 
-console.log("\nPicking 7 fields × 10000 messages (simulated hot loop):");
+console.log("\nProjecting 7 fields × hot loop:");
 timed("per-field getters (7 wasm calls)", () => {
   const r = openPrimitives(cpp, bytes);
   return r.u8 + r.i8 + r.u16 + r.u32 + Number(r.i64) + r.text.length + (r.flag0 ? 1 : 0);
 });
-timed("pick(NAMES) (cached request, 1 wasm call)", () => {
+timed("draft(PROJECT_7) (cached plan, 1 wasm call)", () => {
   const r = openPrimitives(cpp, bytes);
-  const o = r.pick(NAMES);
+  const o = r.draft(PROJECT_7);
   return o.u8 + o.i8 + o.u16 + o.u32 + Number(o.i64) + o.text.length + (o.flag0 ? 1 : 0);
 });
 timed("toObject() (all 17 fields, 1 wasm call)", () => {

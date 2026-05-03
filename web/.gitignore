@@ -3,7 +3,7 @@ dist/
 public/data/
 public/capnp.slim.wasm
 
-# Codegen artefacts — produced by `npm run codegen` (or the
+# Codegen artefacts — produced by `pnpm codegen` (or the
 # capnwasm/vite-plugin). Source of truth is users.capnp.
 src/**/*.gen.mjs
 src/**/*.gen.d.ts

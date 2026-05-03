@@ -23,11 +23,14 @@ import { CapnCpp } from "./cpp_loader.mjs";
 
 export { CapnCpp };
 
-// Default URL. Used when load() is called with no argument. Resolves the
-// .wasm relative to this module's URL so it works whether the package is
-// imported from node_modules, a CDN, or a local path.
-const DEFAULT_WASM_URL = new URL("../dist/capnp.slim.wasm", import.meta.url);
+// Default URL. Used when load() is called with no argument. Keep this lazy:
+// Workers/workerd can import this module only to access `CapnCpp.load(module)`,
+// and workerd doesn't always expose an import.meta.url shape that accepts
+// relative URL resolution during module evaluation.
+function defaultWasmUrl() {
+  return new URL("../dist/capnp.slim.wasm", import.meta.url);
+}
 
-export async function load(wasmUrl = DEFAULT_WASM_URL) {
+export async function load(wasmUrl = defaultWasmUrl()) {
   return await CapnCpp.load(wasmUrl);
 }

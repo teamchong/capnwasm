@@ -1,18 +1,18 @@
 // Pre-generate fixture data the playground fetches at runtime. All three
-// formats — JSON (REST baseline), capnweb's wire format, and Cap'n Proto
-// bytes — ship as static assets so neither path pays any server-side
+// formats; JSON (REST baseline), capnweb's wire format, and Cap'n Proto
+// bytes; ship as static assets so neither path pays any server-side
 // encoding cost. The bench measures network transfer + client decode +
 // render only.
 //
 // Two workloads, picked to show the tradeoff:
-//   small/  — 200 user records with a 32 B avatar. JSON wins on decode
+//   small/ ; 200 user records with a 32 B avatar. JSON wins on decode
 //             time because each record is tiny and JSON.parse is V8-
 //             internal C++; the wasm boundary cost shows up here.
-//   blob/   — 50 user records with a 4 KB avatar each. JSON has to
+//   blob/  ; 50 user records with a 4 KB avatar each. JSON has to
 //             base64-encode the avatar (+33% wire) and decode it back;
 //             capnwasm ships the raw bytes. Capnwasm wins.
 
-import { writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
@@ -54,7 +54,7 @@ async function emit(workload, count, avatarBytes) {
     totalJsonRaw += jsonText.length;
     totalJsonGz += gzipSync(jsonText, { level: 6 }).length;
 
-    // capnweb wire format — JSON-shaped with typed-value escapes
+    // capnweb wire format; JSON-shaped with typed-value escapes
     // (Uint8Array becomes ["bytes", "<base64>"]). serialize returns a
     // string we ship verbatim.
     const cwbText = cwbSerialize(user);
@@ -81,8 +81,47 @@ async function emit(workload, count, avatarBytes) {
   console.log(`  capnp:   ${totalCapnpRaw} B raw  ${totalCapnpGz} B gz   (avg ${(totalCapnpRaw / count).toFixed(0)} B/record)`);
   console.log(`  ratio raw vs JSON: capnweb ${(totalJsonRaw / totalCwbRaw).toFixed(2)}x  capnp ${(totalJsonRaw / totalCapnpRaw).toFixed(2)}x`);
   console.log(`  ratio gz  vs JSON: capnweb ${(totalJsonGz / totalCwbGz).toFixed(2)}x  capnp ${(totalJsonGz / totalCapnpGz).toFixed(2)}x`);
+  return {
+    count,
+    avatarBytes,
+    raw: { json: totalJsonRaw, capnweb: totalCwbRaw, capnp: totalCapnpRaw },
+    gzip: { json: totalJsonGz, capnweb: totalCwbGz, capnp: totalCapnpGz },
+    ratios: {
+      jsonToCapnpGzip: totalJsonGz / totalCapnpGz,
+      capnwebToCapnpGzip: totalCwbGz / totalCapnpGz,
+    },
+  };
 }
 
-await emit("small", 200, 32);
-await emit("blob",  50,  4096);
+const small = await emit("small", 200, 32);
+const blob = await emit("blob",  50,  4096);
+
+async function gzipSize(path) {
+  return gzipSync(await readFile(path), { level: 9 }).length;
+}
+
+const root = resolve(HERE, "..", "..");
+const capnwasmRpcGzip =
+  await gzipSize(resolve(root, "dist", "browser.mjs")) +
+  await gzipSize(resolve(root, "dist", "rpc.mjs")) +
+  await gzipSize(resolve(root, "dist", "capnp.slim.wasm"));
+const capnwebGzip = await gzipSize(resolve(root, "web", "node_modules", "capnweb", "dist", "index.js"));
+
+const metricsDir = resolve(HERE, "..", "public", "metrics");
+await mkdir(metricsDir, { recursive: true });
+await writeFile(resolve(metricsDir, "build.json"), JSON.stringify({
+  generatedAt: new Date().toISOString(),
+  source: "web/scripts/generate-fixtures.mjs",
+  fixtures: { small, blob },
+  bundles: {
+    gzip: {
+      capnwasmRpc: capnwasmRpcGzip,
+      capnweb: capnwebGzip,
+    },
+    ratios: {
+      capnwasmRpcToCapnweb: capnwasmRpcGzip / capnwebGzip,
+    },
+  },
+}, null, 2) + "\n");
+
 console.log(`Wrote fixtures to ${PUBLIC}`);

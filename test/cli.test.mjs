@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, mkdtempSync } from "node:fs";
+import { writeFileSync, mkdtempSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -109,4 +109,22 @@ test("capnp: parses simple struct", () => {
     }
   `);
   assert.equal(r.code, 0, r.stderr);
+});
+
+test("bin: runs when invoked through a package-manager symlink", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cwbin-"));
+  const schema = join(dir, "user.capnp");
+  const out = join(dir, "user.gen.mjs");
+  const bin = join(dir, "capnwasm");
+  writeFileSync(schema, `@0xb1f7c5e9c4e02135;
+struct User {
+  id @0 :UInt64;
+  name @1 :Text;
+}`);
+  symlinkSync(CLI, bin);
+
+  const r = spawnSync(bin, ["gen", schema, "-o", out], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Wrote .*user\.gen\.mjs/);
+  assert.match(r.stdout, /User  \(2 fields\)/);
 });

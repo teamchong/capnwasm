@@ -73,9 +73,18 @@ h1 .dim {
   margin-bottom: 16px;
 }
 
+.headline-note {
+  margin: -4px 0 14px;
+  color: #8a96a3;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
 .headline-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: baseline;
   padding: 8px 0;
   border-bottom: 1px solid #16222a;
   font-size: 0.85rem;
@@ -93,6 +102,8 @@ h1 .dim {
   color: #fff;
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .headline-row .value.win {
@@ -101,6 +112,20 @@ h1 .dim {
 
 .headline-row .value.lose {
   color: #ffa726;
+}
+
+.headline-row .value.measuring {
+  color: #8a96a3;
+}
+
+.metric-source {
+  color: #55616d;
+  border: 1px solid #25333e;
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .demos {
@@ -179,6 +204,20 @@ h1 .dim {
 }
 
 @media (max-width: 600px) {
+  .headline-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .headline-row .value {
+    text-align: left;
+    white-space: normal;
+  }
+
+  .metric-source {
+    width: max-content;
+  }
+
   .demos {
     grid-template-columns: 1fr;
   }

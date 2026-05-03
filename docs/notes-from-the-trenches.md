@@ -268,9 +268,9 @@ What's still open:
 ```bash
 git clone https://github.com/teamchong/capnwasm
 cd capnwasm
-npm install
+pnpm install
 bash cpp/build.sh       # builds wasm + inlined.mjs
-npm test                # 90 tests
+pnpm test               # 400+ tests; installs Playwright Chromium on first run if missing
 node bench/rpc_bench.mjs # in-process RPC bench
 node bench/realistic.mjs # burst throughput, wire bytes, sparse access
 ```

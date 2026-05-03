@@ -56,6 +56,29 @@ button:disabled { background: #aaa; cursor: not-allowed; }
 .summary.win  { border-color: var(--win);  background: var(--win-bg); }
 .summary.lose { border-color: var(--lose); background: #fff1ec; }
 
+.how-to-read {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px;
+}
+
+.how-to-read h2 {
+  margin-top: 0;
+}
+
+.how-to-read p {
+  margin: 10px 0 0;
+  color: var(--dim);
+}
+
+.api-note {
+  background: #f7f7f7;
+  border-left: 3px solid var(--line);
+  padding: 8px 10px;
+  color: var(--dim);
+}
+
 .bench-block { display: flex; flex-direction: column; gap: 16px; }
 
 table.bench {

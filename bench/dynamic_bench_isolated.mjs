@@ -21,7 +21,7 @@ const TESTS = [
   { tag: "codegen-read-all",   label: "codegen read 13 fields  " },
   { tag: "dynamic-read-all",   label: "dynamic read 13 fields  " },
   { tag: "dynamic-pick-all",   label: "dynamic pick(13 names)  " },
-  { tag: "codegen-pick-3",     label: "codegen pick(['u32','flag0','text'])" },
+  { tag: "codegen-draft-3",    label: "codegen draft({u32,flag0,text}) " },
   { tag: "dynamic-pick-3",     label: "dynamic pick(['u32','flag0','text'])" },
   { tag: "codegen-build",      label: "codegen build 13 fields " },
   { tag: "dynamic-build",      label: "dynamic build 13 fields " },
@@ -60,12 +60,12 @@ console.log("\n=== Headline ratios (median) ===");
 const codegenAll = results.get("codegen-read-all").median;
 const dynamicAll = results.get("dynamic-read-all").median;
 const dynamicPickAll = results.get("dynamic-pick-all").median;
-const codegen3 = results.get("codegen-pick-3").median;
+const codegen3 = results.get("codegen-draft-3").median;
 const dynamic3 = results.get("dynamic-pick-3").median;
 const codegenBuild = results.get("codegen-build").median;
 const dynamicBuild = results.get("dynamic-build").median;
 
 console.log(`  Read all 13 fields:    dynamic ${(dynamicAll / codegenAll).toFixed(2)}× codegen`);
-console.log(`  Pick 3 fields:         dynamic ${(dynamic3 / codegen3).toFixed(2)}× codegen`);
+console.log(`  Sparse 3 fields:       dynamic ${(dynamic3 / codegen3).toFixed(2)}× codegen`);
 console.log(`  Build with 13 fields:  dynamic ${(dynamicBuild / codegenBuild).toFixed(2)}× codegen`);
 console.log(`  Dynamic pick(13):      ${(dynamicPickAll / codegenAll).toFixed(2)}× codegen-all-getters`);

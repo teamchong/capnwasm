@@ -11,7 +11,7 @@
 
 import { spawnSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, basename, resolve, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -41,11 +41,16 @@ Usage:
       methods need CAPNWASM_HARNESS_REST_TARGET=https://... to run.
 
   npx capnwasm probe <manifest.json> [--target <ws://...>] [--rest-target <https://...>] [-o report.json|-]
-      Drift detector. Exercises every operation against a live target
-      and reports per-operation what the runtime actually did vs what
-      the schema declared. capnp surfaces call/decode success and
-      readable-vs-unreadable declared fields; REST surfaces HTTP status,
-      observed response keys, and JSON-shape diffs.
+      Smoke/conformance probe. Exercises every operation against a live
+      target and reports observable schema/runtime drift. capnp surfaces
+      call/decode success and readable-vs-unreadable declared fields;
+      REST surfaces HTTP status, observed response keys, and missing /
+      extra top-level keys when the manifest has a known object shape.
+
+  npx capnwasm compat <old.manifest.json> <new.manifest.json> [-o report.json|-]
+      Conservative manifest compatibility check. Computes stable contract
+      fingerprints and reports a breaking/non-breaking changeset between
+      two schema versions. Exit code 2 when breaking changes are found.
 
   npx capnwasm build                Rebuild zig-out/capnp_cpp.opt.wasm
   npx capnwasm bench                Run the Playwright bench
@@ -120,6 +125,10 @@ const VALID_CAPNP_PRIMS = new Set([
   "Int8",  "Int16",  "Int32",  "Int64",
   "Float32", "Float64",
   "Text", "Data", "Void",
+  // AnyPointer is a real capnp type; emit-capnp uses it for unresolved
+  // refs, additionalProperties-only objects, and anything without a
+  // structural translation. Capnpc accepts it natively.
+  "AnyPointer",
 ]);
 
 // HTTP method directives recognised on REST interface methods. Each maps to
@@ -451,21 +460,25 @@ function validateStructs(structs) {
   const declared = new Set(structs.map((s) => s.name));
   for (const s of structs) {
     for (const f of s.fields) {
-      if (VALID_CAPNP_PRIMS.has(f.type)) continue;
-      if (declared.has(f.type)) continue;
-      // List(X) is valid if X is a known type. Recurse via inner-type extract.
-      const listMatch = /^List\(([^)]+)\)$/.exec(f.type);
-      if (listMatch) {
-        const inner = listMatch[1];
-        if (VALID_CAPNP_PRIMS.has(inner) || declared.has(inner)) continue;
-        if (/^List\(/.test(inner)) continue;  // nested list. Assume well-formed; validated by upstream compiler
-      }
+      if (validCapnpType(f.type, declared)) continue;
       throw new Error(
         `capnwasm: ${s.name}.${f.name}: type '${f.type}' is not a known ` +
         `Cap'n Proto primitive nor a struct declared in this file.`
       );
     }
   }
+}
+
+function validCapnpType(t, declared) {
+  if (typeof t !== "string") return false;
+  if (VALID_CAPNP_PRIMS.has(t)) return true;
+  if (declared.has(t)) return true;
+  // List(X) is valid when X is; recurse so List(List(...)) chains work.
+  // Use balanced-paren matching since X may itself contain parens.
+  if (t.startsWith("List(") && t.endsWith(")")) {
+    return validCapnpType(t.slice(5, -1), declared);
+  }
+  return false;
 }
 
 // .capnp files are compiled via our wasm-built capnp schema compiler
@@ -482,7 +495,24 @@ async function getCapnpCompiler() {
   return _capnpCompiler;
 }
 
-async function parseSchema(schemaPath) {
+/**
+ * Compile a .capnp text through the bundled wasm capnp compiler and
+ * return the structs with wire layouts. Used by the pipeline runner
+ * when emit-codec is requested on an OpenAPI-source manifest.
+ */
+export async function compileCapnpForCodec(capnpText) {
+  const compiler = await getCapnpCompiler();
+  const structs = await compiler.compileToModel("emit-codec.capnp", capnpText);
+  validateStructs(structs);
+  return structs;
+}
+
+/**
+ * Parse a .capnp / .ts source into the canonical model shape consumed
+ * by buildManifest. Exported so the unified pipeline runner (which
+ * lives in js/run_pipeline.mjs) doesn't have to duplicate this logic.
+ */
+export async function parseSchema(schemaPath) {
   const abs = resolve(schemaPath);
   const text = await import("node:fs/promises").then((m) => m.readFile(abs, "utf8"));
   if (abs.endsWith(".ts") || abs.endsWith(".tsx")) {
@@ -491,11 +521,178 @@ async function parseSchema(schemaPath) {
   // .capnp paths. Compile via our bundled wasm-built capnp compiler. No
   // external binary, no version skew with the runtime. The same vendor/
   // sources produce both compiler and runtime, guaranteed compatible.
+  //
+  // The compiler doesn't recognize the `$Rest.*` annotations capnwasm
+  // uses for HTTP semantics (path, method, status). Scan them out of
+  // the source text first, then strip them before handing the source
+  // to the compiler so it can compile the bare interface.
+  const restAnnotations = scanRestAnnotations(text);
+  const sanitized = stripRestAnnotations(text);
   const compiler = await getCapnpCompiler();
-  const structs = await compiler.compileToModel(basename(abs), text);
+  const structs = await compiler.compileToModel(basename(abs), sanitized);
   const interfaces = compiler.extractInterfaces();
   validateStructs(structs);
-  return { structs, interfaces, restApis: [], typeInterfaces: [] };
+  const restApis = buildRestApisFromAnnotations(restAnnotations, interfaces, structs);
+  return { structs, interfaces, restApis, typeInterfaces: [] };
+}
+
+// --- $Rest annotation scanner ----------------------------------------
+
+function scanRestAnnotations(text) {
+  // Map: `${ifaceName}.${methodName}` → { path, method }.
+  const out = new Map();
+  const stripped = text.replace(/#[^\n]*/g, "");
+  const ifaceRe = /\binterface\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/g;
+  let m;
+  while ((m = ifaceRe.exec(stripped))) {
+    const ifaceName = m[1];
+    let depth = 0;
+    let i = m.index + m[0].length - 1;
+    let end = -1;
+    for (; i < stripped.length; i++) {
+      const c = stripped[i];
+      if (c === "{") depth++;
+      else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end < 0) continue;
+    const body = stripped.slice(m.index + m[0].length, end);
+    const methodRe = /\b([A-Za-z_][A-Za-z0-9_]*)\s*@\d+\s*\([^;]*?;/gs;
+    let mm;
+    while ((mm = methodRe.exec(body))) {
+      const decl = mm[0];
+      const path = decl.match(/\$Rest\.path\(\s*"([^"]+)"\s*\)/)?.[1];
+      const method = decl.match(/\$Rest\.method\(\s*"([^"]+)"\s*\)/)?.[1];
+      if (path && method) out.set(`${ifaceName}.${mm[1]}`, { path, method });
+    }
+  }
+  return out;
+}
+
+function stripRestAnnotations(text) {
+  // Remove every `$Rest.<name>(...)` annotation. The arg list can
+  // contain commas and quoted strings; this scanner walks parens to
+  // find the matching close.
+  const out = [];
+  let i = 0;
+  while (i < text.length) {
+    const idx = text.indexOf("$Rest.", i);
+    if (idx < 0) { out.push(text.slice(i)); break; }
+    out.push(text.slice(i, idx));
+    let j = idx + "$Rest.".length;
+    while (j < text.length && /[A-Za-z0-9_]/.test(text[j])) j++;
+    while (j < text.length && /\s/.test(text[j])) j++;
+    if (text[j] !== "(") { i = j; continue; }
+    let depth = 1;
+    j++;
+    let inStr = false;
+    while (j < text.length && depth > 0) {
+      const c = text[j];
+      if (inStr) {
+        if (c === "\\") { j += 2; continue; }
+        if (c === '"') inStr = false;
+      } else {
+        if (c === '"') inStr = true;
+        else if (c === "(") depth++;
+        else if (c === ")") depth--;
+      }
+      j++;
+    }
+    i = j;
+  }
+  return out.join("");
+}
+
+function buildRestApisFromAnnotations(annotations, interfaces, structs) {
+  const out = [];
+  for (const iface of interfaces ?? []) {
+    const methods = [];
+    for (const m of iface.methods ?? []) {
+      const ann = annotations.get(`${iface.name}.${m.name}`);
+      if (!ann?.path || !ann?.method) continue;
+      const paramsStruct  = structs.find((s) => s.name === `${m.name}$Params`);
+      const resultsStruct = structs.find((s) => s.name === `${m.name}$Results`);
+      const verb = ann.method.toUpperCase();
+      const { restParams, bodyEncoding } = deriveRestParams(paramsStruct, ann.path, verb);
+      methods.push({
+        name: m.name,
+        method: verb,
+        path: ann.path,
+        params: restParams,
+        // Carry the result struct's name so emit-openapi can reference
+        // it via $ref in the success response. capnp methods always
+        // produce a struct-typed result; AnyPointer would be a fallback.
+        // The struct name is sanitized (drops capnp's `$` separator)
+        // so the OpenAPI components.schemas key works in every
+        // downstream tool.
+        returnType: resultsStruct ? sanitizeOpenapiName(resultsStruct.name) : "unknown",
+        isAsyncIterable: false,
+        decode: null,
+        bodyEncoding,
+        paginated: null,
+      });
+    }
+    if (methods.length > 0) {
+      out.push({
+        name: iface.name,
+        baseUrl: "",
+        defaults: {},
+        methods,
+      });
+    }
+  }
+  return out;
+}
+
+function deriveRestParams(paramsStruct, pathTemplate, verb) {
+  // Map the params struct's fields onto REST param locations:
+  //   • any field whose name appears as `{name}` in the path → "path"
+  //   • for verbs that carry a body (POST/PUT/PATCH), every non-path
+  //     field goes into the request body. Per-field metadata records
+  //     `bodyProp: true` so emit-openapi knows to bundle them as
+  //     properties of an object schema.
+  //   • everything else (GET/HEAD/OPTIONS/DELETE) → "query"
+  const out = [];
+  if (!paramsStruct) return { restParams: out, bodyEncoding: null };
+  const pathTokens = new Set([...pathTemplate.matchAll(/\{(\w+)\}/g)].map((m) => m[1]));
+  const carriesBody = ["POST", "PUT", "PATCH"].includes(verb);
+  let bodyEncoding = null;
+  for (const f of paramsStruct.fields ?? []) {
+    let inLoc;
+    if (pathTokens.has(f.name)) {
+      inLoc = "path";
+    } else if (carriesBody) {
+      inLoc = "body";
+      bodyEncoding = "json";
+    } else {
+      inLoc = "query";
+    }
+    out.push({
+      // Capnp types pass through verbatim. emit-openapi knows how to
+      // render Float32 → {type:number, format:float}, Int32 →
+      // {type:integer, format:int32}, etc. Translating to TS-string
+      // primitives here would lose that precision.
+      name: f.name,
+      type: f.type ?? "unknown",
+      role: inLoc,
+      optional: inLoc !== "path",
+    });
+  }
+  return { restParams: out, bodyEncoding };
+}
+
+/**
+ * Sanitize a capnp struct name for use as an OpenAPI components.schemas
+ * key. Drops the `$` capnp uses between method-name and Params/Results
+ * (e.g. `getPet$Results` → `GetPetResults`) and PascalCases the result
+ * so the OpenAPI key reads naturally.
+ */
+function sanitizeOpenapiName(name) {
+  return String(name)
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
 }
 
 
@@ -628,37 +825,46 @@ function generateJs(structs, schemaName) {
 // We key on a frozen Uint8Array of the descriptor bytes so identical field
 // sets (the common case in batch processing) hit the cache.
 const _PICK_REQ_CACHE = new WeakMap();  // fields -> Map<namesKey, Uint8Array>
+const _DRAFT_PLAN_CACHE = new WeakMap(); // fields -> WeakMap<fn, plan>
 
 function _getPickRequest(fields, names) {
   let perFields = _PICK_REQ_CACHE.get(fields);
   if (!perFields) { perFields = new Map(); _PICK_REQ_CACHE.set(fields, perFields); }
   const key = names.join("\\0");
-  let req = perFields.get(key);
-  if (req) return req;
+  let entry = perFields.get(key);
+  if (entry) return entry;
   const buf = new Uint8Array(4 + names.length * 5);
   const dv = new DataView(buf.buffer);
   dv.setUint32(0, names.length, true);
+  // Precompute the field-descriptor array alongside the request bytes. Both
+  // are pure functions of (fields, names); caching them together means the
+  // hot pick path skips a names.length-iteration property-lookup loop on
+  // every call. The cached entry shape is { req: Uint8Array, descs: Array }.
+  const descs = new Array(names.length);
   let pos = 4;
   for (let i = 0; i < names.length; i++) {
     const d = fields[names[i]];
     if (!d) throw new Error("unknown field: " + names[i]);
+    descs[i] = d;
     buf[pos] = d.kind; pos += 1;
     dv.setUint32(pos, d.off, true); pos += 4;
   }
-  perFields.set(key, buf);
-  return buf;
+  entry = { req: buf, descs };
+  perFields.set(key, entry);
+  return entry;
 }
 
 function _capnwasmPick(cpp, fields, names) {`);
-  lines.push(`  // Cached request prep. Same names hit the WeakMap and skip the encode loop.`);
-  lines.push(`  const req = _getPickRequest(fields, names);`);
+  lines.push(`  // Cached request prep + descriptor array. Same names hit the WeakMap and`);
+  lines.push(`  // skip both the encode loop and the per-call descs-rebuild.`);
+  lines.push(`  const entry = _getPickRequest(fields, names);`);
+  lines.push(`  const req = entry.req;`);
+  lines.push(`  const descs = entry.descs;`);
   lines.push(`  const u8 = cpp._u8;`);
   // _auxPtr is cached at CapnCpp load time (constant after wasm init). No
   // per-call boundary crossing to fetch it. Saves ~50-100ns per pick.
   lines.push(`  const aux = cpp._auxPtr;`);
   lines.push(`  u8.set(req, aux);`);
-  lines.push(`  const descs = new Array(names.length);`);
-  lines.push(`  for (let i = 0; i < names.length; i++) descs[i] = fields[names[i]];`);
   lines.push(`  const written = cpp._exports.cpp_any_batch_read(req.length);`);
   lines.push(`  if (!written) return Object.fromEntries(names.map((n) => [n, undefined]));`);
   lines.push(`  const out = cpp._outPtr;`);
@@ -710,6 +916,133 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`    }`);
   lines.push(`  }`);
   lines.push(`  return result;`);
+  lines.push(`}`);
+  lines.push("");
+  lines.push(`const _STRUCT_FIELDS = Object.create(null);`);
+  // Recording planner. Runs the user's callback against a Proxy that
+  // notes every field path the callback reads. Lists with struct elements
+  // expose a .map(childFn) that defers childFn — the planner records
+  // childFn alongside the path; the compile step turns that into a fully
+  // resolved sub-plan.
+  lines.push(`function _planRaw(fields, fn) {`);
+  lines.push(`  const selected = [];`);
+  lines.push(`  const seen = new Set();`);
+  lines.push(`  const make = (schema, path) => new Proxy(Object.create(null), {`);
+  lines.push(`    get(_, name) {`);
+  lines.push(`      if (typeof name !== "string") return undefined;`);
+  lines.push(`      const desc = schema[name];`);
+  lines.push(`      if (!desc) return undefined;`);
+  lines.push(`      const nextPath = path.concat(name);`);
+  lines.push(`      const list = /^List\\(([^)]+)\\)$/.exec(desc.type);`);
+  lines.push(`      if (list && _STRUCT_FIELDS[list[1]]) {`);
+  lines.push(`        return { map(childFn) { selected.push({ kind: "listMap", path: nextPath, inner: list[1], fn: childFn }); return []; } };`);
+  lines.push(`      }`);
+  lines.push(`      if (_STRUCT_FIELDS[desc.type]) return make(_STRUCT_FIELDS[desc.type], nextPath);`);
+  lines.push(`      const key = nextPath.join(".");`);
+  lines.push(`      if (!seen.has(key)) { seen.add(key); selected.push({ kind: "field", path: nextPath }); }`);
+  lines.push(`      return undefined;`);
+  lines.push(`    }`);
+  lines.push(`  });`);
+  lines.push(`  fn(make(fields, []));`);
+  lines.push(`  return selected;`);
+  lines.push(`}`);
+  // Compile a recorded plan into a structured form: separate leaf-field,
+  // nested-struct, and list-of-struct lists. Nested entries have their own
+  // compiled sub-plans; list entries pre-build the child plan via _planRaw
+  // so the materialize loop never has to re-categorize or re-plan per call.
+  // The tradeoff: the compiled plan lives in a WeakMap keyed by (FIELDS, fn)
+  // so a stable callback only ever pays the planning cost once.
+  lines.push(`function _compilePlan(selected) {`);
+  lines.push(`  const leaf = [];`);
+  lines.push(`  const nestedRaw = new Map();`);
+  lines.push(`  const listMapRaw = [];`);
+  lines.push(`  for (let i = 0; i < selected.length; i++) {`);
+  lines.push(`    const item = selected[i];`);
+  lines.push(`    const head = item.path[0];`);
+  lines.push(`    if (!head) continue;`);
+  lines.push(`    if (item.kind === "field" && item.path.length === 1) {`);
+  lines.push(`      leaf.push(head);`);
+  lines.push(`    } else if (item.kind === "listMap" && item.path.length === 1) {`);
+  lines.push(`      listMapRaw.push({ name: head, inner: item.inner, fn: item.fn });`);
+  lines.push(`    } else {`);
+  lines.push(`      let entry = nestedRaw.get(head);`);
+  lines.push(`      if (!entry) { entry = []; nestedRaw.set(head, entry); }`);
+  lines.push(`      const sliced = { kind: item.kind, path: item.path.slice(1) };`);
+  lines.push(`      if (item.kind === "listMap") { sliced.inner = item.inner; sliced.fn = item.fn; }`);
+  lines.push(`      entry.push(sliced);`);
+  lines.push(`    }`);
+  lines.push(`  }`);
+  lines.push(`  const nested = [];`);
+  lines.push(`  for (const [name, raw] of nestedRaw) nested.push({ name, plan: _compilePlan(raw) });`);
+  lines.push(`  const listMap = listMapRaw.map(({ name, inner, fn }) => ({`);
+  lines.push(`    name, inner, fn,`);
+  lines.push(`    plan: _planDraft(_STRUCT_FIELDS[inner], fn),`);
+  lines.push(`  }));`);
+  lines.push(`  return { leaf, nested, listMap };`);
+  lines.push(`}`);
+  lines.push(`function _planDraft(fields, fn) {`);
+  lines.push(`  return _compilePlan(_planRaw(fields, fn));`);
+  lines.push(`}`);
+  lines.push(`function _getDraftPlan(fields, fn) {`);
+  lines.push(`  let perFields = _DRAFT_PLAN_CACHE.get(fields);`);
+  lines.push(`  if (!perFields) { perFields = new WeakMap(); _DRAFT_PLAN_CACHE.set(fields, perFields); }`);
+  lines.push(`  let plan = perFields.get(fn);`);
+  lines.push(`  if (!plan) { plan = _planDraft(fields, fn); perFields.set(fn, plan); }`);
+  lines.push(`  return plan;`);
+  lines.push(`}`);
+  // Materialize against a precompiled plan. Walks plan.leaf with one batched
+  // wasm call, plan.nested via enter/leave_struct + recursion, plan.listMap
+  // via open_list + per-row enter/leave + recursion. Returns a plain object
+  // with the same field shape on every call (V8 inline-cache friendly).
+  lines.push(`function _materializeDraft(cpp, fields, plan) {`);
+  lines.push(`  const out = {};`);
+  lines.push(`  if (plan.leaf.length > 0) Object.assign(out, _capnwasmPick(cpp, fields, plan.leaf));`);
+  lines.push(`  const exp = cpp._exports;`);
+  lines.push(`  for (let i = 0; i < plan.nested.length; i++) {`);
+  lines.push(`    const sub = plan.nested[i];`);
+  lines.push(`    const desc = fields[sub.name];`);
+  lines.push(`    if (!desc || !_STRUCT_FIELDS[desc.type]) { out[sub.name] = undefined; continue; }`);
+  lines.push(`    if (exp.cpp_any_enter_struct(desc.off) !== 1) { out[sub.name] = null; continue; }`);
+  lines.push(`    try { out[sub.name] = _materializeDraft(cpp, _STRUCT_FIELDS[desc.type], sub.plan); }`);
+  lines.push(`    finally { exp.cpp_any_leave_struct(); }`);
+  lines.push(`  }`);
+  lines.push(`  for (let i = 0; i < plan.listMap.length; i++) {`);
+  lines.push(`    const item = plan.listMap[i];`);
+  lines.push(`    const desc = fields[item.name];`);
+  lines.push(`    if (!desc || !_STRUCT_FIELDS[item.inner]) { out[item.name] = []; continue; }`);
+  lines.push(`    const innerFields = _STRUCT_FIELDS[item.inner];`);
+  lines.push(`    const size = exp.cpp_any_open_list(desc.off);`);
+  lines.push(`    const arr = new Array(size);`);
+  lines.push(`    for (let j = 0; j < size; j++) {`);
+  // Re-open the list before each enter_list_at: a deeply nested element
+  // plan may itself open a different list and overwrite any_list_reader.
+  // Re-opening is one cheap wasm crossing; re-opening only when needed
+  // would require a "child plan touches lists" flag — left as future work.
+  lines.push(`      exp.cpp_any_open_list(desc.off);`);
+  lines.push(`      if (exp.cpp_any_enter_list_at(j) !== 1) { arr[j] = null; continue; }`);
+  lines.push(`      try { arr[j] = _materializeDraft(cpp, innerFields, item.plan); }`);
+  lines.push(`      finally { exp.cpp_any_leave_struct(); }`);
+  lines.push(`    }`);
+  lines.push(`    out[item.name] = arr;`);
+  lines.push(`  }`);
+  lines.push(`  return out;`);
+  lines.push(`}`);
+  // Hot path: pull the precompiled plan, materialize into a plain object,
+  // hand the plain object to the user's callback. No Proxy wrapping on the
+  // execution side — V8 hits the same hidden class on every call when the
+  // callback is stable, so field accesses inline-cache to direct loads.
+  //
+  // Fast path: when the projection only touches top-level fields (no nested
+  // struct paths, no list .map() calls), the plan reduces to a single batched
+  // pick. We skip _materializeDraft entirely and hand the pick result straight
+  // to the user's callback. This saves a function call, an Object.assign, and
+  // two empty-array length checks per draft() — roughly 100ns on a hot loop.
+  lines.push(`function _runDraft(cpp, fields, fn) {`);
+  lines.push(`  const plan = _getDraftPlan(fields, fn);`);
+  lines.push(`  if (plan.nested.length === 0 && plan.listMap.length === 0) {`);
+  lines.push(`    return fn(_capnwasmPick(cpp, fields, plan.leaf));`);
+  lines.push(`  }`);
+  lines.push(`  return fn(_materializeDraft(cpp, fields, plan));`);
   lines.push(`}`);
   lines.push("");
 
@@ -789,49 +1122,34 @@ function _capnwasmPick(cpp, fields, names) {`);
     }
     lines.push(`  };`);
     lines.push("");
-    // Pick: one wasm call to fetch N fields packed.
-    lines.push(`  pick(names) {`);
-    lines.push(`    return ${s.name}Reader._pickImpl(this._cpp, names);`);
+    // Immer-style projection. Supports top-level fields, nested struct
+    // paths, and list-of-struct fields via .map() inside the draft. The callback
+    // first runs against a recording Proxy to build a projection plan; the
+    // plan is cached per (struct, callback) so subsequent draft() calls jump
+    // straight to the materialize step. This is the only documented projection
+    // API on generated readers — the older pick()/access/apply variants were
+    // removed in favor of this one. Internally `_capnwasmPick` is still the
+    // single-batched-wasm-call primitive that powers leaf reads.
+    lines.push(`  draft(fn) {`);
+    lines.push(`    return _runDraft(this._cpp, ${s.name}Reader._FIELDS, fn);`);
     lines.push(`  }`);
     lines.push("");
-    lines.push(`  static _pickImpl(cpp, names) {`);
-    lines.push(`    return _capnwasmPick(cpp, ${s.name}Reader._FIELDS, names);`);
-    lines.push(`  }`);
-    lines.push("");
-    // Plan/apply: write `r.access.field0; r.access.field5` etc, then `r.apply()`
-    // fetches them all in one wasm call. Proxy traps run only during the plan
-    // phase so their cost is paid once per record, not per hot-loop iteration.
-    // Same shape as Terraform plan -> apply.
-    lines.push(`  get access() {`);
-    lines.push(`    if (!this._plan) {`);
-    lines.push(`      this._plan = [];`);
-    lines.push(`      const recorded = this._plan;`);
-    lines.push(`      const fields = ${s.name}Reader._FIELDS;`);
-    lines.push(`      this._access = new Proxy(Object.create(null), {`);
-    lines.push(`        get(_, name) {`);
-    lines.push(`          if (typeof name === "string" && (name in fields)) recorded.push(name);`);
-    lines.push(`          return undefined;`);
-    lines.push(`        }`);
-    lines.push(`      });`);
-    lines.push(`    }`);
-    lines.push(`    return this._access;`);
-    lines.push(`  }`);
-    lines.push("");
-    lines.push(`  apply() {`);
-    lines.push(`    if (!this._plan || this._plan.length === 0) return {};`);
-    lines.push(`    const result = ${s.name}Reader._pickImpl(this._cpp, this._plan);`);
-    lines.push(`    this._plan = null;`);
-    lines.push(`    this._access = null;`);
-    lines.push(`    return result;`);
-    lines.push(`  }`);
-    lines.push("");
-    // Materializing helper: every field at once via the same batched primitive.
+    // Materialize every field on this struct as a plain object. Equivalent
+    // to `r.draft(p => ({ ...all fields }))` but skips the recording-Proxy
+    // planning step because the field set is known at codegen time. Useful
+    // for "give me everything" callers (logging, JSON.stringify, building
+    // an updated message via Builder.from(cpp, reader.toObject())).
     lines.push(`  toObject() {`);
-    lines.push(`    return ${s.name}Reader._pickImpl(this._cpp, Object.keys(${s.name}Reader._FIELDS));`);
+    lines.push(`    return _capnwasmPick(this._cpp, ${s.name}Reader._FIELDS, Object.keys(${s.name}Reader._FIELDS));`);
     lines.push(`  }`);
     lines.push(`}`);
     lines.push("");
   }
+
+  for (const s of structs) {
+    lines.push(`_STRUCT_FIELDS[${JSON.stringify(s.name)}] = ${s.name}Reader._FIELDS;`);
+  }
+  if (structs.length > 0) lines.push("");
 
   // Builder classes. Counterpart to Readers. One Builder writes one
   // message at a time (the wasm-side AnyStruct::Builder is a global slot).
@@ -1271,9 +1589,7 @@ function generateDts(structs, schemaName) {
     lines.push(`  };`);
     // pick + plan/apply
     const fieldUnion = s.fields.map((f) => `"${f.name}"`).join(" | ");
-    lines.push(`  pick<K extends ${fieldUnion}>(names: K[]): { [P in K]: this[P] };`);
-    lines.push(`  readonly access: { readonly [P in ${fieldUnion}]: undefined };`);
-    lines.push(`  apply(): Partial<{ [P in ${fieldUnion}]: this[P] }>;`);
+    lines.push(`  draft<T>(fn: (draft: any) => T): T;`);
     lines.push(`}`);
     lines.push("");
   }
@@ -1285,6 +1601,15 @@ function generateDts(structs, schemaName) {
 }
 
 function capnpToTs(capnpType, declaredStructs) {
+  const listMatch = /^List\(([^)]+)\)$/.exec(capnpType);
+  if (listMatch) {
+    const inner = listMatch[1];
+    const innerTs = capnpToTs(inner, declaredStructs);
+    if (declaredStructs.has(inner)) {
+      return `{ readonly length: number; at(i: number): ${innerTs} | undefined }`;
+    }
+    return `{ readonly length: number; at(i: number): ${innerTs} | undefined }`;
+  }
   if (declaredStructs.has(capnpType)) return capnpType + "Reader";
   switch (capnpType) {
     case "Bool":   return "boolean";
@@ -1308,7 +1633,7 @@ function fieldDescriptor(f) {
   if (f.kind === "pointer") {
     if (f.type === "Text") return { kind: 0, off: f.ptrIndex, type: "text" };
     if (f.type === "Data") return { kind: 6, off: f.ptrIndex, type: "data" };
-    return { kind: -1, off: 0, type: f.type };
+    return { kind: -1, off: f.ptrIndex, type: f.type };
   }
   const off = f.bitOffset >> 3;
   switch (f.type) {
@@ -1532,6 +1857,17 @@ function generateGetter(field) {
  *   npx capnwasm manifest user.capnp -o -             # stdout
  */
 async function cmdManifest(argv) {
+  // Special form: `npx capnwasm manifest --schema` prints the JSON
+  // Schema describing the manifest IR shape. Useful for non-JS consumers
+  // (Rust dashboards, Python CI gates, Go ops tools) who want to
+  // validate manifests without depending on the capnwasm runtime.
+  if (argv.includes("--schema")) {
+    const schemaPath = resolve(PKG_ROOT, "schemas", "manifest.schema.json");
+    const text = await import("node:fs/promises").then((m) => m.readFile(schemaPath, "utf8"));
+    process.stdout.write(text);
+    return;
+  }
+
   const args = parseGenArgs(argv);
   // parseGenArgs assumes a .gen.mjs default output path; manifest defaults
   // to .manifest.json next to the source instead.
@@ -1617,6 +1953,24 @@ async function cmdManifest(argv) {
  *                       Defaults to "capnwasm" (works for npm consumers).
  */
 async function cmdHarness(argv) {
+  // Replay mode: re-run a single failed-call snapshot.
+  if (argv[0] === "--replay") {
+    const snapPath = argv[1];
+    if (!snapPath) {
+      console.error("usage: npx capnwasm harness --replay <snapshot.json>");
+      process.exit(1);
+    }
+    if (!existsSync(snapPath)) {
+      console.error(`snapshot not found: ${snapPath}`);
+      process.exit(1);
+    }
+    const { replay } = await import("../js/harness_snapshot.mjs");
+    const result = await replay(snapPath);
+    console.log(JSON.stringify(result, null, 2));
+    process.exitCode = result.diff?.changed ? 0 : 1;
+    return;
+  }
+
   let manifestPath = null;
   let output = null;
   let genImport = null;
@@ -1683,16 +2037,29 @@ async function cmdProbe(argv) {
   let restTarget = null;
   let output = "-";
   let timeoutMs = 10000;
+  let maxRetries = 3;
+  let env = null;
+  let configFile = null;
+  let authCli = { type: null, token: null, in: null, name: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "-o" || a === "--output") output = argv[++i];
     else if (a === "--target") capnpTarget = argv[++i];
     else if (a === "--rest-target") restTarget = argv[++i];
     else if (a === "--timeout") timeoutMs = parseInt(argv[++i], 10);
+    else if (a === "--max-retries") maxRetries = parseInt(argv[++i], 10);
+    else if (a === "--env") env = argv[++i];
+    else if (a === "--config") configFile = argv[++i];
+    else if (a === "--auth") authCli.type = argv[++i];
+    else if (a === "--auth-token") authCli.token = argv[++i];
+    else if (a === "--auth-in") authCli.in = argv[++i];
+    else if (a === "--auth-name") authCli.name = argv[++i];
     else if (!manifestPath) manifestPath = a;
   }
   if (!manifestPath) {
-    console.error("usage: npx capnwasm probe <manifest.json> [--target <ws://...>] [--rest-target <https://...>] [-o report.json|-] [--timeout <ms>]");
+    console.error("usage: npx capnwasm probe <manifest.json|dir/> [--target <ws://...>] [--rest-target <https://...>] [-o report.json|-]");
+    console.error("        [--timeout <ms>] [--max-retries <N>] [--env <name>] [--config <path>]");
+    console.error("        [--auth bearer|apikey|basic|none] [--auth-token <secret>] [--auth-in header|query|cookie] [--auth-name <header-name>]");
     process.exit(1);
   }
   if (!existsSync(manifestPath)) {
@@ -1700,16 +2067,39 @@ async function cmdProbe(argv) {
     process.exit(1);
   }
 
+  // Multi-input mode: when given a directory, probe every *.manifest.json
+  // inside it and write per-API reports + a summary.
+  const stat = await import("node:fs/promises").then((m) => m.stat(manifestPath));
+  if (stat.isDirectory()) {
+    return cmdProbeDir(manifestPath, {
+      capnpTarget, restTarget, output, timeoutMs, maxRetries, env, configFile, authCli,
+    });
+  }
+
   const text = await import("node:fs/promises").then((m) => m.readFile(manifestPath, "utf8"));
   const manifest = JSON.parse(text);
 
+  if (env) {
+    if (!restTarget) restTarget = process.env[`CAPNWASM_PROBE_${env.toUpperCase()}_REST_TARGET`] ?? null;
+    if (!capnpTarget) capnpTarget = process.env[`CAPNWASM_PROBE_${env.toUpperCase()}_TARGET`] ?? null;
+    process.env.CAPNWASM_PROBE_ENV = env;
+  }
+  let cfgFileObj = null;
+  if (configFile) {
+    if (!existsSync(configFile)) { console.error(`config not found: ${configFile}`); process.exit(1); }
+    cfgFileObj = JSON.parse(await import("node:fs/promises").then((m) => m.readFile(configFile, "utf8")));
+  }
+
   const { load } = await import("../dist/inlined.mjs");
   const cpp = await load();
-  const { probe } = await import("../js/probe.mjs");
-  const report = await probe(cpp, manifest, {
+  const probeMod = await import("../js/probe.mjs");
+  const auth = probeMod.resolveAuth({ cli: authCli.type ? authCli : null, configFile: cfgFileObj });
+  const report = await probeMod.probe(cpp, manifest, {
     capnpTarget,
     restTarget,
     timeoutMs,
+    maxRetries,
+    auth,
   });
 
   const json = JSON.stringify(report, null, 2) + "\n";
@@ -1725,6 +2115,353 @@ async function cmdProbe(argv) {
   console.error(`  ${s.total} operation(s): ${s.ok} ok, ${s.error} error, ${s.drift} with drift`);
   // Non-zero exit on drift so CI can gate on it.
   if (s.drift > 0) process.exitCode = 2;
+}
+
+/**
+ * Multi-input probe: take a directory of *.manifest.json files,
+ * probe each one, and write per-API reports plus an aggregate summary.
+ */
+async function cmdProbeDir(dir, opts) {
+  const fs = await import("node:fs/promises");
+  const entries = await fs.readdir(dir);
+  const manifests = entries.filter((e) => e.endsWith(".manifest.json")).map((e) => resolve(dir, e));
+  if (manifests.length === 0) {
+    console.error(`probe: no *.manifest.json files in ${dir}`);
+    process.exit(1);
+  }
+  const outDir = (opts.output && opts.output !== "-")
+    ? opts.output
+    : resolve(dir, "probe-reports");
+  await fs.mkdir(outDir, { recursive: true });
+
+  const probeMod = await import("../js/probe.mjs");
+  const { load } = await import("../dist/inlined.mjs");
+  const cpp = await load();
+
+  let cfgFileObj = null;
+  if (opts.configFile) cfgFileObj = JSON.parse(await fs.readFile(opts.configFile, "utf8"));
+  if (opts.env) process.env.CAPNWASM_PROBE_ENV = opts.env;
+  const auth = probeMod.resolveAuth({ cli: opts.authCli?.type ? opts.authCli : null, configFile: cfgFileObj });
+
+  const summaries = [];
+  let totalDrift = 0;
+  for (const path of manifests) {
+    const text = await fs.readFile(path, "utf8");
+    const m = JSON.parse(text);
+    const report = await probeMod.probe(cpp, m, {
+      capnpTarget: opts.capnpTarget,
+      restTarget: opts.restTarget,
+      timeoutMs: opts.timeoutMs,
+      maxRetries: opts.maxRetries,
+      auth,
+    });
+    const reportPath = resolve(outDir, basename(path).replace(/\.manifest\.json$/, ".report.json"));
+    await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n");
+    summaries.push({ manifest: basename(path), summary: report.summary });
+    totalDrift += report.summary.drift;
+  }
+
+  const aggregatePath = resolve(outDir, "summary.json");
+  await writeFile(aggregatePath, JSON.stringify({
+    probedAt: new Date().toISOString(),
+    capnpTarget: opts.capnpTarget,
+    restTarget: opts.restTarget,
+    perManifest: summaries,
+    aggregate: summaries.reduce((acc, s) => {
+      acc.total += s.summary.total;
+      acc.ok += s.summary.ok;
+      acc.error += s.summary.error;
+      acc.drift += s.summary.drift;
+      return acc;
+    }, { total: 0, ok: 0, error: 0, drift: 0 }),
+  }, null, 2) + "\n");
+
+  console.error(`Wrote ${manifests.length} report(s) + summary to ${outDir}`);
+  for (const { manifest, summary } of summaries) {
+    console.error(`  ${manifest}: ${summary.total} ops, ${summary.drift} drift`);
+  }
+  if (totalDrift > 0) process.exitCode = 2;
+}
+
+/** Compare two manifests and report compatibility. */
+async function cmdCompat(argv) {
+  let oldPath = null;
+  let newPath = null;
+  let output = "-";
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "-o" || a === "--output") output = argv[++i];
+    else if (!oldPath) oldPath = a;
+    else if (!newPath) newPath = a;
+  }
+  if (!oldPath || !newPath) {
+    console.error("usage: npx capnwasm compat <old.manifest.json> <new.manifest.json> [-o report.json|-]");
+    process.exit(1);
+  }
+  if (!existsSync(oldPath)) { console.error(`manifest not found: ${oldPath}`); process.exit(1); }
+  if (!existsSync(newPath)) { console.error(`manifest not found: ${newPath}`); process.exit(1); }
+
+  const fs = await import("node:fs/promises");
+  const previous = JSON.parse(await fs.readFile(oldPath, "utf8"));
+  const next = JSON.parse(await fs.readFile(newPath, "utf8"));
+  const { diffManifests } = await import("../js/compat.mjs");
+  const report = diffManifests(previous, next);
+  const json = JSON.stringify(report, null, 2) + "\n";
+  if (output === "-") process.stdout.write(json);
+  else { await writeFile(output, json); console.log(`Wrote ${output}`); }
+
+  const s = report.summary;
+  console.error(`compat: ${s.total} change(s): ${s.breaking} breaking, ${s.nonBreaking} non-breaking`);
+  console.error(`  previous ${report.previousFingerprint.slice(0, 12)}  next ${report.nextFingerprint.slice(0, 12)}`);
+  if (s.breaking > 0) process.exitCode = 2;
+}
+
+// ===== New CLI subcommands re-applied after history rewrite =====
+
+/** Emit canonical OpenAPI 3.x from a manifest. */
+async function cmdEmitOpenapi(argv) {
+  let manifestPath = null;
+  let output = null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "-o" || a === "--output") output = argv[++i];
+    else if (!manifestPath) manifestPath = a;
+  }
+  if (!manifestPath) {
+    console.error("usage: npx capnwasm emit-openapi <manifest.json> [-o spec.json|-]");
+    process.exit(1);
+  }
+  if (!existsSync(manifestPath)) { console.error(`manifest not found: ${manifestPath}`); process.exit(1); }
+  if (!output) {
+    const stem = basename(manifestPath, extname(manifestPath)).replace(/\.manifest$/, "");
+    output = resolve(dirname(manifestPath), `${stem}.openapi.json`);
+  }
+  const text = await import("node:fs/promises").then((m) => m.readFile(manifestPath, "utf8"));
+  const manifest = JSON.parse(text);
+  const { buildOpenApiJson } = await import("../js/emit_openapi.mjs");
+  const json = buildOpenApiJson(manifest);
+  if (output === "-") process.stdout.write(json);
+  else { await writeFile(output, json); console.log(`Wrote ${output}`); }
+}
+
+/** Emit canonical .capnp from a manifest. */
+async function cmdEmitCapnp(argv) {
+  let manifestPath = null;
+  let output = null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "-o" || a === "--output") output = argv[++i];
+    else if (!manifestPath) manifestPath = a;
+  }
+  if (!manifestPath) {
+    console.error("usage: npx capnwasm emit-capnp <manifest.json> [-o schema.capnp|-]");
+    process.exit(1);
+  }
+  if (!existsSync(manifestPath)) { console.error(`manifest not found: ${manifestPath}`); process.exit(1); }
+  if (!output) {
+    const stem = basename(manifestPath, extname(manifestPath)).replace(/\.manifest$/, "");
+    output = resolve(dirname(manifestPath), `${stem}.capnp`);
+  }
+  const text = await import("node:fs/promises").then((m) => m.readFile(manifestPath, "utf8"));
+  const manifest = JSON.parse(text);
+  const { buildCapnp } = await import("../js/emit_capnp.mjs");
+  const result = buildCapnp(manifest);
+  if (output === "-") process.stdout.write(result.text);
+  else { await writeFile(output, result.text); console.log(`Wrote ${output}`); }
+  const s = result.summary;
+  console.error(`  ${s.structs} struct(s), ${s.enums} enum(s), ${s.interfaces} interface(s), ${s.methods} method(s)`);
+  if (s.dropped.length > 0) console.error(`  ${s.dropped.length} schema(s) dropped (see report)`);
+}
+
+/** Emit AGENTS.md / skill.md / llms.txt from a manifest. */
+async function cmdEmitAgents(argv) {
+  let manifestPath = null;
+  let outDir = null;
+  let format = "all";
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--out-dir") outDir = argv[++i];
+    else if (a === "--format") format = argv[++i];
+    else if (!manifestPath) manifestPath = a;
+  }
+  if (!manifestPath) {
+    console.error("usage: npx capnwasm emit-agents <manifest.json> [--out-dir <dir>] [--format agents|skill|llms|all]");
+    process.exit(1);
+  }
+  if (!existsSync(manifestPath)) { console.error(`manifest not found: ${manifestPath}`); process.exit(1); }
+  if (!outDir) outDir = dirname(manifestPath);
+  const fs = await import("node:fs/promises");
+  await fs.mkdir(outDir, { recursive: true });
+  const text = await fs.readFile(manifestPath, "utf8");
+  const manifest = JSON.parse(text);
+  const mod = await import("../js/emit_agents.mjs");
+  const want = (k) => format === "all" || format === k;
+  const wrote = [];
+  if (want("agents")) { const p = resolve(outDir, "AGENTS.md"); await writeFile(p, mod.buildAgentsMd(manifest)); wrote.push(p); }
+  if (want("skill"))  { const p = resolve(outDir, "skill.md");  await writeFile(p, mod.buildSkillMd(manifest));  wrote.push(p); }
+  if (want("llms"))   { const p = resolve(outDir, "llms.txt");  await writeFile(p, mod.buildLlmsTxt(manifest));  wrote.push(p); }
+  for (const p of wrote) console.log(`Wrote ${p}`);
+}
+
+/** Emit JSON ↔ capnp wire-bytes codec from a manifest. */
+async function cmdEmitCodec(argv) {
+  let manifestPath = null;
+  let output = null;
+  let runtimeImport = null;
+  let dynamicImport = null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "-o" || a === "--output") output = argv[++i];
+    else if (a === "--runtime") runtimeImport = argv[++i];
+    else if (a === "--dynamic") dynamicImport = argv[++i];
+    else if (!manifestPath) manifestPath = a;
+  }
+  if (!manifestPath) {
+    console.error("usage: npx capnwasm emit-codec <manifest.json> [-o codec.mjs|-] [--runtime <import>] [--dynamic <import>]");
+    process.exit(1);
+  }
+  if (!existsSync(manifestPath)) { console.error(`manifest not found: ${manifestPath}`); process.exit(1); }
+  if (!output) {
+    const stem = basename(manifestPath, extname(manifestPath)).replace(/\.manifest$/, "");
+    output = resolve(dirname(manifestPath), `${stem}.codec.mjs`);
+  }
+  const fs = await import("node:fs/promises");
+  const text = await fs.readFile(manifestPath, "utf8");
+  const manifest = JSON.parse(text);
+  let structs = manifest.structs ?? [];
+  if (!structs.some((s) => typeof s.dataWords === "number")) {
+    const { buildCapnp } = await import("../js/emit_capnp.mjs");
+    const { text: capnpText } = buildCapnp(manifest);
+    try {
+      structs = await compileCapnpForCodec(capnpText);
+    } catch (err) {
+      if (String(err?.message ?? err).includes("scratch")) {
+        console.error("emit-codec: the materialized .capnp text is too large for the bundled wasm capnp compiler.");
+        console.error("Two-step path for very large specs:");
+        console.error("  1. npx capnwasm emit-capnp <manifest> -o schema.capnp");
+        console.error("  2. capnp compile schema.capnp -o<your-language>");
+        process.exit(1);
+      }
+      throw err;
+    }
+  }
+  const opts = { structs };
+  if (runtimeImport) opts.runtimeImport = runtimeImport;
+  if (dynamicImport) opts.dynamicImport = dynamicImport;
+  const { buildCodec } = await import("../js/emit_codec.mjs");
+  const result = buildCodec(manifest, opts);
+  if (output === "-") process.stdout.write(result.text);
+  else { await writeFile(output, result.text); console.log(`Wrote ${output}`); }
+  console.error(`  ${result.summary.emitted.length} codec(s) emitted, ${result.summary.skipped.length} skipped`);
+  for (const s of result.summary.skipped) console.error(`    skipped ${s.name}: ${s.reason}`);
+}
+
+/** Detect pagination + error envelopes; enrich the manifest. */
+async function cmdAdapt(argv) {
+  let manifestPath = null;
+  let output = null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "-o" || a === "--output") output = argv[++i];
+    else if (!manifestPath) manifestPath = a;
+  }
+  if (!manifestPath) {
+    console.error("usage: npx capnwasm adapt <manifest.json> [-o out.json|-]");
+    process.exit(1);
+  }
+  if (!existsSync(manifestPath)) { console.error(`manifest not found: ${manifestPath}`); process.exit(1); }
+  if (!output) {
+    const stem = basename(manifestPath, extname(manifestPath)).replace(/\.manifest$/, "");
+    output = resolve(dirname(manifestPath), `${stem}.adapted.json`);
+  }
+  const text = await import("node:fs/promises").then((m) => m.readFile(manifestPath, "utf8"));
+  const manifest = JSON.parse(text);
+  const { adapt, summarize } = await import("../js/adapter.mjs");
+  const enriched = adapt(manifest);
+  const json = JSON.stringify(enriched, null, 2) + "\n";
+  if (output === "-") process.stdout.write(json);
+  else { await writeFile(output, json); console.log(`Wrote ${output}`); }
+  const s = summarize(enriched);
+  console.error(`  ${s.total} operation(s)`);
+  console.error(`  pagination: cursor=${s.pagination.cursor} offset=${s.pagination.offset} page=${s.pagination.page} page-token=${s.pagination["page-token"]} unknown=${s.pagination.unknown}`);
+  console.error(`  errors: rfc7807=${s.errors.rfc7807} single=${s.errors.single} list=${s.errors.list} passthrough=${s.errors.passthrough}`);
+}
+
+/** Manage the field-ID / op-ID lock file. */
+async function cmdLock(argv) {
+  let manifestPath = null;
+  let inPath = null;
+  let output = null;
+  let detectRenames = false;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "-o" || a === "--output") output = argv[++i];
+    else if (a === "--in") inPath = argv[++i];
+    else if (a === "--detect-renames") detectRenames = true;
+    else if (!manifestPath) manifestPath = a;
+  }
+  if (!manifestPath) {
+    console.error("usage: npx capnwasm lock <manifest.json> [--in <existing-lock>] [-o capnwasm.lock|-] [--detect-renames]");
+    process.exit(1);
+  }
+  if (!existsSync(manifestPath)) { console.error(`manifest not found: ${manifestPath}`); process.exit(1); }
+  if (!output) output = resolve(dirname(manifestPath), "capnwasm.lock");
+  const fs = await import("node:fs/promises");
+  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  let prev = null;
+  if (inPath) {
+    if (!existsSync(inPath)) { console.error(`lock not found: ${inPath}`); process.exit(1); }
+    prev = JSON.parse(await fs.readFile(inPath, "utf8"));
+  }
+  const { buildCapnp } = await import("../js/emit_capnp.mjs");
+  const { structures } = buildCapnp(manifest);
+  const lockMod = await import("../js/lock.mjs");
+  const { lock, diff } = lockMod.updateLock(prev, structures, {
+    manifestSource: manifest.source?.name,
+    detectRenames,
+  });
+  const json = lockMod.lockToJson(lock);
+  if (output === "-") process.stdout.write(json);
+  else { await writeFile(output, json); console.log(`Wrote ${output}`); }
+  console.error(`  ${diff.unchanged} pinned, ${diff.added.length} added, ${diff.removed.length} removed (tombstoned), ${diff.renamed.length} renamed`);
+}
+
+/** Run the full schema-truth pipeline in one pass. */
+async function cmdPipeline(argv) {
+  let input = null;
+  let outputDir = null;
+  let lockIn = null;
+  let configPath = null;
+  const stepsOverride = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--config") configPath = argv[++i];
+    else if (a === "--out-dir" || a === "--output-dir") outputDir = argv[++i];
+    else if (a === "--lock-in") lockIn = argv[++i];
+    else if (a.startsWith("--no-")) stepsOverride[kebabToCamel(a.slice("--no-".length))] = false;
+    else if (a.startsWith("--with-")) stepsOverride[kebabToCamel(a.slice("--with-".length))] = true;
+    else if (!input) input = a;
+  }
+  if (!configPath && !input) {
+    const candidate = resolve(process.cwd(), "capnwasm.config.json");
+    if (existsSync(candidate)) configPath = candidate;
+  }
+  const { runPipeline, loadConfig } = await import("../js/run_pipeline.mjs");
+  const cfg = await loadConfig({
+    configPath,
+    cli: { input, outputDir, lockIn, steps: stepsOverride },
+  });
+  if (!cfg.input) {
+    console.error("usage: npx capnwasm pipeline <input> [--config capnwasm.config.json] [--out-dir <dir>] [--lock-in <lock>] [--no-<step>] [--with-<step>]");
+    console.error("       <input> may be a .capnp, .ts (with @rest), or OpenAPI .json/.yaml");
+    process.exit(1);
+  }
+  const report = await runPipeline(cfg);
+  console.error(`Pipeline finished. ${report.artifacts.length} artifact(s) in ${report.outputDir}`);
+}
+
+function kebabToCamel(s) {
+  return s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
 }
 
 async function cmdGen(argv) {
@@ -1982,6 +2719,15 @@ async function main() {
     case "manifest": await cmdManifest(argv.slice(1)); return;
     case "harness":  await cmdHarness(argv.slice(1)); return;
     case "probe":    await cmdProbe(argv.slice(1)); return;
+    case "compat":
+    case "diff":     await cmdCompat(argv.slice(1)); return;
+    case "emit-openapi": await cmdEmitOpenapi(argv.slice(1)); return;
+    case "emit-capnp":   await cmdEmitCapnp(argv.slice(1)); return;
+    case "emit-agents":  await cmdEmitAgents(argv.slice(1)); return;
+    case "emit-codec":   await cmdEmitCodec(argv.slice(1)); return;
+    case "adapt":        await cmdAdapt(argv.slice(1)); return;
+    case "lock":         await cmdLock(argv.slice(1)); return;
+    case "pipeline":     await cmdPipeline(argv.slice(1)); return;
     case "build":    cmdBuild(); return;
     case "bench":    cmdBench(); return;
     case "-h": case "--help": case "help": topUsage(); return;
@@ -2116,7 +2862,7 @@ export async function generateFromSchema(schemaPath) {
 const isDirectInvocation = (() => {
   if (!process.argv[1]) return false;
   try {
-    return fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(resolve(process.argv[1]));
   } catch {
     return false;
   }

@@ -1,12 +1,13 @@
 {
   "name": "capnwasm-web",
   "private": true,
+  "packageManager": "pnpm@10.33.2",
   "type": "module",
   "scripts": {
     "codegen": "node ../bin/capnwasm.mjs gen users.capnp -o src/playground/users.capnp.gen.mjs",
-    "prepare": "cp ../dist/capnp.slim.wasm public/ && cp ../js/inspect.mjs public/inspect.js && npm run codegen && node scripts/generate-fixtures.mjs",
-    "dev": "npm run prepare && vite",
-    "build": "npm run prepare && vite build",
+    "prepare": "cp ../dist/capnp.slim.wasm public/ && cp ../js/inspect.mjs public/inspect.js && pnpm run codegen && node scripts/generate-fixtures.mjs",
+    "dev": "pnpm run prepare && vite",
+    "build": "pnpm run prepare && vite build",
     "preview": "vite preview --port 4173",
     "server": "node server.mjs"
   },

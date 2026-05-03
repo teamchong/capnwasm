@@ -1,12 +1,13 @@
-# Schema truth and conformance: where capnwasm fits
+# Schema checks and conformance limits
 
-> Long-term thinking on schemas, generated SDKs, and runtime
-> conformance. And an honest read on which pieces capnwasm provides,
-> which it doesn't, and which gaps still need someone to build.
+> Learning notes from building capnwasm and studying schema-driven API
+> tooling. This is not a platform proposal: it names the pieces this repo
+> experiments with, the pieces it does not cover, and the gaps that still
+> need human review or application-specific policy.
 
-## The long-term shape
+## A useful shape
 
-The end state for a healthy multi-surface API platform looks like this:
+One useful shape for schema-driven tooling looks like this:
 
 ```
 truthful upstream schemas
@@ -23,22 +24,22 @@ operation manifest (machine-readable, canonical)
    └─► generated tests / contract suite
 ```
 
-One artifact, many surfaces. No surface is hand-written. No surface
-disagrees with another about what an operation is, what arguments it
-takes, what it returns, who owns it, when it deprecates.
+One artifact, many surfaces. The goal is not that a tool magically makes
+the API correct; the goal is that SDKs, docs, CLIs, examples, and tests
+do not each invent a slightly different version of the same operation.
 
-That's the destination. Most orgs are not there. Most orgs have
-hand-rolled SDKs, undocumented endpoints, schemas that lie about what
-the runtime actually does, and CLIs that drift from the SDKs that
-drift from the docs.
+Most projects are not perfectly there. They have hand-rolled SDKs,
+undocumented endpoints, schemas that lag the runtime, and generated
+surfaces that drift from one another. The notes below are about where a
+small tool like capnwasm can help, and where it cannot.
 
 ## The two structural gaps
 
 ### 1. Short/mid-term: schemas are not yet truthful
 
-Getting 100+ teams to make their schemas truthful is not instant.
-You can't gate the migration on "everyone fixes their schema first"
-because then nothing ships. So there has to be an interim audit loop:
+Getting schemas to match runtime behavior is not instant. You usually
+cannot gate all progress on "fix every schema first," so an interim
+audit loop is useful:
 
 ```
 current (lying) schemas
@@ -47,24 +48,24 @@ current (lying) schemas
 audit / probe / compare / report drift
    │
    ▼
-tell teams exactly what to fix
+produce a concrete fix or review ask
    │
    ▼
 regenerate surfaces; repeat
 ```
 
-What that audit loop has to surface, per operation:
+What that loop can surface, per operation:
 
 - "This operation exists in the schema but fails at runtime."
 - "This SDK method was generated but has no runnable example or test."
-- "This endpoint has missing ownership / git URL / version metadata."
+- "This endpoint has missing ownership, example, or version metadata."
 - "This product has CLI coverage but no SDK coverage (or vice versa)."
 - "This operation's runtime response shape has drifted from the schema."
 - "This generated surface differs from the canonical operation manifest."
 
-This isn't a generation problem. It's a **conformance** problem -
-"the schema says X; does the runtime actually do X?" Conformance is
-what makes the rest of the pipeline trustworthy.
+This is not only a generation problem. It is also a **conformance**
+problem: "the schema says X; does the runtime actually do X?" That check
+keeps generated surfaces from becoming a polished copy of stale input.
 
 ### 2. SDKs aren't runnable, by themselves
 
@@ -82,9 +83,10 @@ ships without one of these three is an unverified claim.
 
 ## Where capnwasm fits
 
-capnwasm is the **schema → generated surfaces** piece, with
-**wire-format conformance baked in**. It is not a platform-level schema-orchestration tool,
-not a manifest registry, not an audit tool. What it provides:
+capnwasm is a small **schema → generated surfaces** experiment with a
+real Cap'n Proto runtime compiled to WebAssembly. It is not a
+platform-level schema-orchestration tool, not a manifest registry, and
+not a policy engine. What it provides:
 
 ### One schema, multiple typed surfaces (today)
 
@@ -104,9 +106,9 @@ bin/capnwasm.mjs (CLI)
 The `.ts` and OpenAPI inputs feed the same model. REST clients
 generate from `@rest`-annotated TypeScript interfaces or from OpenAPI
 YAML, with the same internal representation as `.capnp`-derived RPC
-methods. The "manifest" in the long-term plan above maps almost 1:1
-onto capnwasm's internal struct model. Codegen, codegen, codegen, all
-from one source of truth.
+methods. The manifest maps closely to capnwasm's internal struct model,
+so the same parsed operation shape can feed codegen, docs, tests, and
+small review tools.
 
 ### Wire-format conformance (today)
 
@@ -237,7 +239,17 @@ the consuming app's repo. That keeps the contract surface visible in
 the app's test output (and PR diffs when the schema changes), instead
 of being hidden inside a tooling subprocess.
 
-### Drift probe (today)
+### Probe (today)
+
+"Probe" here means a generated smoke/conformance check. It reads the
+same operation manifest used for codegen, makes a synthetic request to
+each declared operation, and records what was observable from the live
+target. The narrow question is: **does the runtime still look compatible
+with what the schema says?**
+
+It is not a proof of correctness. It does not know business semantics,
+it does not know which operations are safe to call unless the caller
+provides that discipline, and it only checks what the transport exposes.
 
 ```bash
 npx capnwasm manifest user.capnp -o user.manifest.json
@@ -245,11 +257,11 @@ npx capnwasm probe user.manifest.json --target ws://staging/rpc \
                                        --rest-target https://staging
 ```
 
-Reads a manifest and a live target, exercises every operation,
-reports what the runtime actually did vs what the schema declared.
-Output is structured JSON (or stdout via `-o -`), with a per-operation
-record and a summary count. Process exit code is `2` when any
-operation drifts, so CI can gate on it:
+Reads a manifest and a live target, exercises every operation, and
+writes a structured JSON report (or stdout via `-o -`). The report has
+one record per operation plus a summary count. Process exit code is `2`
+when observable drift is found, so CI can gate on it if the target and
+operation set are safe to call:
 
 ```bash
 npx capnwasm probe user.manifest.json --rest-target $STAGING_URL
@@ -257,11 +269,13 @@ npx capnwasm probe user.manifest.json --rest-target $STAGING_URL
 # exit 2 → at least one operation drifted; check the report
 ```
 
-What it surfaces:
+What it surfaces today:
 
 - **REST**: HTTP status, content-type, observed top-level response
-  keys (or first element's keys for arrays). `outcome="error"` when
-  the server returns 4xx/5xx or the response body fails to JSON-parse.
+  keys (or first element's keys for arrays). When the manifest has a
+  known object shape for the return type, it also reports missing and
+  extra top-level keys. `outcome="error"` when the server returns
+  4xx/5xx or the response body fails to JSON-parse.
 - **Capnp**: call success / failure (with the exception message),
   declared-vs-readable field accounting (which fields the manifest
   said exist, which actually decoded without throwing), and request
@@ -273,7 +287,49 @@ that comes back as its zero value is indistinguishable from a field
 the runtime didn't send. Detecting "extra fields the runtime sent
 that the schema doesn't know about" requires either a newer schema
 to compare against or a wire-byte audit beyond the probe's scope.
-For REST the keys are explicit so the diff is full.
+For REST the keys are explicit, so top-level object drift is visible.
+This is still not full JSON Schema validation: nested objects,
+polymorphic responses, semantic invariants, and auth/permission behavior
+belong in application tests.
+
+### Compatibility diff (today)
+
+The probe does **not** answer the versioning question. It compares one
+manifest to one live target. To review an API contract shift, compare
+the previous manifest to the proposed manifest instead:
+
+```bash
+npx capnwasm compat old.manifest.json new.manifest.json -o compat.report.json
+# exit 0 → no breaking changes detected
+# exit 2 → at least one breaking change detected
+```
+
+The compatibility report contains stable contract fingerprints plus a
+changeset. The fingerprint ignores source metadata such as generation
+time and file path; it hashes the contract surface: structs,
+interfaces, REST operations, and the OpenAPI sidecar when present.
+
+What `compat` flags as breaking today:
+
+- Removed REST operations, changed paths or HTTP methods, changed return
+  types, removed params, newly-required params, and param type changes.
+- Removed Cap'n Proto interfaces/methods, changed interface IDs, changed
+  method ordinals, and changed params/results struct names.
+- Removed fields, changed field types, changed field ordinals, and
+  changed field storage kind.
+- Conservative OpenAPI object-schema changes: removed properties,
+  changed property types, removed enum values, and newly-required
+  properties.
+
+What it treats as non-breaking:
+
+- Added operations, added optional REST params, added fields, added
+  schemas, added enum values, and loosening required/nullable flags.
+
+This still is not rollout policy. If a breaking change is intentional,
+the report gives reviewers the concrete changeset to discuss; it does
+not decide whether a v2 endpoint, adapter, migration window, or major
+version is the right response.
 
 ### What capnwasm does NOT provide
 
@@ -291,19 +347,16 @@ trap this whole framing is meant to avoid:
 
 ## Where this points
 
-If the long-term plan is "make schemas truthful → generate every
-surface from the manifest → ship everything fast," capnwasm is a
-working proof point for the **last two thirds of the pipeline**: the
-generation step (one schema → typed clients, runtime, dynamic readers)
-and the conformance guarantee (the same C++ runtime everywhere, no
-schema/runtime drift by construction).
+If the shape is "make schemas more accurate → generate surfaces from a
+manifest → run checks against the output," capnwasm is a small proof of
+some pieces of that loop: manifest export, codegen, compatibility diff,
+contract harness, and runtime probe.
 
-The first third. Making the upstream schemas truthful, building the
-audit loop, generating runnable contract tests. Is where the
-ecosystem still needs work. The schema-as-truth thesis only pays off
-when the schemas actually are true; until then you need the audit
-layer to surface the lies and a contract harness to keep new
-generations honest.
+The parts it does not solve are the hard organizational ones: making the
+source schemas accurate, deciding which operations are safe to probe,
+choosing rollout policy for intentional breaks, and getting humans to
+review changes in the owning codebase. The checks here are inputs to
+that process, not replacements for it.
 
 For capnwasm specifically, the obvious next steps that would tighten
 the conformance story:
@@ -320,22 +373,30 @@ the conformance story:
   Generated tests are runnable with `node --test` and pass against
   the in-process mock today (see `test/harness.test.mjs` for the
   end-to-end smoke).
-- ~~**Round-trip drift probe.**~~ **Done**. See `npx capnwasm probe`
+- ~~**Round-trip probe.**~~ **Done**. See `npx capnwasm probe`
   section above and `js/probe.mjs`. Reads manifest, exercises every
-  operation against the live target, emits per-operation drift report
-  with non-zero exit code on any drift (CI-gateable). REST gets full
-  key-level diff; capnp gets call/decode success and field-readable
-  accounting (with the wire-format limitation called out above).
+  operation against the live target, emits per-operation report with
+  non-zero exit code on observable drift. REST gets top-level key
+  comparison when a return shape is known; capnp gets call/decode
+  success and field-readable accounting (with the wire-format limitation
+  called out above).
   End-to-end coverage in `test/probe.test.mjs`.
+- ~~**Manifest compatibility diff.**~~ **Done**. See `npx capnwasm compat`
+  above and `js/compat.mjs`. Compares old/new manifests, emits stable
+  fingerprints plus a conservative breaking/non-breaking changeset, and
+  exits `2` when breaking changes are detected. Focused coverage in
+  `test/compat.test.mjs`.
 
-All three schema-truth follow-ups landed: manifest → harness → probe.
-Together they push capnwasm's conformance surface from "schema
-generates SDK" to "schema generates SDK, the SDK is verifiably
-runnable against the schema, and the running endpoint is verifiably
-agreeing with the schema." The chain is one CLI pipeline:
+All four checking primitives landed: manifest → compat → harness → probe.
+Together they move capnwasm from "schema generates SDK" toward
+"schema generates SDK, proposed contract shifts can be reviewed before
+release, the SDK has runnable contract checks, and a live target can be
+smoke-checked for observable schema drift." The chain is one CLI
+pipeline:
 
 ```bash
 npx capnwasm manifest user.capnp -o user.manifest.json
+npx capnwasm compat   old.manifest.json user.manifest.json
 npx capnwasm harness  user.manifest.json --gen ./user.gen.mjs
 npx capnwasm probe    user.manifest.json --target $RPC_URL
 ```
@@ -346,8 +407,8 @@ npx capnwasm probe    user.manifest.json --target $RPC_URL
   how to use it, where it wins and loses on perf.
 - [vs-capnweb](vs-capnweb.md) is the per-workload comparison with the
   end-to-end render bench appended.
-- This doc is the long-term framing. What an honest schema-as-truth
-  pipeline looks like and which pieces capnwasm provides today.
+- This doc is the conformance framing: which checks capnwasm provides
+  today, and which parts remain outside the tool.
 
 The point of writing all three is the same: don't oversell, don't
 under-claim, and make the gaps as visible as the wins.

@@ -80,9 +80,12 @@ test("dynamic.toObject() matches codegen reader.toObject()", () => {
   }
 });
 
-test("dynamic.pick subset matches codegen pick", () => {
+test("dynamic.pick subset matches codegen draft", () => {
+  // Codegen exposes draft() (Immer-style projection); dynamic still has
+  // pick() (array of field names). They produce the same {name: value}
+  // shape, so the comparison is straight deepEqual.
   const codegen = openPrimitives(cpp, bytes);
-  const expected = codegen.pick(["u32", "text", "flag0"]);
+  const expected = codegen.draft((p) => ({ u32: p.u32, text: p.text, flag0: p.flag0 }));
   const dyn = openDynamic(cpp, PrimitivesSchema, bytes);
   const got = dyn.pick(["u32", "text", "flag0"]);
   assert.deepEqual(got, expected);

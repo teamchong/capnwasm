@@ -19,10 +19,9 @@ import { RpcSession, connectWebSocket } from "../../../js/rpc.mjs";
 import { newWebSocketRpcSession } from "capnweb";
 
 const $ = (id: string) => document.getElementById(id)!;
-// In dev (`npm run dev`) the RPC server runs as a Vite plugin on the same
-// origin, so we connect to ws://HOST:PORT/. In prod (`vite preview` of a
-// static build) you have to start `npm run server` separately on :8081 —
-// override SERVER below if you do that.
+// The RPC server runs on the same origin in both supported local modes:
+// `pnpm dev` (Wrangler Worker, deployed-shape) and `pnpm dev:vite`
+// (Vite plugin shim for frontend iteration).
 const SERVER =
   (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
 const IFC = 0xc0ffeec0ffeec0ffn;
@@ -292,7 +291,7 @@ runBtn.addEventListener("click", runSafe);
     setTimeout(runSafe, 100);
   } else {
     serverDot.classList.add("down");
-    serverMsg.innerHTML = `<strong>RPC server unreachable.</strong> Both <code>npm run dev</code> and <code>npm run preview</code> embed the bench server automatically; if you&rsquo;re hosting the static <code>dist/</code> behind a CDN, run <code>npm run server</code> separately and update <code>SERVER</code> in <code>src/rpc/main.ts</code> to point at it.`;
+    serverMsg.innerHTML = `<strong>RPC server unreachable.</strong> Run <code>pnpm dev</code> from the repo root for the Wrangler-backed server, or <code>pnpm dev:vite</code> for the Vite-only shim.`;
     status.textContent = "RPC server unreachable — see banner above.";
   }
 })();

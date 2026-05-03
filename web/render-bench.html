@@ -48,12 +48,41 @@
       <div id="summary" class="summary">Run a bench to see the rollup.</div>
     </section>
 
+    <section class="how-to-read">
+      <h2>How to read this page</h2>
+      <p>
+        These are live end-to-end timings from this browser to the current Worker server.
+        A cell includes the client call, Worker dispatch, server-side response encoding,
+        transport, browser-side decode/deserialization, the field reads used by that
+        workload, DOM mutation, and one forced layout via <code>offsetHeight</code>.
+      </p>
+      <p>
+        capnwasm is expected to lose some rows. Even with Immer-style <code>draft()</code>
+        projections, DOM work, transport scheduling, and capnweb&apos;s eager JSON materialization
+        can dominate small cells. capnwasm tends to show up when the workload is
+        binary-heavy, sparse-field, or benefits from batched Cap&apos;n Proto wire reads.
+        The useful result is the shape of the tradeoff, not a single winner.
+      </p>
+      <p>
+        Fairness model: each workload asks both libraries to produce the same DOM output.
+        The code uses each library&apos;s intended fast path: capnweb returns eagerly materialized
+        JS objects; capnwasm uses generated readers plus <code>draft()</code> projections when the app
+        wants to materialize fields. If an optimization requires capnwasm-specific syntax,
+        that is called out below.
+      </p>
+    </section>
+
     <section>
       <h2>Workload 1 &mdash; List render</h2>
       <p>
         Server returns N user records in one RPC reply. Client decodes, builds a
         <code>&lt;ul&gt;</code> with one <code>&lt;li&gt;</code> per row, forces layout via
         <code>offsetHeight</code>. Realistic shape: list view, table page, search results.
+      </p>
+      <p class="api-note">
+        Same app output: render <code>id</code>, <code>name</code>, <code>email</code>, and <code>active</code> for every row.
+        capnweb reads plain object properties; capnwasm uses one <code>draft()</code> projection with
+        normal list <code>.map(...)</code> syntax to batch per-row field materialization.
       </p>
       <div id="bench-list" class="bench-block"></div>
     </section>
@@ -62,9 +91,16 @@
       <h2>Workload 2 &mdash; Sparse field access (read 3 of 32)</h2>
       <p>
         Server returns a 32-field metadata struct. Client reads only 3 fields and renders them.
-        Cap&apos;n Proto&rsquo;s schema-evolved layout lets capnwasm skip the other 29; capnweb&apos;s JSON
-        round-trip materializes all 32 upfront. The size axis here is the number of consecutive
-        requests fired in the same tick (testing batching).
+        Cap&apos;n Proto&rsquo;s schema-evolved layout lets capnwasm skip the other 29 and batch the
+        selected reads through <code>draft()</code>; capnweb&apos;s JSON round-trip materializes all 32 upfront.
+        The size axis here is the number of consecutive requests fired in the same tick
+        (testing batching).
+      </p>
+      <p class="api-note">
+        This is intentionally a partial-read workload. Same app output: render only
+        <code>field0</code>, <code>field5</code>, and <code>field10</code>. capnwasm uses
+        <code>draft(m =&gt; ({ field0: m.field0, field5: m.field5, field10: m.field10 }))</code>;
+        capnweb still pays for parsing the full JSON object.
       </p>
       <div id="bench-sparse" class="bench-block"></div>
     </section>
@@ -73,8 +109,12 @@
       <h2>Workload 3 &mdash; Dense field access (read all 32)</h2>
       <p>
         Same metadata struct, but the client reads every field and renders all 32 to the DOM.
-        capnweb&apos;s eager-decode model wins here: once the JSON is parsed, every field is a
-        plain JS property read. capnwasm crosses into wasm memory per field unless the app caches.
+        capnweb&apos;s eager-decode model turns every field into a plain JS property read.
+        capnwasm uses <code>draft()</code> here so the 32 reads are batched before rendering.
+      </p>
+      <p class="api-note">
+        This is the full-read counterpart to sparse. Same app output: render all 32 fields.
+        capnwasm uses one <code>draft()</code> projection over all 32 fields; capnweb reads all object properties.
       </p>
       <div id="bench-dense" class="bench-block"></div>
     </section>
@@ -83,9 +123,15 @@
       <h2>Workload 4 &mdash; Re-read storm (10 fields &times; N reads, animation simulation)</h2>
       <p>
         After one fetch, read 10 fields N times each (simulating a re-render loop or per-frame
-        animation). capnwasm pays a wasm crossing per re-read; capnweb is pure JS reads after
-        the initial decode. Picks N = small/medium/large. <em>Single fetch, repeated reads &mdash; isolates
-        the post-fetch read cost.</em>
+        animation). Both paths materialize the 10 fields once, then re-read plain JS values
+        in the hot loop. Picks N = small/medium/large. Each timed cell includes one fetch
+        followed by repeated reads; increasing N makes the post-fetch read cost dominate
+        the single fetch.
+      </p>
+      <p class="api-note">
+        Same app output: repeatedly read the same 10 logical fields after one response.
+        capnwasm first materializes those 10 fields with <code>draft()</code>, then rereads the cached JS values;
+        capnweb rereads the JS object values it already materialized during JSON decode.
       </p>
       <div id="bench-reread" class="bench-block"></div>
     </section>
@@ -97,6 +143,10 @@
         (no canvas paint &mdash; we&apos;re measuring wire + decode, not GPU work). capnwasm sends
         raw bytes; capnweb base64-encodes (1.33&times; bandwidth + parse cost both directions).
       </p>
+      <p class="api-note">
+        Same app output: display the echoed byte length. This is not a field-read benchmark;
+        it isolates binary transport and decode/deserialize overhead.
+      </p>
       <div id="bench-blob" class="bench-block"></div>
     </section>
 
@@ -105,9 +155,11 @@
       <ul>
         <li><strong>Cold</strong> = the very first call against a transport (includes WS handshake / first POST connect, and for capnwasm the wasm fetch + compile if not cached).</li>
         <li><strong>Warm</strong> = median of the configured iter count, after a warmup pass.</li>
-        <li><strong>End-to-end</strong> includes encode, transport, decode, every <code>.field</code> access used by the render path, and forced layout via <code>offsetHeight</code>.</li>
-        <li>Both libraries hit the <em>same</em> server process (web/vite-rpc-server.mjs), with matching method semantics, so the only thing varying is the library + transport.</li>
-        <li>capnwasm&rsquo;s sparse-field bench actually skips reads &mdash; we don&rsquo;t materialize the 29 fields we don&rsquo;t need. capnweb has no equivalent (the JSON is fully parsed upfront), so it&rsquo;s an architectural win for capnp.</li>
+        <li><strong>End-to-end</strong> includes client request construction, Worker dispatch, server-side response encode/serialize, transport, browser-side decode/deserialize, every <code>.field</code> access used by the render path, DOM mutation, and forced layout via <code>offsetHeight</code>.</li>
+        <li>Both libraries hit the <em>same</em> Worker endpoints in the deployed path (or the matching Vite shim during frontend-only dev), with matching method semantics, so the only thing varying is the library + transport.</li>
+        <li><strong>Same app output, different API shape:</strong> capnweb exposes eager JS objects; capnwasm exposes lazy readers and uses Immer-style <code>draft()</code> projections where batching is needed. The benchmark uses those intended paths rather than forcing both libraries through the same syntax.</li>
+        <li><strong>Partial vs full reads are separated:</strong> sparse reads 3/32 fields; dense reads 32/32 fields; reread materializes 10 fields once and then rereads cached JS values.</li>
+        <li>capnwasm&rsquo;s sparse-field bench actually skips reads &mdash; we don&rsquo;t materialize the 29 fields we don&rsquo;t need, and the selected fields are read through one batched <code>draft()</code> projection. capnweb has no equivalent (the JSON is fully parsed upfront), so it&rsquo;s an architectural win for capnp.</li>
         <li>capnweb base64-inflates binary; capnwasm sends raw bytes &mdash; on the blob workload the wire-bytes column tells the story.</li>
       </ul>
     </section>
