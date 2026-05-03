@@ -107,8 +107,6 @@
       </table>
       <p>Brotli does <em>not</em> close the gap meaningfully &mdash; capnweb compresses about as well with brotli as we do, so the ratio stays roughly 2&times; on either compression. The extra ~17 KB on the wire (capnwasm typical-shape vs capnweb whole-library, brotli) is the cost of shipping a real wasm runtime.</p>
       <p>If your bundle budget is tight and you don&apos;t need binary wire interop, <strong>capnweb is the smaller choice</strong>. There is no way for capnwasm to reach 21 KB while still doing RPC; the wasm runtime is what enables the rest of the wins.</p>
-      <p>A <code>capnwasm/reader</code> subpath also exists (~21 KB gz / 18 KB br, decoder only; no builder, no RPC client, no transport) for users who already have Cap'n Proto bytes coming from somewhere (an existing Rust/C++/Go service, a non-JS peer) and only need to decode them in JS. It is <strong>not</strong> a capnweb replacement: capnweb is a working RPC client, <code>capnwasm/reader</code> is a decoder for an existing wire. The right comparison for the reader is <code>JSON.parse</code> (0 KB, built into V8) &mdash; <code>capnwasm/reader</code> only makes sense if your wire is binary Cap'n Proto for reasons other than bundle size.</p>
-
       <h3>2. Cold start: now essentially tied in Node, still slower in the browser</h3>
       <table class="cmp small">
         <thead><tr><th></th><th>import</th><th>load (compile + link)</th><th>total</th></tr></thead>

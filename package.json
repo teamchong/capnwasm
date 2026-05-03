@@ -17,11 +17,6 @@
       "development": "./js/browser.mjs",
       "default": "./dist/browser.mjs"
     },
-    "./reader": {
-      "development": "./js/reader.mjs",
-      "default": "./dist/reader.mjs"
-    },
-    "./capnp.reader.wasm": "./dist/capnp.reader.wasm",
     "./tape": {
       "development": "./js/tape_serializer.mjs",
       "default": "./dist/tape_serializer.mjs"

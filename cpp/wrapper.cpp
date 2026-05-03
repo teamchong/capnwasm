@@ -44,7 +44,6 @@ uint32_t cpp_lazy_aux_capacity() { return LAZY_AUX_CAP; }
 
 uint32_t cpp_abi_version() { return 1; }
 
-#ifndef CW_READER_ONLY
 // Serialize a tape (in cpp_in[0..tape_len], same byte format as src/tape.zig)
 // to a Cap'n Proto framed message in cpp_out. Returns bytes written, or 0
 // on failure.
@@ -261,9 +260,6 @@ static void decodeExpression(Expression::Reader r, TapeWriter& w) {
   }
 }
 
-#endif  // CW_READER_ONLY  (closes tape codec section)
-
-#ifndef CW_READER_ONLY
 // ---------------------------------------------------------------------------
 // Lazy reader: parse the message once, then JS pulls individual fields on
 // demand. This is the access pattern Cap'n Proto's wire format is designed
@@ -402,9 +398,7 @@ uint32_t cpp_lazy_obj_fields_text(const uint8_t* input_ptr, uint32_t input_len) 
 
   return static_cast<uint32_t>(write_pos);
 }
-#endif  // CW_READER_ONLY  (closes lazy reader section)
 
-#ifndef CW_READER_ONLY
 // ---------------------------------------------------------------------------
 // Typed schema (cpp/typed_schema.capnp): WideUserData with 32 named Text
 // fields. Demonstrates the access pattern Cap'n Proto users would actually
@@ -725,8 +719,6 @@ uint32_t cpp_conformance_serialize(uint32_t input_len) {
   std::memcpy(cpp_out, bytes.begin(), bytes.size());
   return static_cast<uint32_t>(bytes.size());
 }
-
-#endif  // CW_READER_ONLY  (closes typed/conformance/big_user readers)
 
 // ---------------------------------------------------------------------------
 // Generic AnyStruct navigation. One wasm binary serves every user schema:
@@ -1205,7 +1197,6 @@ uint32_t cpp_any_list_project(uint32_t ptr_idx, uint32_t input_len) {
   return static_cast<uint32_t>(out_pos);
 }
 
-#ifndef CW_READER_ONLY
 // ---------------------------------------------------------------------------
 // Generic AnyStruct BUILDER; counterpart to the reader. Codegen-emitted
 // XBuilder classes know each field's offset/type at build time; these
@@ -2376,6 +2367,5 @@ uint32_t cpp_deserialize_to_tape(uint32_t bytes_len) {
   }
   return static_cast<uint32_t>(w.p - cpp_out);
 }
-#endif  // CW_READER_ONLY  (closes builder + RPC + tape decode)
 
 } // extern "C"

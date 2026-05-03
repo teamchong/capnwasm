@@ -111,26 +111,13 @@ async function brotliSize(path) {
 
 const root = resolve(HERE, "..", "..");
 
-// Three bundle shapes for the homepage / docs to surface separately.
+// Bundle shapes for the homepage / docs to surface separately.
 //
-//   reader: js/reader.mjs + cpp_loader + capnp.reader.wasm — what a consumer
-//           of capnwasm responses ships when they only project responses
-//           via draft() and never build their own messages or open RPC.
-//   browser: js/browser.mjs + cpp_loader + capnp.slim.wasm — adds the full
-//            wasm (builder + RPC + lazy reader + tape codec).
+//   browser: js/browser.mjs + cpp_loader + capnp.slim.wasm — full wasm
+//            (builder + RPC + lazy reader + tape codec), no RPC JS client.
 //   rpc: browser bundle + the RPC client JS.
-// reader.mjs is bundled (single file with CapnCpp inlined; LazyReader is
-// tree-shaken out by esbuild). Browser bundle (cpp_loader.mjs + browser.mjs)
-// is the legacy two-file shape and still imported separately by the full
-// capnwasm/browser export.
 const cppLoaderGzip = await gzipSize(resolve(root, "dist", "cpp_loader.mjs"));
 const cppLoaderBr = await brotliSize(resolve(root, "dist", "cpp_loader.mjs"));
-const capnwasmReaderGzip =
-  await gzipSize(resolve(root, "dist", "reader.mjs")) +
-  await gzipSize(resolve(root, "dist", "capnp.reader.wasm"));
-const capnwasmReaderBr =
-  await brotliSize(resolve(root, "dist", "reader.mjs")) +
-  await brotliSize(resolve(root, "dist", "capnp.reader.wasm"));
 const capnwasmBrowserGzip =
   await gzipSize(resolve(root, "dist", "browser.mjs")) +
   await gzipSize(resolve(root, "dist", "capnp.slim.wasm"));
@@ -154,24 +141,16 @@ await writeFile(resolve(metricsDir, "build.json"), JSON.stringify({
   fixtures: { small, blob },
   bundles: {
     gzip: {
-      capnwasmReader: capnwasmReaderGzip,
       capnwasmBrowser: capnwasmBrowserGzip,
       capnwasmRpc: capnwasmRpcGzip,
       capnweb: capnwebGzip,
     },
     brotli: {
-      capnwasmReader: capnwasmReaderBr,
       capnwasmBrowser: capnwasmBrowserBr,
       capnwasmRpc: capnwasmRpcBr,
       capnweb: capnwebBr,
     },
     ratios: {
-      // Vanity ratios for capnwasm/reader vs capnweb were intentionally
-      // dropped: they are not the same kind of artifact (capnweb is a full
-      // RPC client; capnwasm/reader is a decoder that needs a transport you
-      // bring yourself). The size is still emitted above for transparency,
-      // but no homepage row should compare reader to capnweb on bytes —
-      // see the docs for the longer framing.
       capnwasmRpcToCapnwebGzip: capnwasmRpcGzip / capnwebGzip,
     },
   },

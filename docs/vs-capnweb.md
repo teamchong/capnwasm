@@ -91,20 +91,6 @@ If your bundle budget is tight and you don't need binary wire interop,
 21 KB while still doing RPC; the wasm runtime is what enables the rest of
 the wins.
 
-A `capnwasm/reader` subpath also exists (~21 KB gz / 18 KB br, decoder
-only — no builder, no RPC, no transport) for users who already have
-Cap'n Proto bytes coming from somewhere else. It is not a capnweb
-replacement: capnweb gives you a working RPC client, `capnwasm/reader`
-gives you a decoder for an existing wire. The right comparison for the
-reader is `JSON.parse` (0 KB, built into V8) — capnwasm/reader only
-makes sense if your wire is binary Cap'n Proto for reasons other than
-bundle size. How it got that small (`#ifdef CW_READER_ONLY` strip,
-build-time `strerror_r` patch on `kj/debug.c++`, self-contained JS
-shim with no LazyReader and stubbed WASI `fd_write`) is in
-[notes-from-the-trenches](notes-from-the-trenches.md); the win is that
-adding capnp decode to a JS app costs ~21 KB in addition to whatever
-transport you bring, not that capnwasm beats capnweb on bundle size.
-
 ### 2. Cold start: now essentially tied in Node, still slower in the browser
 
 Time-to-first-result, fresh Node 22 process, mean of 8 runs.

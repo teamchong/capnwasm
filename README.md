@@ -6,7 +6,7 @@ I built this to learn how Cloudflare's [capnweb](https://github.com/cloudflare/c
 
 capnwasm sits at: ~17 KB more brotli than capnweb, but a real Cap'n Proto runtime in the browser, raw bytes for binary data, sparse-access reads on large payloads, and wire interop with C++/Rust/Go services. The numbers below are findings from this exploration, not a scoreboard.
 
-Slim runtime: 33 KB gz / 28 KB brotli for the wasm-only path; 41 KB gz / 35 KB brotli for the typical typed-proxy + HTTP-batch shape. A `capnwasm/reader` subpath also exists (~21 KB gz, decoder only — no builder, no RPC client) for users who already have Cap'n Proto bytes coming from somewhere else (an existing Rust/C++/Go service, a non-JS peer) and only need to decode them in JS. It is not a replacement for capnweb; if you don't already have Cap'n Proto in your stack, `JSON.parse` is the right answer for "ship as little as possible to consume responses."
+Slim runtime: 33 KB gz / 28 KB brotli for the wasm-only path; 41 KB gz / 35 KB brotli for the typical typed-proxy + HTTP-batch shape.
 
 ```js
 // 1. Write a schema:           user.capnp
@@ -80,8 +80,6 @@ const bytes = b.toBytes();
 const r = openUser(cpp, bytes);
 console.log(r.id, r.name);   // typed getters; V8-inlinable
 ```
-
-> **Decoder-only?** If you already have Cap'n Proto bytes from elsewhere (an existing service, a file, a non-JS peer) and only need to decode them in JS, swap `import { load } from "capnwasm"` for `import { load } from "capnwasm/reader"`. Same generated `openUser` works against the smaller `dist/capnp.reader.wasm` (~21 KB gzip). Calling `buildUser` against this runtime throws because the builder isn't shipped. This is **not** a capnweb replacement — there's no transport, no RPC, no message building. If you don't already have Cap'n Proto in your stack, `JSON.parse` is the right answer.
 
 **2. TypeScript interface → typed REST client (your own backend)**
 
@@ -161,7 +159,6 @@ All entry-point sizes are minified-then-gzipped (the `dist/` build that ships in
 | `+ "capnwasm/rpc"` | adds the RPC layer (sessions, caps, streaming, all wire-conformance handlers) | **39 KB** | **33 KB** |
 | `+ "capnwasm/typed" + "capnwasm/http-batch"` | typed proxy + HTTP-batch transport - the typical browser app shape | **41 KB** | **35 KB** |
 | All four transports + typed + dynamic | every transport (WS, HTTP-batch, HTTP-stream, postMessage) + typed proxy + dynamic-schema reader | **46 KB** | **40 KB** |
-| `import "capnwasm/reader"` | decoder-only: shim + slim wasm with builder/RPC/lazy/tape paths stripped via `#ifdef CW_READER_ONLY`. Useful when you already have Cap'n Proto bytes from somewhere (existing service, file, third-party API) and only need to decode them. **Not a capnweb replacement** — there's no transport, no message building, no RPC. | **21 KB** | **18 KB** |
 
 The gzip column is what Cloudflare Workers measures against the deploy bundle limit (1 MB Free / 10 MB Paid, per `wrangler deploy`). The brotli column is what modern browsers actually receive over the wire (Cloudflare/Vercel/Netlify all serve `Content-Encoding: br` automatically).
 | `import "capnwasm/rest"` | REST client runtime (auth, retries, pagination, ...) | 2.6 KB | 2.4 KB |
