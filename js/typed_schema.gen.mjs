@@ -13,6 +13,12 @@ const _F64_VIEW_BUF = new ArrayBuffer(8);
 const _F64_VIEW_U32 = new Uint32Array(_F64_VIEW_BUF);
 const _F64_VIEW_F64 = new Float64Array(_F64_VIEW_BUF);
 
+const _LIST_HELPERS = {
+  TD: SHARED_TEXT_DECODER,
+  F32U: _F32_VIEW_U32, F32F: _F32_VIEW_F32,
+  F64U: _F64_VIEW_U32, F64F: _F64_VIEW_F64,
+};
+
 // Per-(class, field-list) cache of pre-encoded request bytes. Compiling the
 // request is a tight loop but it's still wasted work in a hot pick loop.
 // We key on a frozen Uint8Array of the descriptor bytes so identical field
@@ -32,7 +38,9 @@ function _getPickRequest(fields, names) {
   // Precompute the field-descriptor array alongside the request bytes. Both
   // are pure functions of (fields, names); caching them together means the
   // hot pick path skips a names.length-iteration property-lookup loop on
-  // every call. The cached entry shape is { req: Uint8Array, descs: Array }.
+  // every call. The cached entry shape is { req, descs, listDecoder } where
+  // listDecoder is lazily compiled the first time a List(Struct) projection
+  // hits this field-set (most Pick callers never trigger it).
   const descs = new Array(names.length);
   let pos = 4;
   for (let i = 0; i < names.length; i++) {
@@ -42,9 +50,103 @@ function _getPickRequest(fields, names) {
     buf[pos] = d.kind; pos += 1;
     dv.setUint32(pos, d.off, true); pos += 4;
   }
-  entry = { req: buf, descs };
+  entry = { req: buf, descs, listDecoder: null };
   perFields.set(key, entry);
   return entry;
+}
+
+// Build a specialized JS function that decodes a row-tape produced by
+// cpp_any_list_project into an Array of plain row objects, with the
+// per-cell switch dispatch fully unrolled.
+//
+// The unrolled body lets V8 emit a single inline-cache chain per row, gives
+// the row a stable hidden class via an object literal with all fields named
+// in declaration order, and removes the per-cell descs[]/names[] indexing.
+//
+// Compiled once per (fields, names) pair, then cached on the same entry
+// the request bytes live on. Roughly halves JS materialization cost vs the
+// generic switch loop on the list-1000 user-row workload.
+function _compileListDecoder(descs, names, applyMapFn) {
+  const cols = descs.length;
+  const rowStride = cols * 4;
+  const out = [];
+  out.push(`const TD = H.TD;`);
+  out.push(`const F32U = H.F32U, F32F = H.F32F, F64U = H.F64U, F64F = H.F64F;`);
+  out.push(`const arr = new Array(rows);`);
+  out.push(`let readPos = 8 + rows * ${rowStride};`);
+  out.push(`for (let row = 0; row < rows; row++) {`);
+  out.push(`  const cellBase = 8 + row * ${rowStride};`);
+  for (let col = 0; col < cols; col++) {
+    const d = descs[col];
+    const headerOff = `cellBase + ${col * 4}`;
+    switch (d.type) {
+      case "text":
+        out.push(`  let _v${col};`);
+        out.push(`  { const _h = dv.getUint32(${headerOff}, true);`);
+        out.push(`    if (_h === 0xFFFFFFFF) _v${col} = undefined;`);
+        out.push(`    else if (_h === 0) _v${col} = "";`);
+        out.push(`    else { _v${col} = TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }`);
+        break;
+      case "data":
+        out.push(`  let _v${col};`);
+        out.push(`  { const _h = dv.getUint32(${headerOff}, true);`);
+        out.push(`    if (_h === 0xFFFFFFFF) _v${col} = undefined;`);
+        out.push(`    else { _v${col} = u8.slice(out + readPos, out + readPos + _h); readPos += _h; } }`);
+        break;
+      case "bool":
+        out.push(`  const _v${col} = dv.getUint32(${headerOff}, true) === 1;`);
+        break;
+      case "uint8":
+      case "uint16":
+        out.push(`  const _v${col} = dv.getUint32(${headerOff}, true);`);
+        break;
+      case "int8":
+        out.push(`  const _v${col} = (dv.getUint32(${headerOff}, true) << 24) >> 24;`);
+        break;
+      case "int16":
+        out.push(`  const _v${col} = (dv.getUint32(${headerOff}, true) << 16) >> 16;`);
+        break;
+      case "uint32":
+        out.push(`  const _v${col} = dv.getUint32(${headerOff}, true) >>> 0;`);
+        break;
+      case "int32":
+        out.push(`  const _v${col} = dv.getUint32(${headerOff}, true) | 0;`);
+        break;
+      case "float32":
+        out.push(`  F32U[0] = dv.getUint32(${headerOff}, true) >>> 0;`);
+        out.push(`  const _v${col} = F32F[0];`);
+        break;
+      case "uint64":
+      case "int64":
+        out.push(`  let _v${col};`);
+        out.push(`  { const _lo = dv.getUint32(readPos, true);`);
+        out.push(`    const _hi = dv.getInt32(readPos + 4, true);`);
+        out.push(`    _v${col} = (_hi >= -0x200000 && _hi <= 0x1FFFFF) ? _hi * 4294967296 + _lo : dv.getBigInt64(readPos, true);`);
+        out.push(`    readPos += 8; }`);
+        break;
+      case "float64":
+        out.push(`  F64U[0] = dv.getUint32(readPos, true);`);
+        out.push(`  F64U[1] = dv.getUint32(readPos + 4, true);`);
+        out.push(`  const _v${col} = F64F[0];`);
+        out.push(`  readPos += 8;`);
+        break;
+      default:
+        out.push(`  const _v${col} = undefined;`);
+    }
+  }
+  // Object literal with the projected names — V8 freezes one hidden class
+  // for the row shape. Stringified names are valid in literal-key form.
+  // When applyMapFn is set, the user's per-row callback consumes the
+  // literal in place; we never store the raw row object in arr.
+  const litParts = names.map((n, i) => `${JSON.stringify(n)}: _v${i}`);
+  if (applyMapFn) {
+    out.push(`  arr[row] = mapFn({ ${litParts.join(", ")} });`);
+  } else {
+    out.push(`  arr[row] = { ${litParts.join(", ")} };`);
+  }
+  out.push(`}`);
+  out.push(`return arr;`);
+  return new Function("u8", "dv", "out", "rows", "H", "mapFn", out.join("\n"));
 }
 
 function _capnwasmPick(cpp, fields, names) {
@@ -109,14 +211,12 @@ function _capnwasmPick(cpp, fields, names) {
   return result;
 }
 
-function _capnwasmListProject(cpp, ptrIndex, fields, names) {
+function _capnwasmListProject(cpp, ptrIndex, fields, names, mapFn) {
   const exp = cpp._exports;
   if (typeof exp.cpp_any_list_project !== "function") return null;
   const entry = _getPickRequest(fields, names);
-  const req = entry.req;
-  const descs = entry.descs;
-  cpp._u8.set(req, cpp._auxPtr);
-  const written = exp.cpp_any_list_project(ptrIndex, req.length);
+  cpp._u8.set(entry.req, cpp._auxPtr);
+  const written = exp.cpp_any_list_project(ptrIndex, entry.req.length);
   if (!written) return null;
   const out = cpp._outPtr;
   const u8 = cpp._u8;
@@ -124,60 +224,18 @@ function _capnwasmListProject(cpp, ptrIndex, fields, names) {
   const rows = dv.getUint32(0, true);
   const cols = dv.getUint32(4, true);
   if (cols !== names.length) return null;
-  let readPos = 8 + rows * cols * 4;
-  const arr = new Array(rows);
-  for (let row = 0; row < rows; row++) {
-    const obj = {};
-    for (let col = 0; col < cols; col++) {
-      const lenOrVal = dv.getUint32(8 + (row * cols + col) * 4, true);
-      const d = descs[col];
-      const name = names[col];
-      switch (d.type) {
-        case "text": {
-          if (lenOrVal === 0xFFFFFFFF) { obj[name] = undefined; break; }
-          if (lenOrVal === 0) { obj[name] = ""; break; }
-          obj[name] = decodeAscii(u8.subarray(out + readPos, out + readPos + lenOrVal));
-          readPos += lenOrVal;
-          break;
-        }
-        case "data": {
-          if (lenOrVal === 0xFFFFFFFF) { obj[name] = undefined; break; }
-          obj[name] = u8.slice(out + readPos, out + readPos + lenOrVal);
-          readPos += lenOrVal;
-          break;
-        }
-        case "bool":   obj[name] = lenOrVal === 1; break;
-        case "uint8":  obj[name] = lenOrVal; break;
-        case "int8":   obj[name] = (lenOrVal << 24) >> 24; break;
-        case "uint16": obj[name] = lenOrVal; break;
-        case "int16":  obj[name] = (lenOrVal << 16) >> 16; break;
-        case "uint32": obj[name] = lenOrVal >>> 0; break;
-        case "int32":  obj[name] = lenOrVal | 0; break;
-        case "float32": _F32_VIEW_U32[0] = lenOrVal >>> 0; obj[name] = _F32_VIEW_F32[0]; break;
-        case "uint64":
-        case "int64": {
-          const lo = dv.getUint32(out - dv.byteOffset + readPos, true);
-          const hi = dv.getInt32(out - dv.byteOffset + readPos + 4, true);
-          obj[name] = (hi >= -0x200000 && hi <= 0x1FFFFF) ? hi * 4294967296 + lo : dv.getBigInt64(out - dv.byteOffset + readPos, true);
-          readPos += 8;
-          break;
-        }
-        case "float64": {
-          _F64_VIEW_U32[0] = dv.getUint32(out - dv.byteOffset + readPos, true);
-          _F64_VIEW_U32[1] = dv.getUint32(out - dv.byteOffset + readPos + 4, true);
-          obj[name] = _F64_VIEW_F64[0];
-          readPos += 8;
-          break;
-        }
-        default: obj[name] = undefined;
-      }
-    }
-    arr[row] = obj;
+  if (mapFn) {
+    let mdec = entry.listDecoderMapped;
+    if (!mdec) { mdec = _compileListDecoder(entry.descs, names, true); entry.listDecoderMapped = mdec; }
+    return mdec(u8, dv, out, rows, _LIST_HELPERS, mapFn);
   }
-  return arr;
+  let dec = entry.listDecoder;
+  if (!dec) { dec = _compileListDecoder(entry.descs, names, false); entry.listDecoder = dec; }
+  return dec(u8, dv, out, rows, _LIST_HELPERS);
 }
 
 const _STRUCT_FIELDS = Object.create(null);
+const _LIST_MAP_TAG = Symbol("_capnwasm_listMap");
 function _planRaw(fields, fn) {
   const selected = [];
   const seen = new Set();
@@ -189,7 +247,11 @@ function _planRaw(fields, fn) {
       const nextPath = path.concat(name);
       const list = /^List\(([^)]+)\)$/.exec(desc.type);
       if (list && _STRUCT_FIELDS[list[1]]) {
-        return { map(childFn) { selected.push({ kind: "listMap", path: nextPath, inner: list[1], fn: childFn }); return []; } };
+        return { map(childFn) {
+          const idx = selected.length;
+          selected.push({ kind: "listMap", path: nextPath, inner: list[1], fn: childFn });
+          const tag = []; tag[_LIST_MAP_TAG] = idx; return tag;
+        } };
       }
       if (_STRUCT_FIELDS[desc.type]) return make(_STRUCT_FIELDS[desc.type], nextPath);
       const key = nextPath.join(".");
@@ -197,13 +259,16 @@ function _planRaw(fields, fn) {
       return undefined;
     }
   });
-  fn(make(fields, []));
-  return selected;
+  const result = fn(make(fields, []));
+  let outerListMapIdx = -1;
+  if (result && typeof result === "object" && _LIST_MAP_TAG in result) outerListMapIdx = result[_LIST_MAP_TAG];
+  return { selected, outerListMapIdx };
 }
-function _compilePlan(selected) {
+function _compilePlan(selected, outerListMapIdx) {
   const leaf = [];
   const nestedRaw = new Map();
   const listMapRaw = [];
+  let outerListMapPos = -1;
   for (let i = 0; i < selected.length; i++) {
     const item = selected[i];
     const head = item.path[0];
@@ -211,6 +276,7 @@ function _compilePlan(selected) {
     if (item.kind === "field" && item.path.length === 1) {
       leaf.push(head);
     } else if (item.kind === "listMap" && item.path.length === 1) {
+      if (i === outerListMapIdx) outerListMapPos = listMapRaw.length;
       listMapRaw.push({ name: head, inner: item.inner, fn: item.fn });
     } else {
       let entry = nestedRaw.get(head);
@@ -221,21 +287,22 @@ function _compilePlan(selected) {
     }
   }
   const nested = [];
-  for (const [name, raw] of nestedRaw) nested.push({ name, plan: _compilePlan(raw) });
+  for (const [name, raw] of nestedRaw) nested.push({ name, plan: _compilePlan(raw, -1) });
   const listMap = listMapRaw.map(({ name, inner, fn }) => ({
     name, inner, fn,
-    plan: _planDraft(_STRUCT_FIELDS[inner], fn),
+    plan: _planDraft(_STRUCT_FIELDS[inner], fn).plan,
   }));
-  return { leaf, nested, listMap };
+  return { leaf, nested, listMap, outerListMapPos };
 }
 function _planDraft(fields, fn) {
-  return _compilePlan(_planRaw(fields, fn));
+  const raw = _planRaw(fields, fn);
+  return { plan: _compilePlan(raw.selected, raw.outerListMapIdx) };
 }
 function _getDraftPlan(fields, fn) {
   let perFields = _DRAFT_PLAN_CACHE.get(fields);
   if (!perFields) { perFields = new WeakMap(); _DRAFT_PLAN_CACHE.set(fields, perFields); }
   let plan = perFields.get(fn);
-  if (!plan) { plan = _planDraft(fields, fn); perFields.set(fn, plan); }
+  if (!plan) { plan = _planDraft(fields, fn).plan; perFields.set(fn, plan); }
   return plan;
 }
 function _materializeDraft(cpp, fields, plan) {
@@ -273,6 +340,15 @@ function _materializeDraft(cpp, fields, plan) {
 }
 function _runDraft(cpp, fields, fn) {
   const plan = _getDraftPlan(fields, fn);
+  if (plan.outerListMapPos >= 0 && plan.listMap.length > 0) {
+    const item = plan.listMap[plan.outerListMapPos];
+    const desc = fields[item.name];
+    if (desc && _STRUCT_FIELDS[item.inner] && item.plan.nested.length === 0 && item.plan.listMap.length === 0) {
+      const innerFields = _STRUCT_FIELDS[item.inner];
+      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf, item.fn);
+      if (fast !== null) return fast;
+    }
+  }
   if (plan.nested.length === 0 && plan.listMap.length === 0) {
     return fn(_capnwasmPick(cpp, fields, plan.leaf));
   }
