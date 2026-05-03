@@ -166,8 +166,12 @@ await writeFile(resolve(metricsDir, "build.json"), JSON.stringify({
       capnweb: capnwebBr,
     },
     ratios: {
-      capnwasmReaderToCapnwebGzip: capnwasmReaderGzip / capnwebGzip,
-      capnwasmReaderToCapnwebBrotli: capnwasmReaderBr / capnwebBr,
+      // Vanity ratios for capnwasm/reader vs capnweb were intentionally
+      // dropped: they are not the same kind of artifact (capnweb is a full
+      // RPC client; capnwasm/reader is a decoder that needs a transport you
+      // bring yourself). The size is still emitted above for transparency,
+      // but no homepage row should compare reader to capnweb on bytes —
+      // see the docs for the longer framing.
       capnwasmRpcToCapnwebGzip: capnwasmRpcGzip / capnwebGzip,
     },
   },
