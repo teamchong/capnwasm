@@ -43,6 +43,15 @@ const MODULES = [
   "router.mjs",            // optional: federation gateway
 ];
 
+// reader.mjs gets a bundle pass so esbuild tree-shakes the unused
+// LazyReader class out of cpp_loader.mjs. The reader-only path doesn't
+// reach LazyReader, but standalone-minified cpp_loader.mjs still ships
+// it. With reader.mjs as the bundle entry, esbuild includes only what
+// the static import graph reaches.
+const BUNDLED_MODULES = [
+  { entry: "reader.mjs" },  // dist/reader.mjs (capnwasm/reader entry point)
+];
+
 await mkdir(DIST_DIR, { recursive: true });
 
 let totalRaw = 0, totalGz = 0, totalBr = 0;
@@ -112,6 +121,58 @@ for (const mod of MODULES) {
   const br = brotliCompressSync(code).length;
   totalRaw += raw; totalGz += gz; totalBr += br;
   console.log(`  ${mod.padEnd(22)} raw=${String(raw).padStart(6)}  gz=${String(gz).padStart(5)}  br=${String(br).padStart(5)}`);
+}
+
+// Bundled modules: esbuild walks the static import graph from the entry
+// point, collects only the symbols that are reachable, and tree-shakes
+// the rest. For dist/reader.mjs that means LazyReader (and its
+// supporting encodeName cache) gets dropped because the reader-only
+// path never imports them.
+for (const { entry } of BUNDLED_MODULES) {
+  const result = await esbuild.build({
+    entryPoints: [resolve(JS_DIR, entry)],
+    outfile: resolve(DIST_DIR, entry),
+    bundle: true,
+    format: "esm",
+    target: "es2022",
+    minify: true,
+    write: false,
+    sourcemap: "external",
+    treeShaking: true,
+  });
+  let code = "";
+  let map = "";
+  for (const f of result.outputFiles) {
+    if (f.path.endsWith(".map")) map = f.text;
+    else code = f.text;
+  }
+  // Run terser as a second pass on the bundled output for the same reason
+  // the per-file MODULES loop does.
+  try {
+    const terserResult = await terserMinify(code, {
+      module: true,
+      compress: { passes: 3 },
+      mangle: true,
+      ecma: 2022,
+      sourceMap: { content: map || undefined },
+    });
+    if (terserResult.code) {
+      const gzEsb = gzipSync(code, { level: 9 }).length;
+      const gzTer = gzipSync(terserResult.code, { level: 9 }).length;
+      if (gzTer < gzEsb) {
+        code = terserResult.code;
+        if (terserResult.map) map = String(terserResult.map);
+      }
+    }
+  } catch { /* keep esbuild output */ }
+  const outPath = resolve(DIST_DIR, entry);
+  await writeFile(outPath, code);
+  if (map) await writeFile(outPath + ".map", map);
+  const raw = Buffer.byteLength(code, "utf8");
+  const gz = gzipSync(code, { level: 9 }).length;
+  const br = brotliCompressSync(code).length;
+  totalRaw += raw; totalGz += gz; totalBr += br;
+  console.log(`  ${entry.padEnd(22)} raw=${String(raw).padStart(6)}  gz=${String(gz).padStart(5)}  br=${String(br).padStart(5)}  (bundled)`);
 }
 
 console.log(`  ${"TOTAL".padEnd(22)} raw=${String(totalRaw).padStart(6)}  gz=${String(totalGz).padStart(5)}  br=${String(totalBr).padStart(5)}`);

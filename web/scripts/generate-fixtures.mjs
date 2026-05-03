@@ -15,7 +15,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gzipSync } from "node:zlib";
+import { gzipSync, brotliCompressSync, constants as zlibConstants } from "node:zlib";
 import { load } from "../../dist/inlined.mjs";
 import { buildUser } from "../src/playground/users.capnp.gen.mjs";
 import { serialize as cwbSerialize } from "capnweb";
@@ -100,6 +100,15 @@ async function gzipSize(path) {
   return gzipSync(await readFile(path), { level: 9 }).length;
 }
 
+// brotli at quality 11 — the size CDNs use for static assets (Cloudflare,
+// Vercel, etc serve precompressed wasm at this level for first-load
+// budgets that matter to bundle-size dashboards).
+async function brotliSize(path) {
+  return brotliCompressSync(await readFile(path), {
+    params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11 },
+  }).length;
+}
+
 const root = resolve(HERE, "..", "..");
 
 // Three bundle shapes for the homepage / docs to surface separately.
@@ -110,18 +119,32 @@ const root = resolve(HERE, "..", "..");
 //   browser: js/browser.mjs + cpp_loader + capnp.slim.wasm — adds the full
 //            wasm (builder + RPC + lazy reader + tape codec).
 //   rpc: browser bundle + the RPC client JS.
+// reader.mjs is bundled (single file with CapnCpp inlined; LazyReader is
+// tree-shaken out by esbuild). Browser bundle (cpp_loader.mjs + browser.mjs)
+// is the legacy two-file shape and still imported separately by the full
+// capnwasm/browser export.
 const cppLoaderGzip = await gzipSize(resolve(root, "dist", "cpp_loader.mjs"));
+const cppLoaderBr = await brotliSize(resolve(root, "dist", "cpp_loader.mjs"));
 const capnwasmReaderGzip =
-  await gzipSize(resolve(root, "js", "reader.mjs")) +
-  cppLoaderGzip +
+  await gzipSize(resolve(root, "dist", "reader.mjs")) +
   await gzipSize(resolve(root, "dist", "capnp.reader.wasm"));
+const capnwasmReaderBr =
+  await brotliSize(resolve(root, "dist", "reader.mjs")) +
+  await brotliSize(resolve(root, "dist", "capnp.reader.wasm"));
 const capnwasmBrowserGzip =
   await gzipSize(resolve(root, "dist", "browser.mjs")) +
   await gzipSize(resolve(root, "dist", "capnp.slim.wasm"));
+const capnwasmBrowserBr =
+  await brotliSize(resolve(root, "dist", "browser.mjs")) +
+  await brotliSize(resolve(root, "dist", "capnp.slim.wasm"));
 const capnwasmRpcGzip =
   capnwasmBrowserGzip +
   await gzipSize(resolve(root, "dist", "rpc.mjs"));
+const capnwasmRpcBr =
+  capnwasmBrowserBr +
+  await brotliSize(resolve(root, "dist", "rpc.mjs"));
 const capnwebGzip = await gzipSize(resolve(root, "web", "node_modules", "capnweb", "dist", "index.js"));
+const capnwebBr = await brotliSize(resolve(root, "web", "node_modules", "capnweb", "dist", "index.js"));
 
 const metricsDir = resolve(HERE, "..", "public", "metrics");
 await mkdir(metricsDir, { recursive: true });
@@ -136,9 +159,16 @@ await writeFile(resolve(metricsDir, "build.json"), JSON.stringify({
       capnwasmRpc: capnwasmRpcGzip,
       capnweb: capnwebGzip,
     },
+    brotli: {
+      capnwasmReader: capnwasmReaderBr,
+      capnwasmBrowser: capnwasmBrowserBr,
+      capnwasmRpc: capnwasmRpcBr,
+      capnweb: capnwebBr,
+    },
     ratios: {
-      capnwasmReaderToCapnweb: capnwasmReaderGzip / capnwebGzip,
-      capnwasmRpcToCapnweb: capnwasmRpcGzip / capnwebGzip,
+      capnwasmReaderToCapnwebGzip: capnwasmReaderGzip / capnwebGzip,
+      capnwasmReaderToCapnwebBrotli: capnwasmReaderBr / capnwebBr,
+      capnwasmRpcToCapnwebGzip: capnwasmRpcGzip / capnwebGzip,
     },
   },
 }, null, 2) + "\n");

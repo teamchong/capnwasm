@@ -19,7 +19,7 @@
     },
     "./reader": {
       "development": "./js/reader.mjs",
-      "default": "./js/reader.mjs"
+      "default": "./dist/reader.mjs"
     },
     "./capnp.reader.wasm": "./dist/capnp.reader.wasm",
     "./tape": {
@@ -136,6 +136,7 @@
   },
   "devDependencies": {
     "capnweb": "^0.7.0",
+    "esbuild": "^0.28.0",
     "playwright": "^1.56.1",
     "terser": "^5.46.2",
     "wrangler": "^4.87.0"
