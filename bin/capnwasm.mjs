@@ -876,19 +876,139 @@ function _getPickRequest(fields, names) {
 // Compiled once per (fields, names) pair, then cached on the same entry
 // the request bytes live on. Roughly halves JS materialization cost vs the
 // generic switch loop on the list-1000 user-row workload.
-function _compileListDecoder(descs, names, applyMapFn) {
+function _compileListDecoder(descs, names, applyMapFn, filter) {
   const cols = descs.length;
   const rowStride = cols * 4;
+  // Validate filter: predicate field must be in projected names AND of a type
+  // we know how to fast-check from a single header. For now we only support
+  // boolean fields (cell is 0 or 1). If unsupported, drop filter — decoder
+  // becomes the no-filter variant and the caller's outer fn re-runs filter
+  // in JS. Correctness preserved.
+  let filterColIdx = -1;
+  if (filter) {
+    filterColIdx = names.indexOf(filter.field);
+    if (filterColIdx < 0 || (descs[filterColIdx] && descs[filterColIdx].type !== "bool")) {
+      filter = null;
+      filterColIdx = -1;
+    }
+  }
+  // Identify runs of consecutive text fields (>=2) that share a contiguous
+  // payload region — i.e. no payload-emitting field appears between them.
+  // For such runs we emit ONE TextDecoder.decode call per row covering the
+  // entire payload, then substring() per field. V8's substring on a freshly
+  // decoded string is cheap, while each TextDecoder.decode has setup cost.
+  // Measured on the 4-field user-row workload: this halves text-decode time
+  // and shaves ~30% off list-1000 materialization.
+  const PAYLOAD_BREAK = new Set(["uint64", "int64", "float64", "data"]);
+  const isTextRunMember = (i) => descs[i] && descs[i].type === "text";
+  const textBatch = new Array(cols).fill(null);
+  for (let i = 0; i < cols; i++) {
+    if (!isTextRunMember(i) || textBatch[i] !== null) continue;
+    let j = i + 1;
+    while (j < cols) {
+      if (isTextRunMember(j)) { j++; continue; }
+      if (PAYLOAD_BREAK.has(descs[j] && descs[j].type)) break;
+      j++;
+    }
+    // j is one past the last index that belongs to this run, considering
+    // non-payload-emitting fields between text fields (small scalars / bool).
+    // Filter run members back to actual text indices for emission.
+    const members = [];
+    for (let k = i; k < j; k++) if (isTextRunMember(k)) members.push(k);
+    if (members.length >= 2) {
+      // Tag each member with a shared run id and its position in the run.
+      const runId = i;
+      for (let p = 0; p < members.length; p++) {
+        textBatch[members[p]] = { runId, pos: p, total: members.length, members };
+      }
+    }
+  }
   const out = [];
   out.push(\`const TD = H.TD;\`);
   out.push(\`const F32U = H.F32U, F32F = H.F32F, F64U = H.F64U, F64F = H.F64F;\`);
-  out.push(\`const arr = new Array(rows);\`);
+  out.push(\`if (start === undefined) start = 0;\`);
+  out.push(\`if (limit === undefined) limit = rows;\`);
+  out.push(\`if (limit > rows) limit = rows;\`);
+  out.push(\`if (start > limit) start = limit;\`);
+  out.push(\`const arr = new Array(limit - start);\`);
+  if (filter) out.push(\`let arrIdx = 0;\`);
   out.push(\`let readPos = 8 + rows * \${rowStride};\`);
-  out.push(\`for (let row = 0; row < rows; row++) {\`);
+  // Skip phase: when start > 0 we walk rows [0, start) advancing readPos by
+  // the payload size of each row but never materializing. Each text/data
+  // field contributes its header value (or 0 for missing); each
+  // u64/i64/f64 contributes 8; smaller scalars and booleans contribute 0.
+  // Specialized at codegen time so V8 sees a straight-line skip body.
+  out.push(\`for (let row = 0; row < start; row++) {\`);
   out.push(\`  const cellBase = 8 + row * \${rowStride};\`);
   for (let col = 0; col < cols; col++) {
     const d = descs[col];
     const headerOff = \`cellBase + \${col * 4}\`;
+    if (d.type === "text" || d.type === "data") {
+      out.push(\`  { const _h = dv.getUint32(\${headerOff}, true); if (_h !== 0xFFFFFFFF) readPos += _h; }\`);
+    } else if (d.type === "uint64" || d.type === "int64" || d.type === "float64") {
+      out.push(\`  readPos += 8;\`);
+    }
+  }
+  out.push(\`}\`);
+  out.push(\`for (let row = start; row < limit; row++) {\`);
+  out.push(\`  const cellBase = 8 + row * \${rowStride};\`);
+  if (filter) {
+    // Predicate check: a single u32 read at the predicate field's cell
+    // header. For boolean fields the C++ projector writes 0 or 1.
+    const predRead = \`dv.getUint32(cellBase + \${filterColIdx * 4}, true)\`;
+    const predCmp = filter.kind === "truthy" ? "=== 0" : "!== 0";
+    out.push(\`  if (\${predRead} \${predCmp}) {\`);
+    // Same skip body as the slice-skip phase: walk every payload-emitting
+    // field and advance readPos by its byte size.
+    for (let col = 0; col < cols; col++) {
+      const d = descs[col];
+      if (d.type === "text" || d.type === "data") {
+        out.push(\`    { const _h = dv.getUint32(cellBase + \${col * 4}, true); if (_h !== 0xFFFFFFFF) readPos += _h; }\`);
+      } else if (d.type === "uint64" || d.type === "int64" || d.type === "float64") {
+        out.push(\`    readPos += 8;\`);
+      }
+    }
+    out.push(\`    continue;\`);
+    out.push(\`  }\`);
+  }
+  for (let col = 0; col < cols; col++) {
+    const d = descs[col];
+    const headerOff = \`cellBase + \${col * 4}\`;
+    const batch = textBatch[col];
+    if (batch && batch.pos === 0) {
+      // Emit the batched decode at the first member of the run. All
+      // member _v* locals are produced here, so subsequent text members
+      // skip individual emission below.
+      out.push(\`  let \${batch.members.map((m) => \`_v\${m}\`).join(", ")};\`);
+      out.push(\`  {\`);
+      for (let p = 0; p < batch.total; p++) {
+        const m = batch.members[p];
+        out.push(\`    const _h\${m} = dv.getUint32(cellBase + \${m * 4}, true);\`);
+        out.push(\`    const _b\${m} = _h\${m} === 0xFFFFFFFF ? 0 : _h\${m};\`);
+      }
+      const totalExpr = batch.members.map((m) => \`_b\${m}\`).join(" + ");
+      out.push(\`    const _total = \${totalExpr};\`);
+      out.push(\`    const _blob = _total === 0 ? "" : TD.decode(u8.subarray(out + readPos, out + readPos + _total));\`);
+      // Walk substrings.
+      let cumExpr = "0";
+      for (let p = 0; p < batch.total; p++) {
+        const m = batch.members[p];
+        const startExpr = cumExpr;
+        const endExpr = \`\${cumExpr} + _b\${m}\`;
+        out.push(
+          \`    _v\${m} = _h\${m} === 0xFFFFFFFF ? undefined : _h\${m} === 0 ? "" : _blob.substring(\${startExpr}, \${endExpr});\`,
+        );
+        cumExpr = endExpr;
+      }
+      out.push(\`    readPos += _total;\`);
+      out.push(\`  }\`);
+      continue;
+    }
+    if (batch) {
+      // Subsequent member of an already-emitted run; nothing to do here
+      // because the batch block produced its _v* local.
+      continue;
+    }
     switch (d.type) {
       case "text":
         out.push(\`  let _v\${col};\`);
@@ -949,14 +1069,16 @@ function _compileListDecoder(descs, names, applyMapFn) {
   // When applyMapFn is set, the user's per-row callback consumes the
   // literal in place; we never store the raw row object in arr.
   const litParts = names.map((n, i) => \`\${JSON.stringify(n)}: _v\${i}\`);
+  const targetExpr = filter ? "arr[arrIdx++]" : "arr[row - start]";
   if (applyMapFn) {
-    out.push(\`  arr[row] = mapFn({ \${litParts.join(", ")} });\`);
+    out.push(\`  \${targetExpr} = mapFn({ \${litParts.join(", ")} });\`);
   } else {
-    out.push(\`  arr[row] = { \${litParts.join(", ")} };\`);
+    out.push(\`  \${targetExpr} = { \${litParts.join(", ")} };\`);
   }
   out.push(\`}\`);
+  if (filter) out.push(\`arr.length = arrIdx;\`);
   out.push(\`return arr;\`);
-  return new Function("u8", "dv", "out", "rows", "H", "mapFn", out.join("\\n"));
+  return new Function("u8", "dv", "out", "rows", "H", "mapFn", "start", "limit", out.join("\\n"));
 }
 
 function _capnwasmPick(cpp, fields, names) {`);
@@ -1027,9 +1149,16 @@ function _capnwasmPick(cpp, fields, names) {`);
   // is supplied (the outer-callback short-circuit path, see _runDraft), the
   // specialized decoder applies it per row inside the unrolled loop — no
   // intermediate row-object survives the loop body, no second .map pass.
-  lines.push(`function _capnwasmListProject(cpp, ptrIndex, fields, names, mapFn) {`);
+  // bounds = optional [start, limit] from a slice-fused outer callback. When
+  // present, the decoder skips the first `start` rows (walking their headers
+  // to advance readPos but not materializing) and stops after `limit` rows.
+  lines.push(`function _capnwasmListProject(cpp, ptrIndex, fields, names, mapFn, bounds, filter) {`);
   lines.push(`  const exp = cpp._exports;`);
   lines.push(`  if (typeof exp.cpp_any_list_project !== "function") return null;`);
+  // Filter pushdown can only fuse if the predicate's field is already in the
+  // projected names. Otherwise C++ wouldn't have read it. Bail to the safe
+  // path so the materialize fallback still runs the user's filter.
+  lines.push(`  if (filter && names.indexOf(filter.field) < 0) return null;`);
   lines.push(`  const entry = _getPickRequest(fields, names);`);
   lines.push(`  cpp._u8.set(entry.req, cpp._auxPtr);`);
   lines.push(`  const written = exp.cpp_any_list_project(ptrIndex, entry.req.length);`);
@@ -1040,17 +1169,25 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`  const rows = dv.getUint32(0, true);`);
   lines.push(`  const cols = dv.getUint32(4, true);`);
   lines.push(`  if (cols !== names.length) return null;`);
-  // Two specialized decoders per (fields, names) entry: one builds plain
-  // row objects, one wraps each row through mapFn. Compiled lazily because
-  // most callers only need one variant.
-  lines.push(`  if (mapFn) {`);
-  lines.push(`    let mdec = entry.listDecoderMapped;`);
-  lines.push(`    if (!mdec) { mdec = _compileListDecoder(entry.descs, names, true); entry.listDecoderMapped = mdec; }`);
-  lines.push(`    return mdec(u8, dv, out, rows, _LIST_HELPERS, mapFn);`);
+  lines.push(`  let start = 0, limit = rows;`);
+  lines.push(`  if (bounds) {`);
+  lines.push(`    start = bounds[0] | 0;`);
+  lines.push(`    if (start > rows) start = rows;`);
+  lines.push(`    const requested = bounds[1];`);
+  lines.push(`    if (requested !== Infinity) {`);
+  lines.push(`      const max = (requested | 0);`);
+  lines.push(`      if (max < limit - start) limit = start + max;`);
+  lines.push(`    }`);
   lines.push(`  }`);
-  lines.push(`  let dec = entry.listDecoder;`);
-  lines.push(`  if (!dec) { dec = _compileListDecoder(entry.descs, names, false); entry.listDecoder = dec; }`);
-  lines.push(`  return dec(u8, dv, out, rows, _LIST_HELPERS);`);
+  // Decoder cache is now keyed by (applyMapFn, filterKind, filterField). All
+  // four combinations share the same _PICK_REQ_CACHE entry; compiling each
+  // is lazy so most callers pay for only one variant.
+  lines.push(`  if (!entry.listDecoders) entry.listDecoders = new Map();`);
+  lines.push(`  const filterKey = filter ? filter.kind + ":" + filter.field : "";`);
+  lines.push(`  const decKey = (mapFn ? "m" : "p") + "|" + filterKey;`);
+  lines.push(`  let dec = entry.listDecoders.get(decKey);`);
+  lines.push(`  if (!dec) { dec = _compileListDecoder(entry.descs, names, !!mapFn, filter); entry.listDecoders.set(decKey, dec); }`);
+  lines.push(`  return dec(u8, dv, out, rows, _LIST_HELPERS, mapFn, start, limit);`);
   lines.push(`}`);
   lines.push("");
   lines.push(`const _STRUCT_FIELDS = Object.create(null);`);
@@ -1059,11 +1196,60 @@ function _capnwasmPick(cpp, fields, names) {`);
   // expose a .map(childFn) that defers childFn — the planner records
   // childFn alongside the path; the compile step turns that into a fully
   // resolved sub-plan.
-  // Marker so we can identify "outer callback returns r.X.map(childFn)"
-  // patterns. The planner's listMap.map() returns an array tagged with this
-  // symbol; if the user's outer callback's return value carries the same
-  // marker we know the outer is shape-preserving and can short-circuit.
+  // Markers for outer-callback shape detection. The planner's listMap.map()
+  // returns an array tagged with _LIST_MAP_TAG; chained .slice(0, K) returns
+  // a fresh array carrying the same _LIST_MAP_TAG plus a _LIST_MAP_SLICE_TAG
+  // recording the bounds. _runDraft uses these to decide whether to skip the
+  // outer-callback re-run AND optionally pass a row limit to the C++ tape
+  // decoder. Anything else (.filter/.reduce/.map again) drops both tags
+  // because the chained operation produces a fresh untagged array.
   lines.push(`const _LIST_MAP_TAG = Symbol("_capnwasm_listMap");`);
+  lines.push(`const _LIST_MAP_SLICE_TAG = Symbol("_capnwasm_listMapSlice");`);
+  // Build a tagged sentinel array carrying the listMap idx and an optional
+  // [start, limit] pair. We override .slice on the array so a chain of the
+  // form `users.map(fn).slice(0, 50)` recursively yields a fresh tagged
+  // sentinel that records the bound. Bounds are normalized: negative or
+  // non-integer args bail by returning a plain Array.prototype.slice result
+  // (no tag) so the caller's outer callback no longer matches the
+  // short-circuit and falls through to the safe path.
+  lines.push(`function _makeListMapTag(idx, slice) {`);
+  lines.push(`  const tag = [];`);
+  lines.push(`  tag[_LIST_MAP_TAG] = idx;`);
+  lines.push(`  if (slice) tag[_LIST_MAP_SLICE_TAG] = slice;`);
+  lines.push(`  Object.defineProperty(tag, "slice", { value: function(start, end) {`);
+  lines.push(`    const s = (start === undefined) ? 0 : start;`);
+  lines.push(`    if (!Number.isInteger(s) || s < 0) return Array.prototype.slice.call(this, start, end);`);
+  lines.push(`    let limit = Infinity;`);
+  lines.push(`    if (end !== undefined) {`);
+  lines.push(`      if (!Number.isInteger(end) || end < s) return Array.prototype.slice.call(this, start, end);`);
+  lines.push(`      limit = end - s;`);
+  lines.push(`    }`);
+  lines.push(`    const prevSlice = this[_LIST_MAP_SLICE_TAG];`);
+  lines.push(`    const prevStart = prevSlice ? prevSlice[0] : 0;`);
+  lines.push(`    const prevLimit = prevSlice ? prevSlice[1] : Infinity;`);
+  lines.push(`    const newStart = prevStart + s;`);
+  lines.push(`    const newLimit = Math.min(prevLimit - s, limit);`);
+  lines.push(`    if (newLimit < 0) return [];`);
+  lines.push(`    return _makeListMapTag(idx, [newStart, newLimit]);`);
+  lines.push(`  }});`);
+  lines.push(`  return tag;`);
+  lines.push(`}`);
+  // Strict-whitelist predicate parser. Only recognizes the safest pattern:
+  //   (u) => u.field        / u => u.field        (truthy on one field)
+  //   (u) => !u.field                              (falsy)
+  // Anything else (template strings, ternaries, nested expressions,
+  // multi-statement bodies) returns null so the planner falls back to the
+  // safe materialize-then-callback path. Source-text matching is fragile
+  // by nature; the safety net is the bailout, not the regex.
+  lines.push(`function _parseSimplePredicate(fn) {`);
+  lines.push(`  let src;`);
+  lines.push(`  try { src = Function.prototype.toString.call(fn); } catch (_) { return null; }`);
+  lines.push(`  const truthyRe = /^\\s*(?:\\(\\s*([a-zA-Z_$][\\w$]*)\\s*\\)|([a-zA-Z_$][\\w$]*))\\s*=>\\s*(\\1|\\2)\\.([a-zA-Z_$][\\w$]*)\\s*;?\\s*$/;`);
+  lines.push(`  const falsyRe = /^\\s*(?:\\(\\s*([a-zA-Z_$][\\w$]*)\\s*\\)|([a-zA-Z_$][\\w$]*))\\s*=>\\s*!\\s*(\\1|\\2)\\.([a-zA-Z_$][\\w$]*)\\s*;?\\s*$/;`);
+  lines.push(`  let m = truthyRe.exec(src); if (m) return { kind: "truthy", field: m[4] };`);
+  lines.push(`  m = falsyRe.exec(src); if (m) return { kind: "falsy", field: m[4] };`);
+  lines.push(`  return null;`);
+  lines.push(`}`);
   lines.push(`function _planRaw(fields, fn) {`);
   lines.push(`  const selected = [];`);
   lines.push(`  const seen = new Set();`);
@@ -1075,14 +1261,35 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`      const nextPath = path.concat(name);`);
   lines.push(`      const list = /^List\\(([^)]+)\\)$/.exec(desc.type);`);
   lines.push(`      if (list && _STRUCT_FIELDS[list[1]]) {`);
-  lines.push(`        return { map(childFn) {`);
+  // The list proxy supports .map (always), and .filter (whitelisted preds
+  // only). When .filter receives an unrecognized predicate we still RECORD
+  // the listMap from the chained .map but return an UNTAGGED array, so the
+  // outer-callback short-circuit fails and _materializeDraft runs the user
+  // callback against a fully-populated POJO. This keeps semantic correctness
+  // for arbitrary filter predicates while only fusing the safe ones.
+  lines.push(`        const recordMap = (childFn, filter) => {`);
   lines.push(`          const idx = selected.length;`);
-  lines.push(`          selected.push({ kind: "listMap", path: nextPath, inner: list[1], fn: childFn });`);
-  // Tag the planner's .map() return so an outer callback of the form
-  // `(r) => r.X.map(childFn)` is identifiable: its return value will
-  // be this exact array (any chained .filter/.map produces a new array).
-  lines.push(`          const tag = []; tag[_LIST_MAP_TAG] = idx; return tag;`);
-  lines.push(`        } };`);
+  lines.push(`          const entry = { kind: "listMap", path: nextPath, inner: list[1], fn: childFn };`);
+  lines.push(`          if (filter) entry.filter = filter;`);
+  lines.push(`          selected.push(entry);`);
+  lines.push(`          return idx;`);
+  lines.push(`        };`);
+  lines.push(`        const buildFusedProxy = (filter) => ({`);
+  lines.push(`          map(childFn) {`);
+  lines.push(`            const idx = recordMap(childFn, filter);`);
+  lines.push(`            return _makeListMapTag(idx, null);`);
+  lines.push(`          },`);
+  lines.push(`          filter(predicateFn) {`);
+  lines.push(`            const parsed = _parseSimplePredicate(predicateFn);`);
+  lines.push(`            if (parsed) return buildFusedProxy(parsed);`);
+  lines.push(`            return buildSafeProxy();`);
+  lines.push(`          }`);
+  lines.push(`        });`);
+  lines.push(`        const buildSafeProxy = () => ({`);
+  lines.push(`          map(childFn) { recordMap(childFn, null); return []; },`);
+  lines.push(`          filter() { return buildSafeProxy(); }`);
+  lines.push(`        });`);
+  lines.push(`        return buildFusedProxy(null);`);
   lines.push(`      }`);
   lines.push(`      if (_STRUCT_FIELDS[desc.type]) return make(_STRUCT_FIELDS[desc.type], nextPath);`);
   lines.push(`      const key = nextPath.join(".");`);
@@ -1092,13 +1299,17 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`  });`);
   lines.push(`  const result = fn(make(fields, []));`);
   // Detect outer-callback short-circuit pattern. If the outer callback
-  // returns exactly the planner's tagged array, we know its shape is
-  // identical to the listMap result — at runtime we can apply childFn
-  // during the C++ row-tape decode and skip the outer-callback re-run
-  // entirely. Saves N row-object allocations + an extra .map iteration.
+  // returns the planner's tagged array (or a slice tag derived from it),
+  // we can apply childFn during the C++ row-tape decode and optionally
+  // bound the rows. Anything else falls through to the safe materialize
+  // path.
   lines.push(`  let outerListMapIdx = -1;`);
-  lines.push(`  if (result && typeof result === "object" && _LIST_MAP_TAG in result) outerListMapIdx = result[_LIST_MAP_TAG];`);
-  lines.push(`  return { selected, outerListMapIdx };`);
+  lines.push(`  let outerSlice = null;`);
+  lines.push(`  if (result && typeof result === "object" && _LIST_MAP_TAG in result) {`);
+  lines.push(`    outerListMapIdx = result[_LIST_MAP_TAG];`);
+  lines.push(`    if (_LIST_MAP_SLICE_TAG in result) outerSlice = result[_LIST_MAP_SLICE_TAG];`);
+  lines.push(`  }`);
+  lines.push(`  return { selected, outerListMapIdx, outerSlice };`);
   lines.push(`}`);
   // Compile a recorded plan into a structured form: separate leaf-field,
   // nested-struct, and list-of-struct lists. Nested entries have their own
@@ -1106,13 +1317,14 @@ function _capnwasmPick(cpp, fields, names) {`);
   // so the materialize loop never has to re-categorize or re-plan per call.
   // The tradeoff: the compiled plan lives in a WeakMap keyed by (FIELDS, fn)
   // so a stable callback only ever pays the planning cost once.
-  lines.push(`function _compilePlan(selected, outerListMapIdx) {`);
+  lines.push(`function _compilePlan(selected, outerListMapIdx, outerSlice) {`);
   lines.push(`  const leaf = [];`);
   lines.push(`  const nestedRaw = new Map();`);
   lines.push(`  const listMapRaw = [];`);
   // outerListMapIdx (if set) refers to an index in `selected`. Track which
   // entry in `listMapRaw` corresponds so the runtime can find the matching
-  // top-level listMap to short-circuit against.
+  // top-level listMap to short-circuit against. outerSlice (if non-null)
+  // is [start, limit] from the planner's slice-tagged sentinel.
   lines.push(`  let outerListMapPos = -1;`);
   lines.push(`  for (let i = 0; i < selected.length; i++) {`);
   lines.push(`    const item = selected[i];`);
@@ -1122,7 +1334,9 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`      leaf.push(head);`);
   lines.push(`    } else if (item.kind === "listMap" && item.path.length === 1) {`);
   lines.push(`      if (i === outerListMapIdx) outerListMapPos = listMapRaw.length;`);
-  lines.push(`      listMapRaw.push({ name: head, inner: item.inner, fn: item.fn });`);
+  lines.push(`      const lmEntry = { name: head, inner: item.inner, fn: item.fn };`);
+  lines.push(`      if (item.filter) lmEntry.filter = item.filter;`);
+  lines.push(`      listMapRaw.push(lmEntry);`);
   lines.push(`    } else {`);
   lines.push(`      let entry = nestedRaw.get(head);`);
   lines.push(`      if (!entry) { entry = []; nestedRaw.set(head, entry); }`);
@@ -1132,16 +1346,16 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`    }`);
   lines.push(`  }`);
   lines.push(`  const nested = [];`);
-  lines.push(`  for (const [name, raw] of nestedRaw) nested.push({ name, plan: _compilePlan(raw, -1) });`);
-  lines.push(`  const listMap = listMapRaw.map(({ name, inner, fn }) => ({`);
-  lines.push(`    name, inner, fn,`);
+  lines.push(`  for (const [name, raw] of nestedRaw) nested.push({ name, plan: _compilePlan(raw, -1, null) });`);
+  lines.push(`  const listMap = listMapRaw.map(({ name, inner, fn, filter }) => ({`);
+  lines.push(`    name, inner, fn, filter,`);
   lines.push(`    plan: _planDraft(_STRUCT_FIELDS[inner], fn).plan,`);
   lines.push(`  }));`);
-  lines.push(`  return { leaf, nested, listMap, outerListMapPos };`);
+  lines.push(`  return { leaf, nested, listMap, outerListMapPos, outerSlice };`);
   lines.push(`}`);
   lines.push(`function _planDraft(fields, fn) {`);
   lines.push(`  const raw = _planRaw(fields, fn);`);
-  lines.push(`  return { plan: _compilePlan(raw.selected, raw.outerListMapIdx) };`);
+  lines.push(`  return { plan: _compilePlan(raw.selected, raw.outerListMapIdx, raw.outerSlice) };`);
   lines.push(`}`);
   lines.push(`function _getDraftPlan(fields, fn) {`);
   lines.push(`  let perFields = _DRAFT_PLAN_CACHE.get(fields);`);
@@ -1219,7 +1433,7 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`    const desc = fields[item.name];`);
   lines.push(`    if (desc && _STRUCT_FIELDS[item.inner] && item.plan.nested.length === 0 && item.plan.listMap.length === 0) {`);
   lines.push(`      const innerFields = _STRUCT_FIELDS[item.inner];`);
-  lines.push(`      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf, item.fn);`);
+  lines.push(`      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf, item.fn, plan.outerSlice, item.filter);`);
   lines.push(`      if (fast !== null) return fast;`);
   lines.push(`    }`);
   lines.push(`  }`);
