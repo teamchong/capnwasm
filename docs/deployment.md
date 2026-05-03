@@ -156,7 +156,7 @@ console.log(m.snapshot());
 
 For OpenTelemetry / Prometheus, wire `onMetric` directly to your client library. The event shape maps cleanly to spans (start/end pairs) and counters/histograms.
 
-For wire-level inspection. *what bytes are flowing*. Load `https://teamchong.github.io/capnwasm/inspect.js` and call `cw.inspect(framedBytes)`. Documented in [`docs/inspect.md`](inspect.md).
+For wire-level inspection. *what bytes are flowing*. Load `https://capnwasm.teamchong.net/inspect.js` and call `cw.inspect(framedBytes)`. Documented in [`docs/inspect.md`](inspect.md).
 
 ## What can go wrong
 

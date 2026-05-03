@@ -265,7 +265,7 @@ async function runAll() {
     summary.innerHTML = `<strong>capnwasm wins ${wins} of 3</strong>. Burst ${(burstM.cwb / burstM.capnp).toFixed(2)}×, pipeline ${(pipeM.cwb / pipeM.capnp).toFixed(2)}×, 64 KB blob ${(blobM.cwb / blobM.capnp).toFixed(2)}×. Wire bytes for the blob: ~${fmtBytes(wireCapnp)} capnwasm vs ~${fmtBytes(wireCwb)} capnweb.`;
   } else {
     summary.className = "lose";
-    summary.innerHTML = `capnweb wins ${3 - wins} of 3 on this run &mdash; burst, pipeline, blob numbers fluctuate with localhost RTT. Try a few iterations or a slower link to see the gap widen on the bytes-bound workload.`;
+    summary.innerHTML = `capnweb wins ${3 - wins} of 3 on this run &mdash; burst, pipeline, blob numbers fluctuate with local/same-origin RTT. Try a few iterations or a slower link to see the gap widen on the bytes-bound workload.`;
   }
   status.textContent = `done — ${iters} iter (median)`;
   runBtn.disabled = false;

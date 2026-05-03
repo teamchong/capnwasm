@@ -10,7 +10,7 @@ This is what you'll use 90% of the time. Already saw the request/response in Dev
 
 ```js
 // Once per session: load the inspector
-const cw = await import("https://teamchong.github.io/capnwasm/inspect.js");
+const cw = await import("https://capnwasm.teamchong.net/inspect.js");
 
 // HTTP response body (right-click in Network panel → Copy response).
 // DevTools gives you base64 for binary bodies.
@@ -88,7 +88,7 @@ Lists, composite-element lists, and far-pointer chasing all decode automatically
 If the page you're debugging has a strict `Content-Security-Policy: script-src 'self'`, dynamic `import()` from a different origin gets blocked. Fetch as text and evaluate locally instead:
 
 ```js
-const src = await fetch("https://teamchong.github.io/capnwasm/inspect.js").then(r => r.text());
+const src = await fetch("https://capnwasm.teamchong.net/inspect.js").then(r => r.text());
 const cw = await new Function("const m={};const exports=m;" + src + "; return m")();
 cw.inspect(...);
 ```

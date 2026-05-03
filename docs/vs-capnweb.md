@@ -103,7 +103,7 @@ Time-to-first-result, fresh Node 22 process, mean of 8 runs.
 
 Earlier releases pegged capnwasm's init at ~11 ms because the loader did `instanceof Response`, which lazy-initializes Node's built-in undici fetch (~10 ms). The fix is duck-typing: never reach for `Response` unless the source is clearly a URL/string.
 
-Browser is a different story. With an empty HTTP cache the first visit pays network + streaming compile. About **20–25 ms** on a desktop with localhost-served wasm; warm reloads (V8 code-cache hit) drop to **2–4 ms**. capnweb's 21 KB JS parses in ~1–3 ms either way. So on a fresh tab capnwasm is still measurably slower because the wasm bytes are larger; once the bundle is cached, the gap is small.
+Browser is a different story. With an empty HTTP cache the first visit pays network + streaming compile; the landing page measures the current browser/host directly. Warm reloads (V8 code-cache hit) drop close to the measurement floor. capnweb's smaller JS parses quickly either way. So on a fresh tab capnwasm is still measurably slower because the wasm bytes are larger; once the bundle is cached, the gap is small.
 
 If you're optimizing for a single first request from an empty browser cache, **capnweb starts replying sooner**. In Node, in long-running processes, or after the first cache hit in the browser, the cold-start gap is gone.
 
@@ -232,7 +232,7 @@ by render, the DOM mutation, and forced layout. The
 
 `pnpm -C web dev`, open `/render-bench.html`, click Run. Numbers
 below are warm medians from one run on Apple Silicon, Chromium prod
-build, localhost (10 iter per cell). Cold is the first call after the
+build, same-origin local run (10 iter per cell). Cold is the first call after the
 transport opens. Handshake + JIT + wasm fetch all baked in.
 
 ### capnwasm wins

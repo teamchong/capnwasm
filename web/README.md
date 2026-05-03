@@ -51,12 +51,14 @@ assets binding.
 
 ## What this measures
 
-The playground fetches static files from localhost. The numbers it reports
-end up within ~3% across all three protocols because network is essentially
-free in that setup. capnwasm consistently has the smallest wire bytes
-(2x smaller for binary blobs after gzip) but can't turn that into
-a faster end-to-end time when the network has zero RTT. See `/vs-capnweb.html`
-for where each protocol actually wins under realistic conditions.
+The playground fetches static files from the same origin (Wrangler locally,
+the Worker assets binding after deploy). The numbers it reports often end up
+within a few percent across all three protocols because network is nearly free
+in that setup. capnwasm consistently has the smallest wire bytes (2x smaller
+for binary blobs after gzip) but can't always turn that into faster
+end-to-end time when RTT is near zero. See `/vs-capnweb.html` and
+`/render-bench.html` for where each protocol actually wins under realistic
+workloads.
 
 A second playground page that runs RPC over WebSocket (where capnwasm's
 batching and pipelining matter) is a follow-up.

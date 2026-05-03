@@ -199,13 +199,13 @@ Subpath imports also work standalone (`capnwasm/http-batch` alone is 1.3 KB gz, 
 **Wire inspector** for debugging. Not bundled in the package, hosted as a single file. Paste this into DevTools when you want to see decoded capnp bytes ([docs](docs/inspect.md)):
 
 ```js
-const cw = await import("https://teamchong.github.io/capnwasm/inspect.js");
+const cw = await import("https://capnwasm.teamchong.net/inspect.js");
 cw.inspect(fetch("/api/user.capnp"));   // expandable tree in the console
 ```
 
-**Live three-way playground** at [teamchong.github.io/capnwasm](https://teamchong.github.io/capnwasm/). REST/JSON vs capnweb vs capnwasm side-by-side, fetching the same fixtures and rendering to DOM in your browser. Plus a [WebSocket RPC bench](https://teamchong.github.io/capnwasm/rpc.html) that runs burst, pipelining, and 64 KB binary-echo workloads against the same Worker endpoints used after deploy. Source in [`web/`](web/). `pnpm dev` runs the Wrangler-backed local server.
+**Live three-way playground** at [capnwasm.teamchong.net](https://capnwasm.teamchong.net/). REST/JSON vs capnweb vs capnwasm side-by-side, fetching the same fixtures and rendering to DOM in your browser. Plus a [WebSocket RPC bench](https://capnwasm.teamchong.net/rpc) that runs burst, pipelining, and 64 KB binary-echo workloads against the same Worker endpoints used after deploy. Source in [`web/`](web/). `pnpm dev` runs the Wrangler-backed local server.
 
-**End-to-end render bench** at [teamchong.github.io/capnwasm/render-bench.html](https://teamchong.github.io/capnwasm/render-bench.html). Capnweb × capnwasm × WS × HTTP-batch × small/medium/large × cold/warm, all in one page. Measures the full pipeline (request → wire → decode → field reads → DOM mutation → forced layout). **Both libraries win some, lose some**: capnwasm leads on binary blobs and sparse reads, capnweb leads on re-read storms and large-list rendering. The page shows every cell. No averages, no cherry-picking. See [`docs/vs-capnweb.md`](docs/vs-capnweb.md) for the writeup or click through to the live page to run it yourself.
+**End-to-end render bench** at [capnwasm.teamchong.net/render-bench](https://capnwasm.teamchong.net/render-bench). Capnweb × capnwasm × WS × HTTP-batch × small/medium/large × cold/warm, all in one page. Measures the full pipeline (request → wire → decode → field reads → DOM mutation → forced layout). **Both libraries win some, lose some**: capnwasm leads on binary blobs and sparse reads, capnweb leads on re-read storms and large-list rendering. The page shows every cell. No averages, no cherry-picking. See [`docs/vs-capnweb.md`](docs/vs-capnweb.md) for the writeup or click through to the live page to run it yourself.
 
 For browsers, prefer `capnwasm/browser`: a tiny JS shim + a separately-fetched 33 KB `dist/capnp.slim.wasm`. No base64 inflation, and `WebAssembly.instantiateStreaming` compiles the wasm while it's still being downloaded. Add `capnwasm/typed` and one transport (`capnwasm/http-batch`, `capnwasm/http-stream`, `capnwasm/postmessage`, or the WS path via `capnwasm/rpc`) for end-to-end RPC at ~41 KB gz total.
 
@@ -252,13 +252,13 @@ Choose capnweb when:
 - You don't need wire interop with non-JS peers
 - Your hot path is **re-reading** the same payload many times after one fetch (animation loops, framework re-render). capnweb's eager-decode is pure JS reads after the first parse; capnwasm pays a wasm crossing per re-read unless the app caches.
 
-The honest framing. Neither is "the winner." Each owns a different region of the workload space. The [end-to-end render bench](https://teamchong.github.io/capnwasm/render-bench.html) puts both libraries side by side across 4 transports × 5 workloads × 3 sizes so you can see exactly which region your traffic falls into.
+The honest framing. Neither is "the winner." Each owns a different region of the workload space. The [end-to-end render bench](https://capnwasm.teamchong.net/render-bench) puts both libraries side by side across 4 transports × 5 workloads × 3 sizes so you can see exactly which region your traffic falls into.
 
 ---
 
 ## Three small helpers for the common app shape
 
-The lower-level RPC API is everything you need; these three wrap the most common patterns. [Live chat demo](https://teamchong.github.io/capnwasm/chat.html) uses all three.
+The lower-level RPC API is everything you need; these three wrap the most common patterns. [Live chat demo](https://capnwasm.teamchong.net/chat) uses all three.
 
 ```js
 import { createClient, subscribeQuery, optimistic } from "capnwasm/client";

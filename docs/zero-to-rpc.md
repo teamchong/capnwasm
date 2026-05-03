@@ -138,7 +138,7 @@ client                                                      server
                               '------------------------'
 ```
 
-One TCP write per direction. Cap'n Proto's wire format is the bytes you see going over the socket. Same as a C++ or Rust peer would send for the same schema. If you wireshark the connection you can decode the bytes with any other Cap'n Proto reader, including [`/inspect.js`](https://teamchong.github.io/capnwasm/inspect.js) in DevTools.
+One TCP write per direction. Cap'n Proto's wire format is the bytes you see going over the socket. Same as a C++ or Rust peer would send for the same schema. If you wireshark the connection you can decode the bytes with any other Cap'n Proto reader, including [`/inspect.js`](https://capnwasm.teamchong.net/inspect.js) in DevTools.
 
 ## 7. From here
 

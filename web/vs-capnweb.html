@@ -117,7 +117,7 @@
         </tbody>
       </table>
       <p>Numbers are fresh-process Node 22, average of 8 runs. In an earlier release capnwasm&apos;s init was ~11&nbsp;ms because the loader did <code>instanceof Response</code>, which lazy-initializes Node&apos;s undici fetch implementation. The fix is duck-typing: never reach for <code>Response</code> unless the source is clearly a URL.</p>
-      <p>In a browser the picture is different. With an empty HTTP cache the first visit pays network + streaming compile, around <strong>20&ndash;25 ms</strong> on a desktop with a localhost-served wasm; warm reloads (V8 code-cache hit) drop to <strong>2&ndash;4 ms</strong>. capnweb&apos;s 21 KB JS parses in ~1&ndash;3 ms either way. So on a fresh tab capnwasm is still measurably slower because the wasm bytes are larger; once the bundle is cached the gap is small.</p>
+      <p>In a browser the picture is different. With an empty HTTP cache the first visit pays network + streaming compile; the landing page measures the current browser/host directly. Warm reloads (V8 code-cache hit) drop close to the measurement floor. capnweb&apos;s smaller JS parses quickly either way. So on a fresh tab capnwasm is still measurably slower because the wasm bytes are larger; once the bundle is cached the gap is small.</p>
 
       <h3>3. Schema friction</h3>
       <p>capnwasm requires a Cap&apos;n Proto schema &mdash; even when generating a TypeScript-only client you go through <code>npx capnwasm gen</code>. capnweb works on arbitrary JS values: you call methods, JSON-shaped data goes over the wire, no schema step.</p>
@@ -137,7 +137,7 @@
 
     <section>
       <h2>Where the in-browser playground says they&apos;re tied</h2>
-      <p>The <a href="./playground.html">live playground</a> on this site fetches N records as static assets and renders them. On localhost the three protocols come out within 0&ndash;3% of each other:</p>
+      <p>The <a href="./playground.html">live playground</a> on this site fetches N records as same-origin static assets and renders them. When network cost is near-free, the three protocols come out within a few percent of each other:</p>
       <table class="cmp small">
         <thead>
           <tr><th>workload</th><th>REST</th><th>capnweb</th><th>capnwasm</th><th>capnp wire (gz)</th></tr>
@@ -147,7 +147,7 @@
           <tr><td>50 records, 4 KB avatars</td><td>15 ms</td><td>15 ms</td><td>15 ms</td><td>205 KB (vs 272 KB JSON)</td></tr>
         </tbody>
       </table>
-      <p>The bytes-on-wire savings only translate into faster end-to-end times once the network has any meaningful latency. On localhost, fetch overhead dominates everything else &mdash; capnwasm&apos;s decoder is fast, but it can&apos;t pay back the wasm load + per-record boundary cost when network is essentially free. <strong>Add 50 ms of latency between you and your backend and the bytes savings start to compound.</strong></p>
+      <p>The bytes-on-wire savings only translate into faster end-to-end times once the network has any meaningful latency. In a same-origin static-fixture bench, fetch overhead dominates everything else &mdash; capnwasm&apos;s decoder is fast, but it can&apos;t pay back the wasm load + per-record boundary cost when network is essentially free. <strong>Add real latency between you and your backend and the bytes savings start to compound.</strong></p>
       <p>Where the playground <em>can&apos;t</em> show capnwasm winning yet: an RPC workload over WebSocket with bursts, capability passing, or 64 KB binary payloads. That&apos;s a follow-up bench page.</p>
     </section>
 
@@ -200,7 +200,7 @@
         capnweb &times; capnwasm &times; (WebSocket, HTTP-batch) &times; (small, medium, large) &times; (cold, warm).
         Every cell. No averages.
       </p>
-      <p>What we found, on Apple Silicon, Chromium prod build, localhost (warm medians, 10 iter):</p>
+      <p>Snapshot from Apple Silicon, Chromium prod build, same-origin local run (warm medians, 10 iter). For current numbers, use the <a href="./render-bench.html">live render bench</a>:</p>
 
       <h3>capnwasm wins (warm medians)</h3>
       <table class="cmp small">

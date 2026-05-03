@@ -22,7 +22,7 @@ The detail is below.
 | Bidirectional streaming | Yes (in-band, framed) | Limited (server streaming only over fetch; bidi requires WebTransport or hacks) |
 | Capabilities | **First-class** | None |
 
-The zero-copy bit is the structural difference. Cap'n Proto's wire format is a fixed-layout struct with pointer offsets to variable-length tails. You can read field 32 without having parsed fields 0–31. Protobuf is a sequence of tag-length-value records; to find field 32, the decoder walks forward through every preceding field. That's why the [perf table on the landing page](https://teamchong.github.io/capnwasm/) shows 12× speedups on sparse-field reads.
+The zero-copy bit is the structural difference. Cap'n Proto's wire format is a fixed-layout struct with pointer offsets to variable-length tails. You can read field 32 without having parsed fields 0–31. Protobuf is a sequence of tag-length-value records; to find field 32, the decoder walks forward through every preceding field. That's why the [perf table on the landing page](https://capnwasm.teamchong.net/) shows 12× speedups on sparse-field reads.
 
 ## Stack diagram
 

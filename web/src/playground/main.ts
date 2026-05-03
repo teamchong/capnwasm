@@ -370,7 +370,7 @@ async function runBench() {
     summary.innerHTML = `<strong>capnwasm wins</strong>: ${fmtMs(totals.capnp)} vs REST ${fmtMs(totals.rest)} (${(totals.rest / totals.capnp).toFixed(2)}×) and capnweb ${fmtMs(totals.cwb)} (${(totals.cwb / totals.capnp).toFixed(2)}×). Wire ${fmtBytes(rest.bytes)} JSON / ${fmtBytes(cwb.bytes)} capnweb / ${fmtBytes(capnp.bytes)} capnp.<br>${bandwidthLine}`;
   } else {
     summary.className = "lose";
-    summary.innerHTML = `<strong>${winner.name} wins this workload</strong>: ${fmtMs(winner.t)}. capnwasm came in at ${fmtMs(totals.capnp)} (${(totals.capnp / winner.t).toFixed(2)}× ${winner.name}&apos;s). On localhost the wasm load + per-record boundary cost can outweigh the bytes savings; capnwasm&apos;s wins (RPC bursts, sparse reads, binary wire interop) need a different workload &mdash; see ${honestLink}.<br>${bandwidthLine}`;
+    summary.innerHTML = `<strong>${winner.name} wins this workload</strong>: ${fmtMs(winner.t)}. capnwasm came in at ${fmtMs(totals.capnp)} (${(totals.capnp / winner.t).toFixed(2)}× ${winner.name}&apos;s). In this same-origin static-fixture bench, wasm load + per-record boundary cost can outweigh the bytes savings; capnwasm&apos;s wins (RPC bursts, sparse reads, binary wire interop) need a different workload &mdash; see ${honestLink}.<br>${bandwidthLine}`;
   }
 
   status.textContent = `done — ${workload} workload, ${count} records × ${iters} iter (median)`;
