@@ -12,7 +12,8 @@
 // Implementation: attach our own WebSocketServer in `noServer` mode to
 // the underlying http.Server's `upgrade` event. Vite has its own HMR
 // WebSocket; we only handle paths starting with /capnwasm or /capnweb
-// and let Vite handle everything else.
+// and let Vite handle everything else. Chat uses /chat-ws so it does not
+// collide with the static /chat page route.
 
 import { WebSocketServer } from "ws";
 import { load as loadWasm } from "../dist/inlined.mjs";
@@ -259,7 +260,7 @@ function attachRpc(httpServer, registry, label, log) {
     const url = req.url ?? "";
     const isCapnwasm = url.startsWith("/capnwasm");
     const isCapnweb  = url.startsWith("/capnweb");
-    const isChat     = url.startsWith("/chat");
+    const isChat     = url.startsWith("/chat-ws");
     if (!isCapnwasm && !isCapnweb && !isChat) return;  // Vite's own HMR upgrades pass through
     const which = isCapnwasm ? "capnwasm" : isCapnweb ? "capnweb" : "chat";
     wss.handleUpgrade(req, socket, head, (ws) => {
@@ -267,7 +268,7 @@ function attachRpc(httpServer, registry, label, log) {
     });
   });
 
-  log?.info(`  \x1b[36m\x1b[1m➜\x1b[0m  RPC server attached at /capnwasm, /capnweb, /chat (${label})`);
+  log?.info(`  \x1b[36m\x1b[1m➜\x1b[0m  RPC server attached at /capnwasm, /capnweb, /chat-ws (${label})`);
   return wss;
 }
 

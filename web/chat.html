@@ -62,7 +62,7 @@
       <h3>The whole client, more or less</h3>
       <pre class="code">import { createClient, subscribeQuery, optimistic } from "capnwasm/client";
 
-const { cap } = await createClient("/chat");
+const { cap } = await createClient("/chat-ws");
 
 const sub = subscribeQuery(cap, IFC, METHOD_WATCH, EMPTY_PARAMS);
 for await (const chunk of sub.updates) {
@@ -86,6 +86,6 @@ await optimistic({
   <p><a href="/">← back to capnwasm</a></p>
 
   <script type="module" src="/src/chat/main.ts"></script>
-  <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "3a5b865568b24718b7d8f62803f332fd"}'></script>
+  <script type="module" src="./src/analytics/main.ts"></script>
 </body>
 </html>

@@ -111,11 +111,15 @@ async function main() {
 
   // The bench server uses a single WS path that switches on subprotocol;
   // capnwasm/client's createClient works against any URL but here the
-  // chat is gated to /chat. We hand-wire the steps so we can use the
+  // chat is gated to /chat-ws (the /chat path is the static HTML page).
+  // We hand-wire the steps so we can use the
   // browser-friendly `load()` from capnwasm/browser instead of the
   // base64-inlined runtime that createClient uses by default.
   const cpp = await load();
-  const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/chat";
+  const wsHost = location.hostname === "localhost"
+    ? `127.0.0.1${location.port ? `:${location.port}` : ""}`
+    : location.host;
+  const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + wsHost + "/chat-ws";
   const session = await connectWebSocket(cpp, wsUrl);
   const cap = session.bootstrap();
 

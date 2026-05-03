@@ -11,7 +11,7 @@
 //
 //        WS   /capnwasm       → capnwasm RPC demo endpoint
 //        WS   /capnweb        → capnweb comparison endpoint
-//        WS   /chat           → capnwasm streaming chat demo
+//        WS   /chat-ws        → capnwasm streaming chat demo
 //        POST /capnwasm-http  → capnwasm HTTP-batch RPC endpoint
 //        POST /capnweb-http   → capnweb HTTP-batch comparison endpoint
 //
@@ -264,7 +264,7 @@ export default {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
-    if (url.pathname === "/capnwasm" || url.pathname === "/chat") {
+    if (url.pathname === "/capnwasm" || url.pathname === "/chat-ws") {
       return acceptCapnwasmWebSocket(req);
     }
     if (url.pathname === "/capnweb") {
