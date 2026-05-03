@@ -820,6 +820,15 @@ function generateJs(structs, schemaName) {
   lines.push(`const _F64_VIEW_U32 = new Uint32Array(_F64_VIEW_BUF);`);
   lines.push(`const _F64_VIEW_F64 = new Float64Array(_F64_VIEW_BUF);`);
   lines.push(``);
+  // Helper bag passed to runtime-compiled list decoders. \`new Function\` builds
+  // a closure-less function (compiled in global scope), so we can't reach the
+  // module-level constants directly — we hand them in as one object.
+  lines.push(`const _LIST_HELPERS = {`);
+  lines.push(`  TD: SHARED_TEXT_DECODER,`);
+  lines.push(`  F32U: _F32_VIEW_U32, F32F: _F32_VIEW_F32,`);
+  lines.push(`  F64U: _F64_VIEW_U32, F64F: _F64_VIEW_F64,`);
+  lines.push(`};`);
+  lines.push(``);
   lines.push(`// Per-(class, field-list) cache of pre-encoded request bytes. Compiling the
 // request is a tight loop but it's still wasted work in a hot pick loop.
 // We key on a frozen Uint8Array of the descriptor bytes so identical field
@@ -839,7 +848,9 @@ function _getPickRequest(fields, names) {
   // Precompute the field-descriptor array alongside the request bytes. Both
   // are pure functions of (fields, names); caching them together means the
   // hot pick path skips a names.length-iteration property-lookup loop on
-  // every call. The cached entry shape is { req: Uint8Array, descs: Array }.
+  // every call. The cached entry shape is { req, descs, listDecoder } where
+  // listDecoder is lazily compiled the first time a List(Struct) projection
+  // hits this field-set (most Pick callers never trigger it).
   const descs = new Array(names.length);
   let pos = 4;
   for (let i = 0; i < names.length; i++) {
@@ -849,9 +860,103 @@ function _getPickRequest(fields, names) {
     buf[pos] = d.kind; pos += 1;
     dv.setUint32(pos, d.off, true); pos += 4;
   }
-  entry = { req: buf, descs };
+  entry = { req: buf, descs, listDecoder: null };
   perFields.set(key, entry);
   return entry;
+}
+
+// Build a specialized JS function that decodes a row-tape produced by
+// cpp_any_list_project into an Array of plain row objects, with the
+// per-cell switch dispatch fully unrolled.
+//
+// The unrolled body lets V8 emit a single inline-cache chain per row, gives
+// the row a stable hidden class via an object literal with all fields named
+// in declaration order, and removes the per-cell descs[]/names[] indexing.
+//
+// Compiled once per (fields, names) pair, then cached on the same entry
+// the request bytes live on. Roughly halves JS materialization cost vs the
+// generic switch loop on the list-1000 user-row workload.
+function _compileListDecoder(descs, names, applyMapFn) {
+  const cols = descs.length;
+  const rowStride = cols * 4;
+  const out = [];
+  out.push(\`const TD = H.TD;\`);
+  out.push(\`const F32U = H.F32U, F32F = H.F32F, F64U = H.F64U, F64F = H.F64F;\`);
+  out.push(\`const arr = new Array(rows);\`);
+  out.push(\`let readPos = 8 + rows * \${rowStride};\`);
+  out.push(\`for (let row = 0; row < rows; row++) {\`);
+  out.push(\`  const cellBase = 8 + row * \${rowStride};\`);
+  for (let col = 0; col < cols; col++) {
+    const d = descs[col];
+    const headerOff = \`cellBase + \${col * 4}\`;
+    switch (d.type) {
+      case "text":
+        out.push(\`  let _v\${col};\`);
+        out.push(\`  { const _h = dv.getUint32(\${headerOff}, true);\`);
+        out.push(\`    if (_h === 0xFFFFFFFF) _v\${col} = undefined;\`);
+        out.push(\`    else if (_h === 0) _v\${col} = "";\`);
+        out.push(\`    else { _v\${col} = TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }\`);
+        break;
+      case "data":
+        out.push(\`  let _v\${col};\`);
+        out.push(\`  { const _h = dv.getUint32(\${headerOff}, true);\`);
+        out.push(\`    if (_h === 0xFFFFFFFF) _v\${col} = undefined;\`);
+        out.push(\`    else { _v\${col} = u8.slice(out + readPos, out + readPos + _h); readPos += _h; } }\`);
+        break;
+      case "bool":
+        out.push(\`  const _v\${col} = dv.getUint32(\${headerOff}, true) === 1;\`);
+        break;
+      case "uint8":
+      case "uint16":
+        out.push(\`  const _v\${col} = dv.getUint32(\${headerOff}, true);\`);
+        break;
+      case "int8":
+        out.push(\`  const _v\${col} = (dv.getUint32(\${headerOff}, true) << 24) >> 24;\`);
+        break;
+      case "int16":
+        out.push(\`  const _v\${col} = (dv.getUint32(\${headerOff}, true) << 16) >> 16;\`);
+        break;
+      case "uint32":
+        out.push(\`  const _v\${col} = dv.getUint32(\${headerOff}, true) >>> 0;\`);
+        break;
+      case "int32":
+        out.push(\`  const _v\${col} = dv.getUint32(\${headerOff}, true) | 0;\`);
+        break;
+      case "float32":
+        out.push(\`  F32U[0] = dv.getUint32(\${headerOff}, true) >>> 0;\`);
+        out.push(\`  const _v\${col} = F32F[0];\`);
+        break;
+      case "uint64":
+      case "int64":
+        out.push(\`  let _v\${col};\`);
+        out.push(\`  { const _lo = dv.getUint32(readPos, true);\`);
+        out.push(\`    const _hi = dv.getInt32(readPos + 4, true);\`);
+        out.push(\`    _v\${col} = (_hi >= -0x200000 && _hi <= 0x1FFFFF) ? _hi * 4294967296 + _lo : dv.getBigInt64(readPos, true);\`);
+        out.push(\`    readPos += 8; }\`);
+        break;
+      case "float64":
+        out.push(\`  F64U[0] = dv.getUint32(readPos, true);\`);
+        out.push(\`  F64U[1] = dv.getUint32(readPos + 4, true);\`);
+        out.push(\`  const _v\${col} = F64F[0];\`);
+        out.push(\`  readPos += 8;\`);
+        break;
+      default:
+        out.push(\`  const _v\${col} = undefined;\`);
+    }
+  }
+  // Object literal with the projected names — V8 freezes one hidden class
+  // for the row shape. Stringified names are valid in literal-key form.
+  // When applyMapFn is set, the user's per-row callback consumes the
+  // literal in place; we never store the raw row object in arr.
+  const litParts = names.map((n, i) => \`\${JSON.stringify(n)}: _v\${i}\`);
+  if (applyMapFn) {
+    out.push(\`  arr[row] = mapFn({ \${litParts.join(", ")} });\`);
+  } else {
+    out.push(\`  arr[row] = { \${litParts.join(", ")} };\`);
+  }
+  out.push(\`}\`);
+  out.push(\`return arr;\`);
+  return new Function("u8", "dv", "out", "rows", "H", "mapFn", out.join("\\n"));
 }
 
 function _capnwasmPick(cpp, fields, names) {`);
@@ -918,14 +1023,16 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`  return result;`);
   lines.push(`}`);
   lines.push("");
-  lines.push(`function _capnwasmListProject(cpp, ptrIndex, fields, names) {`);
+  // Project a List(Struct) into an array of plain row objects. When mapFn
+  // is supplied (the outer-callback short-circuit path, see _runDraft), the
+  // specialized decoder applies it per row inside the unrolled loop — no
+  // intermediate row-object survives the loop body, no second .map pass.
+  lines.push(`function _capnwasmListProject(cpp, ptrIndex, fields, names, mapFn) {`);
   lines.push(`  const exp = cpp._exports;`);
   lines.push(`  if (typeof exp.cpp_any_list_project !== "function") return null;`);
   lines.push(`  const entry = _getPickRequest(fields, names);`);
-  lines.push(`  const req = entry.req;`);
-  lines.push(`  const descs = entry.descs;`);
-  lines.push(`  cpp._u8.set(req, cpp._auxPtr);`);
-  lines.push(`  const written = exp.cpp_any_list_project(ptrIndex, req.length);`);
+  lines.push(`  cpp._u8.set(entry.req, cpp._auxPtr);`);
+  lines.push(`  const written = exp.cpp_any_list_project(ptrIndex, entry.req.length);`);
   lines.push(`  if (!written) return null;`);
   lines.push(`  const out = cpp._outPtr;`);
   lines.push(`  const u8 = cpp._u8;`);
@@ -933,57 +1040,17 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`  const rows = dv.getUint32(0, true);`);
   lines.push(`  const cols = dv.getUint32(4, true);`);
   lines.push(`  if (cols !== names.length) return null;`);
-  lines.push(`  let readPos = 8 + rows * cols * 4;`);
-  lines.push(`  const arr = new Array(rows);`);
-  lines.push(`  for (let row = 0; row < rows; row++) {`);
-  lines.push(`    const obj = {};`);
-  lines.push(`    for (let col = 0; col < cols; col++) {`);
-  lines.push(`      const lenOrVal = dv.getUint32(8 + (row * cols + col) * 4, true);`);
-  lines.push(`      const d = descs[col];`);
-  lines.push(`      const name = names[col];`);
-  lines.push(`      switch (d.type) {`);
-  lines.push(`        case "text": {`);
-  lines.push(`          if (lenOrVal === 0xFFFFFFFF) { obj[name] = undefined; break; }`);
-  lines.push(`          if (lenOrVal === 0) { obj[name] = ""; break; }`);
-  lines.push(`          obj[name] = decodeAscii(u8.subarray(out + readPos, out + readPos + lenOrVal));`);
-  lines.push(`          readPos += lenOrVal;`);
-  lines.push(`          break;`);
-  lines.push(`        }`);
-  lines.push(`        case "data": {`);
-  lines.push(`          if (lenOrVal === 0xFFFFFFFF) { obj[name] = undefined; break; }`);
-  lines.push(`          obj[name] = u8.slice(out + readPos, out + readPos + lenOrVal);`);
-  lines.push(`          readPos += lenOrVal;`);
-  lines.push(`          break;`);
-  lines.push(`        }`);
-  lines.push(`        case "bool":   obj[name] = lenOrVal === 1; break;`);
-  lines.push(`        case "uint8":  obj[name] = lenOrVal; break;`);
-  lines.push(`        case "int8":   obj[name] = (lenOrVal << 24) >> 24; break;`);
-  lines.push(`        case "uint16": obj[name] = lenOrVal; break;`);
-  lines.push(`        case "int16":  obj[name] = (lenOrVal << 16) >> 16; break;`);
-  lines.push(`        case "uint32": obj[name] = lenOrVal >>> 0; break;`);
-  lines.push(`        case "int32":  obj[name] = lenOrVal | 0; break;`);
-  lines.push(`        case "float32": _F32_VIEW_U32[0] = lenOrVal >>> 0; obj[name] = _F32_VIEW_F32[0]; break;`);
-  lines.push(`        case "uint64":`);
-  lines.push(`        case "int64": {`);
-  lines.push(`          const lo = dv.getUint32(out - dv.byteOffset + readPos, true);`);
-  lines.push(`          const hi = dv.getInt32(out - dv.byteOffset + readPos + 4, true);`);
-  lines.push(`          obj[name] = (hi >= -0x200000 && hi <= 0x1FFFFF) ? hi * 4294967296 + lo : dv.getBigInt64(out - dv.byteOffset + readPos, true);`);
-  lines.push(`          readPos += 8;`);
-  lines.push(`          break;`);
-  lines.push(`        }`);
-  lines.push(`        case "float64": {`);
-  lines.push(`          _F64_VIEW_U32[0] = dv.getUint32(out - dv.byteOffset + readPos, true);`);
-  lines.push(`          _F64_VIEW_U32[1] = dv.getUint32(out - dv.byteOffset + readPos + 4, true);`);
-  lines.push(`          obj[name] = _F64_VIEW_F64[0];`);
-  lines.push(`          readPos += 8;`);
-  lines.push(`          break;`);
-  lines.push(`        }`);
-  lines.push(`        default: obj[name] = undefined;`);
-  lines.push(`      }`);
-  lines.push(`    }`);
-  lines.push(`    arr[row] = obj;`);
+  // Two specialized decoders per (fields, names) entry: one builds plain
+  // row objects, one wraps each row through mapFn. Compiled lazily because
+  // most callers only need one variant.
+  lines.push(`  if (mapFn) {`);
+  lines.push(`    let mdec = entry.listDecoderMapped;`);
+  lines.push(`    if (!mdec) { mdec = _compileListDecoder(entry.descs, names, true); entry.listDecoderMapped = mdec; }`);
+  lines.push(`    return mdec(u8, dv, out, rows, _LIST_HELPERS, mapFn);`);
   lines.push(`  }`);
-  lines.push(`  return arr;`);
+  lines.push(`  let dec = entry.listDecoder;`);
+  lines.push(`  if (!dec) { dec = _compileListDecoder(entry.descs, names, false); entry.listDecoder = dec; }`);
+  lines.push(`  return dec(u8, dv, out, rows, _LIST_HELPERS);`);
   lines.push(`}`);
   lines.push("");
   lines.push(`const _STRUCT_FIELDS = Object.create(null);`);
@@ -992,6 +1059,11 @@ function _capnwasmPick(cpp, fields, names) {`);
   // expose a .map(childFn) that defers childFn — the planner records
   // childFn alongside the path; the compile step turns that into a fully
   // resolved sub-plan.
+  // Marker so we can identify "outer callback returns r.X.map(childFn)"
+  // patterns. The planner's listMap.map() returns an array tagged with this
+  // symbol; if the user's outer callback's return value carries the same
+  // marker we know the outer is shape-preserving and can short-circuit.
+  lines.push(`const _LIST_MAP_TAG = Symbol("_capnwasm_listMap");`);
   lines.push(`function _planRaw(fields, fn) {`);
   lines.push(`  const selected = [];`);
   lines.push(`  const seen = new Set();`);
@@ -1003,7 +1075,14 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`      const nextPath = path.concat(name);`);
   lines.push(`      const list = /^List\\(([^)]+)\\)$/.exec(desc.type);`);
   lines.push(`      if (list && _STRUCT_FIELDS[list[1]]) {`);
-  lines.push(`        return { map(childFn) { selected.push({ kind: "listMap", path: nextPath, inner: list[1], fn: childFn }); return []; } };`);
+  lines.push(`        return { map(childFn) {`);
+  lines.push(`          const idx = selected.length;`);
+  lines.push(`          selected.push({ kind: "listMap", path: nextPath, inner: list[1], fn: childFn });`);
+  // Tag the planner's .map() return so an outer callback of the form
+  // `(r) => r.X.map(childFn)` is identifiable: its return value will
+  // be this exact array (any chained .filter/.map produces a new array).
+  lines.push(`          const tag = []; tag[_LIST_MAP_TAG] = idx; return tag;`);
+  lines.push(`        } };`);
   lines.push(`      }`);
   lines.push(`      if (_STRUCT_FIELDS[desc.type]) return make(_STRUCT_FIELDS[desc.type], nextPath);`);
   lines.push(`      const key = nextPath.join(".");`);
@@ -1011,8 +1090,15 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`      return undefined;`);
   lines.push(`    }`);
   lines.push(`  });`);
-  lines.push(`  fn(make(fields, []));`);
-  lines.push(`  return selected;`);
+  lines.push(`  const result = fn(make(fields, []));`);
+  // Detect outer-callback short-circuit pattern. If the outer callback
+  // returns exactly the planner's tagged array, we know its shape is
+  // identical to the listMap result — at runtime we can apply childFn
+  // during the C++ row-tape decode and skip the outer-callback re-run
+  // entirely. Saves N row-object allocations + an extra .map iteration.
+  lines.push(`  let outerListMapIdx = -1;`);
+  lines.push(`  if (result && typeof result === "object" && _LIST_MAP_TAG in result) outerListMapIdx = result[_LIST_MAP_TAG];`);
+  lines.push(`  return { selected, outerListMapIdx };`);
   lines.push(`}`);
   // Compile a recorded plan into a structured form: separate leaf-field,
   // nested-struct, and list-of-struct lists. Nested entries have their own
@@ -1020,10 +1106,14 @@ function _capnwasmPick(cpp, fields, names) {`);
   // so the materialize loop never has to re-categorize or re-plan per call.
   // The tradeoff: the compiled plan lives in a WeakMap keyed by (FIELDS, fn)
   // so a stable callback only ever pays the planning cost once.
-  lines.push(`function _compilePlan(selected) {`);
+  lines.push(`function _compilePlan(selected, outerListMapIdx) {`);
   lines.push(`  const leaf = [];`);
   lines.push(`  const nestedRaw = new Map();`);
   lines.push(`  const listMapRaw = [];`);
+  // outerListMapIdx (if set) refers to an index in `selected`. Track which
+  // entry in `listMapRaw` corresponds so the runtime can find the matching
+  // top-level listMap to short-circuit against.
+  lines.push(`  let outerListMapPos = -1;`);
   lines.push(`  for (let i = 0; i < selected.length; i++) {`);
   lines.push(`    const item = selected[i];`);
   lines.push(`    const head = item.path[0];`);
@@ -1031,6 +1121,7 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`    if (item.kind === "field" && item.path.length === 1) {`);
   lines.push(`      leaf.push(head);`);
   lines.push(`    } else if (item.kind === "listMap" && item.path.length === 1) {`);
+  lines.push(`      if (i === outerListMapIdx) outerListMapPos = listMapRaw.length;`);
   lines.push(`      listMapRaw.push({ name: head, inner: item.inner, fn: item.fn });`);
   lines.push(`    } else {`);
   lines.push(`      let entry = nestedRaw.get(head);`);
@@ -1041,21 +1132,22 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`    }`);
   lines.push(`  }`);
   lines.push(`  const nested = [];`);
-  lines.push(`  for (const [name, raw] of nestedRaw) nested.push({ name, plan: _compilePlan(raw) });`);
+  lines.push(`  for (const [name, raw] of nestedRaw) nested.push({ name, plan: _compilePlan(raw, -1) });`);
   lines.push(`  const listMap = listMapRaw.map(({ name, inner, fn }) => ({`);
   lines.push(`    name, inner, fn,`);
-  lines.push(`    plan: _planDraft(_STRUCT_FIELDS[inner], fn),`);
+  lines.push(`    plan: _planDraft(_STRUCT_FIELDS[inner], fn).plan,`);
   lines.push(`  }));`);
-  lines.push(`  return { leaf, nested, listMap };`);
+  lines.push(`  return { leaf, nested, listMap, outerListMapPos };`);
   lines.push(`}`);
   lines.push(`function _planDraft(fields, fn) {`);
-  lines.push(`  return _compilePlan(_planRaw(fields, fn));`);
+  lines.push(`  const raw = _planRaw(fields, fn);`);
+  lines.push(`  return { plan: _compilePlan(raw.selected, raw.outerListMapIdx) };`);
   lines.push(`}`);
   lines.push(`function _getDraftPlan(fields, fn) {`);
   lines.push(`  let perFields = _DRAFT_PLAN_CACHE.get(fields);`);
   lines.push(`  if (!perFields) { perFields = new WeakMap(); _DRAFT_PLAN_CACHE.set(fields, perFields); }`);
   lines.push(`  let plan = perFields.get(fn);`);
-  lines.push(`  if (!plan) { plan = _planDraft(fields, fn); perFields.set(fn, plan); }`);
+  lines.push(`  if (!plan) { plan = _planDraft(fields, fn).plan; perFields.set(fn, plan); }`);
   lines.push(`  return plan;`);
   lines.push(`}`);
   // Materialize against a precompiled plan. Walks plan.leaf with one batched
@@ -1109,8 +1201,28 @@ function _capnwasmPick(cpp, fields, names) {`);
   // pick. We skip _materializeDraft entirely and hand the pick result straight
   // to the user's callback. This saves a function call, an Object.assign, and
   // two empty-array length checks per draft() — roughly 100ns on a hot loop.
+  // Hot path: pull the precompiled plan, materialize into a plain object,
+  // hand the plain object to the user's callback. No Proxy wrapping on the
+  // execution side.
+  //
+  // Fast paths in priority order:
+  //   1. outer-callback short-circuit: outer fn was `r => r.X.map(childFn)`.
+  //      Materialize the listMap with childFn applied during the row
+  //      decode, return that array directly. Skips both the materialized
+  //      shell object AND the outer callback re-execution against POJOs.
+  //   2. leaf-only: plan reduces to one batched pick; skip materialize.
+  //   3. general: materialize → outer fn(POJO).
   lines.push(`function _runDraft(cpp, fields, fn) {`);
   lines.push(`  const plan = _getDraftPlan(fields, fn);`);
+  lines.push(`  if (plan.outerListMapPos >= 0 && plan.listMap.length > 0) {`);
+  lines.push(`    const item = plan.listMap[plan.outerListMapPos];`);
+  lines.push(`    const desc = fields[item.name];`);
+  lines.push(`    if (desc && _STRUCT_FIELDS[item.inner] && item.plan.nested.length === 0 && item.plan.listMap.length === 0) {`);
+  lines.push(`      const innerFields = _STRUCT_FIELDS[item.inner];`);
+  lines.push(`      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf, item.fn);`);
+  lines.push(`      if (fast !== null) return fast;`);
+  lines.push(`    }`);
+  lines.push(`  }`);
   lines.push(`  if (plan.nested.length === 0 && plan.listMap.length === 0) {`);
   lines.push(`    return fn(_capnwasmPick(cpp, fields, plan.leaf));`);
   lines.push(`  }`);
