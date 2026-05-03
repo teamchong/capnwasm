@@ -101,10 +101,26 @@ async function gzipSize(path) {
 }
 
 const root = resolve(HERE, "..", "..");
-const capnwasmRpcGzip =
+
+// Three bundle shapes for the homepage / docs to surface separately.
+//
+//   reader: js/reader.mjs + cpp_loader + capnp.reader.wasm — what a consumer
+//           of capnwasm responses ships when they only project responses
+//           via draft() and never build their own messages or open RPC.
+//   browser: js/browser.mjs + cpp_loader + capnp.slim.wasm — adds the full
+//            wasm (builder + RPC + lazy reader + tape codec).
+//   rpc: browser bundle + the RPC client JS.
+const cppLoaderGzip = await gzipSize(resolve(root, "dist", "cpp_loader.mjs"));
+const capnwasmReaderGzip =
+  await gzipSize(resolve(root, "js", "reader.mjs")) +
+  cppLoaderGzip +
+  await gzipSize(resolve(root, "dist", "capnp.reader.wasm"));
+const capnwasmBrowserGzip =
   await gzipSize(resolve(root, "dist", "browser.mjs")) +
-  await gzipSize(resolve(root, "dist", "rpc.mjs")) +
   await gzipSize(resolve(root, "dist", "capnp.slim.wasm"));
+const capnwasmRpcGzip =
+  capnwasmBrowserGzip +
+  await gzipSize(resolve(root, "dist", "rpc.mjs"));
 const capnwebGzip = await gzipSize(resolve(root, "web", "node_modules", "capnweb", "dist", "index.js"));
 
 const metricsDir = resolve(HERE, "..", "public", "metrics");
@@ -115,10 +131,13 @@ await writeFile(resolve(metricsDir, "build.json"), JSON.stringify({
   fixtures: { small, blob },
   bundles: {
     gzip: {
+      capnwasmReader: capnwasmReaderGzip,
+      capnwasmBrowser: capnwasmBrowserGzip,
       capnwasmRpc: capnwasmRpcGzip,
       capnweb: capnwebGzip,
     },
     ratios: {
+      capnwasmReaderToCapnweb: capnwasmReaderGzip / capnwebGzip,
       capnwasmRpcToCapnweb: capnwasmRpcGzip / capnwebGzip,
     },
   },

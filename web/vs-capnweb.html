@@ -95,19 +95,24 @@
       <h2>Where capnwasm loses</h2>
       <p>These are real, not handwave-able-away.</p>
 
-      <h3>1. Bundle size: ~2&times; larger on the wire (apples-to-apples brotli)</h3>
+      <h3>1. Bundle size: tier matters &mdash; reader-only is competitive, full RPC is ~2&times;</h3>
+      <p>capnwasm now ships in two tiers, so most apps don&rsquo;t pay for what they don&rsquo;t use:
+        a <strong>reader-only</strong> bundle (read responses via <code>draft()</code>, no RPC client, no
+        builder, no lazy reader, no tape codec) and a <strong>full RPC</strong> bundle (adds the message
+        builder, the RPC client, and the legacy lazy reader for users who need them). Pick the one
+        that matches what your app does:</p>
       <table class="cmp small">
         <thead><tr><th></th><th>gzip (Workers deploy limit)</th><th>brotli (browsers / Cloudflare Pages)</th></tr></thead>
         <tbody>
           <tr><td>capnweb (everything)</td><td class="win">21 KB</td><td class="win">18 KB</td></tr>
-          <tr><td>capnwasm wasm-only (decode capnp messages)</td><td>34 KB</td><td>28 KB</td></tr>
+          <tr><td>capnwasm <strong>reader-only</strong> (consume responses, no RPC, no builder)</td><td>22 KB</td><td>21 KB</td></tr>
+          <tr><td>capnwasm wasm-only (decode capnp messages, no JS RPC client)</td><td>34 KB</td><td>28 KB</td></tr>
           <tr><td>capnwasm + RPC</td><td>39 KB</td><td>33 KB</td></tr>
           <tr><td>capnwasm typed + http-batch (typical browser app)</td><td>41 KB</td><td>35 KB</td></tr>
         </tbody>
       </table>
-      <p>Brotli does <em>not</em> close the gap meaningfully &mdash; capnweb compresses about as well with brotli as we do, so the ratio stays roughly 2&times; on either compression. The extra ~17 KB on the wire (capnwasm typical-shape vs capnweb whole-library, brotli) is the cost of shipping a real wasm runtime.</p>
-      <p>Down from 44 KB gz at our worst across multiple shrinkage passes: stripping KJ assertion strings (including caller-supplied <code>__VA_ARGS__</code> messages, biggest single win), dropping 10 dead RPC summary getters, switching to WASI reactor mode, replacing default-constructed AnyStruct::Reader stack with a placement-new union, and turning <code>KJ_LOG</code>/<code>KJ_DBG</code> into no-ops in the strip header.</p>
-      <p>If your bundle budget is tight and you don&apos;t need binary wire interop, <strong>capnweb is the smaller choice</strong>. There is no way for capnwasm to reach 21 KB without giving up the wasm runtime, which is what makes the rest of the wins possible.</p>
+      <p>Most clients only consume responses, so the row to read is <strong>reader-only</strong>: 22 KB gzip / 21 KB brotli, within ~1&nbsp;KB of capnweb&rsquo;s entire library. Apps that also send requests, build messages, or open WS sessions ship the full RPC tier and pay roughly 2&times; capnweb &mdash; that&rsquo;s the cost of shipping a real wasm runtime, builder, and RPC client.</p>
+      <p>Down from 44 KB gz at our worst across multiple shrinkage passes: stripping KJ assertion strings (including caller-supplied <code>__VA_ARGS__</code> messages, biggest single win), dropping 10 dead RPC summary getters, switching to WASI reactor mode, replacing default-constructed AnyStruct::Reader stack with a placement-new union, turning <code>KJ_LOG</code>/<code>KJ_DBG</code> into no-ops in the strip header, and finally splitting the wasm into reader-only vs full variants via <code>#ifdef CW_READER_ONLY</code> so consumers don&rsquo;t carry the builder + RPC layer they never call.</p>
 
       <h3>2. Cold start: now essentially tied in Node, still slower in the browser</h3>
       <table class="cmp small">

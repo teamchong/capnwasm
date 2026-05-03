@@ -57,13 +57,22 @@ async function renderBuildMetrics() {
     );
 
     const bundles = m.bundles;
+    const reader = bundles.gzip.capnwasmReader;
+    const rpc = bundles.gzip.capnwasmRpc;
+    const cw = bundles.gzip.capnweb;
+    setMetric(
+      "metric-bundle-reader",
+      `${fmtBytes(reader)}; ${(reader / cw).toFixed(2)}× capnweb`,
+      reader < cw ? "win" : "",
+    );
     setMetric(
       "metric-bundle",
-      `${fmtBytes(bundles.gzip.capnwasmRpc)}; ${bundles.ratios.capnwasmRpcToCapnweb.toFixed(2)}× capnweb`,
+      `${fmtBytes(rpc)}; ${(rpc / cw).toFixed(2)}× capnweb`,
       "lose",
     );
   } catch (err) {
     setMetric("metric-fixture-wire", "build metrics unavailable", "measuring");
+    setMetric("metric-bundle-reader", "build metrics unavailable", "measuring");
     setMetric("metric-bundle", "build metrics unavailable", "measuring");
     console.warn("landing build metrics failed", err);
   }
