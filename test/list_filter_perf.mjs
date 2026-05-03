@@ -1,7 +1,7 @@
 // Microbench for filter pushdown: r.users.filter(pred).map(fn)
 //
 // Compares:
-//   1. Full draft 1000 rows (no filter)
+//   1. Full draft N rows (no filter)
 //   2. draft full + JS .filter (no pushdown)
 //   3. draft with chained .filter(pred).map(fn) — should fuse via planner
 //   4. unsupported predicate (e.g. computed) falls back safely
@@ -42,9 +42,6 @@ function makeUsersBytes(n) {
   return b.finalize();
 }
 
-const N = 1000;
-const bytes = makeUsersBytes(N);
-
 const PROJECT_USER_ROW = (u) => ({
   id: u.id,
   name: u.name,
@@ -56,26 +53,6 @@ const PROJECT_FILTERED = (r) => r.users.filter((u) => u.active).map(PROJECT_USER
 const PROJECT_NEGATED = (r) => r.users.filter((u) => !u.active).map(PROJECT_USER_ROW);
 // Unsupported predicate: ternary, falls back to safe path.
 const PROJECT_UNSUPPORTED = (r) => r.users.filter((u) => u.email.length > 20).map(PROJECT_USER_ROW);
-
-// Smoke checks
-{
-  const full = openUserList(cpp, bytes).draft(PROJECT_FULL);
-  const filtered = openUserList(cpp, bytes).draft(PROJECT_FILTERED);
-  const negated = openUserList(cpp, bytes).draft(PROJECT_NEGATED);
-  const unsup = openUserList(cpp, bytes).draft(PROJECT_UNSUPPORTED);
-  if (full.length !== N) throw new Error("full");
-  if (filtered.length !== N / 2) throw new Error(`filtered=${filtered.length}`);
-  if (filtered.some((r) => !r.active)) throw new Error("filtered has inactive");
-  if (negated.length !== N / 2) throw new Error(`negated=${negated.length}`);
-  if (negated.some((r) => r.active)) throw new Error("negated has active");
-  // Unsupported should still produce correct results via fallback.
-  // 'user1@example.com' length is 17, 'user10@example.com' is 18, ...
-  // user100..999 has 18-19 chars, user1000 has 20 chars. Plus length>20 means
-  // length must be > 20 — only those with id >= 10000 qualify. With N=1000
-  // none qualify, so unsup.length should be 0.
-  // Actually let me check: 'user${i+1}@example.com' for i=0..999 -> 'user1@..' (17) up to 'user1000@..' (20). length>20 false for all.
-  if (unsup.length !== 0) throw new Error(`unsupported produced len=${unsup.length}`);
-}
 
 let sink;
 function bench(label, fn, ms = 700) {
@@ -100,10 +77,30 @@ function bench(label, fn, ms = 700) {
   );
 }
 
-console.log(`\nFilter pushdown bench — N=${N}, predicate matches 50%`);
-bench("draft full 1000 rows (no filter)", () => openUserList(cpp, bytes).draft(PROJECT_FULL).length);
-bench("draft full + JS filter (no pushdown)", () => openUserList(cpp, bytes).draft(PROJECT_FULL).filter((r) => r.active).length);
-bench("draft .filter(u => u.active).map(...) [fused]", () => openUserList(cpp, bytes).draft(PROJECT_FILTERED).length);
-bench("draft .filter(u => !u.active).map(...) [fused negated]", () => openUserList(cpp, bytes).draft(PROJECT_NEGATED).length);
-bench("draft unsupported predicate [safe fallback]", () => openUserList(cpp, bytes).draft(PROJECT_UNSUPPORTED).length);
+console.log("\nFilter pushdown bench — small / medium / large, predicate matches 50%");
+for (const n of [10, 100, 1000]) {
+  const bytes = makeUsersBytes(n);
+
+  // Smoke checks per size.
+  const full = openUserList(cpp, bytes).draft(PROJECT_FULL);
+  const filtered = openUserList(cpp, bytes).draft(PROJECT_FILTERED);
+  const negated = openUserList(cpp, bytes).draft(PROJECT_NEGATED);
+  const unsup = openUserList(cpp, bytes).draft(PROJECT_UNSUPPORTED);
+  if (full.length !== n) throw new Error(`full n=${n}`);
+  if (filtered.length !== n / 2) throw new Error(`filtered n=${n}: ${filtered.length}`);
+  if (filtered.some((r) => !r.active)) throw new Error(`filtered has inactive n=${n}`);
+  if (negated.length !== n / 2) throw new Error(`negated n=${n}: ${negated.length}`);
+  if (negated.some((r) => r.active)) throw new Error(`negated has active n=${n}`);
+  // Unsupported should still produce correct results via fallback. With
+  // n <= 1000, emails range from user1@example.com to user1000@example.com;
+  // none have length > 20.
+  if (unsup.length !== 0) throw new Error(`unsupported n=${n}: ${unsup.length}`);
+
+  console.log(`\nN=${n} (${bytes.byteLength} wire bytes)`);
+  bench(`draft full ${n} rows (no filter)`, () => openUserList(cpp, bytes).draft(PROJECT_FULL).length);
+  bench("draft full + JS filter (no pushdown)", () => openUserList(cpp, bytes).draft(PROJECT_FULL).filter((r) => r.active).length);
+  bench("draft .filter(u => u.active).map(...) [fused]", () => openUserList(cpp, bytes).draft(PROJECT_FILTERED).length);
+  bench("draft .filter(u => !u.active).map(...) [fused negated]", () => openUserList(cpp, bytes).draft(PROJECT_NEGATED).length);
+  bench("draft unsupported predicate [safe fallback]", () => openUserList(cpp, bytes).draft(PROJECT_UNSUPPORTED).length);
+}
 if (sink == null) console.log("sink", sink);

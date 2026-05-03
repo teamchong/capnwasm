@@ -1,9 +1,9 @@
 // Microbench for slice-fusion path: r.users.map(fn).slice(0, K).
 //
 // Compares:
-//   1. Full draft 1000 rows (no slice)
-//   2. draft 1000 rows then JS .slice(0, 50)
-//   3. draft with chained .slice(0, 50) — should fuse via planner
+//   1. Full draft N rows (no slice)
+//   2. draft N rows then JS .slice(0, K)
+//   3. draft with chained .slice(0, K) — should fuse via planner
 //
 // Verifies the slice tag is detected and the decoder honors the bounds.
 
@@ -43,10 +43,6 @@ function makeUsersBytes(n) {
   return b.finalize();
 }
 
-const N = 1000;
-const SLICE_END = 50;
-const bytes = makeUsersBytes(N);
-
 const PROJECT_USER_ROW = (u) => ({
   id: u.id,
   name: u.name,
@@ -54,21 +50,12 @@ const PROJECT_USER_ROW = (u) => ({
   active: u.active,
 });
 const PROJECT_FULL = (r) => r.users.map(PROJECT_USER_ROW);
-const PROJECT_SLICED = (r) => r.users.map(PROJECT_USER_ROW).slice(0, SLICE_END);
-const PROJECT_SLICED_OFFSET = (r) => r.users.map(PROJECT_USER_ROW).slice(20, SLICE_END);
 
-// Smoke check
-{
-  const r1 = openUserList(cpp, bytes).draft(PROJECT_FULL);
-  const r2 = openUserList(cpp, bytes).draft(PROJECT_SLICED);
-  const r3 = openUserList(cpp, bytes).draft(PROJECT_SLICED_OFFSET);
-  if (r1.length !== N) throw new Error("full len");
-  if (r2.length !== SLICE_END) throw new Error(`slice len=${r2.length}`);
-  if (r2[0].id !== 1) throw new Error("slice first id");
-  if (r2[SLICE_END - 1].id !== SLICE_END) throw new Error(`slice last id=${r2[SLICE_END-1].id}`);
-  if (r3.length !== SLICE_END - 20) throw new Error(`offset slice len=${r3.length}`);
-  if (r3[0].id !== 21) throw new Error(`offset slice first id=${r3[0].id}`);
-  if (r3[r3.length - 1].id !== SLICE_END) throw new Error("offset last id");
+function makeSliceFns(sliceStart, sliceEnd) {
+  return {
+    sliced: (r) => r.users.map(PROJECT_USER_ROW).slice(0, sliceEnd),
+    offset: (r) => r.users.map(PROJECT_USER_ROW).slice(sliceStart, sliceEnd),
+  };
 }
 
 let sink;
@@ -94,9 +81,28 @@ function bench(label, fn, ms = 700) {
   );
 }
 
-console.log(`\nSlice fusion bench — N=${N}, slice=[0..${SLICE_END}]`);
-bench("draft full 1000 rows", () => openUserList(cpp, bytes).draft(PROJECT_FULL).length);
-bench("draft full + JS .slice(0, 50)", () => openUserList(cpp, bytes).draft(PROJECT_FULL).slice(0, SLICE_END).length);
-bench("draft with chained .slice(0, 50) [fused]", () => openUserList(cpp, bytes).draft(PROJECT_SLICED).length);
-bench("draft with .slice(20, 50) [fused, start=20]", () => openUserList(cpp, bytes).draft(PROJECT_SLICED_OFFSET).length);
+console.log("\nSlice fusion bench — small / medium / large");
+for (const n of [10, 100, 1000]) {
+  const bytes = makeUsersBytes(n);
+  const sliceEnd = Math.min(50, n);
+  const sliceStart = Math.min(20, Math.max(0, sliceEnd - 1));
+  const { sliced, offset } = makeSliceFns(sliceStart, sliceEnd);
+
+  // Smoke check per size.
+  const r1 = openUserList(cpp, bytes).draft(PROJECT_FULL);
+  const r2 = openUserList(cpp, bytes).draft(sliced);
+  const r3 = openUserList(cpp, bytes).draft(offset);
+  if (r1.length !== n) throw new Error(`full len n=${n}`);
+  if (r2.length !== sliceEnd) throw new Error(`slice len n=${n}: ${r2.length}`);
+  if (sliceEnd > 0 && r2[0].id !== 1) throw new Error(`slice first id n=${n}`);
+  if (sliceEnd > 0 && r2[sliceEnd - 1].id !== sliceEnd) throw new Error(`slice last id n=${n}`);
+  if (r3.length !== sliceEnd - sliceStart) throw new Error(`offset len n=${n}: ${r3.length}`);
+  if (r3.length > 0 && r3[0].id !== sliceStart + 1) throw new Error(`offset first id n=${n}: ${r3[0].id}`);
+
+  console.log(`\nN=${n} (${bytes.byteLength} wire bytes), slice=[0..${sliceEnd}], offset=[${sliceStart}..${sliceEnd}]`);
+  bench(`draft full ${n} rows`, () => openUserList(cpp, bytes).draft(PROJECT_FULL).length);
+  bench(`draft full + JS .slice(0, ${sliceEnd})`, () => openUserList(cpp, bytes).draft(PROJECT_FULL).slice(0, sliceEnd).length);
+  bench(`draft with chained .slice(0, ${sliceEnd}) [fused]`, () => openUserList(cpp, bytes).draft(sliced).length);
+  bench(`draft with .slice(${sliceStart}, ${sliceEnd}) [fused]`, () => openUserList(cpp, bytes).draft(offset).length);
+}
 if (sink == null) console.log("sink", sink);
