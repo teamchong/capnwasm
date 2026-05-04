@@ -1,5 +1,7 @@
 # How decode/encode actually works
 
+> Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
+
 A user-facing explanation of what happens between `await cap.method()` and
 `reader.fieldFoo`. Useful when you're trying to reason about cost or
 benchmark against capnweb / gRPC-Web / raw JSON.

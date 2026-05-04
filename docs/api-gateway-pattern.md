@@ -1,5 +1,7 @@
 # One typed public API across many internal services
 
+> Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
+
 This is the problem capnweb doesn't solve and was never built to solve. capnweb is a JSON-RPC transport with a 1:1 client/server pairing. Both sides are JS, both sides import the same module, and the wire format is JSON. If you have five internal services in three languages with mixed contracts (gRPC, OpenAPI, REST without a spec), capnweb gives you exactly one option: stand up a sixth service that re-implements all of it in JS, and then call that from the browser.
 
 capnwasm gives you the three pieces that compose into a gateway:

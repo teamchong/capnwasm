@@ -1,5 +1,7 @@
 # Vite plugin
 
+> Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
+
 `capnwasm/vite-plugin` makes the codegen step invisible. Drop it into
 `vite.config.ts` and your `.capnp` schemas (and `.ts` interfaces with
 `@rest` directives, and OpenAPI specs) generate during the build. No

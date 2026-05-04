@@ -1,5 +1,7 @@
 # Wire inspector
 
+> Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
+
 A standalone Cap'n Proto wire inspector hosted as a single file on the docs site. **Not part of the npm package**. You don't pay for it in production. Paste one line into DevTools when you need to debug what's actually on the wire.
 
 DevTools' Network panel handles JSON natively (pretty-print, expand, search) so this tool is useless for JSON. The gap it fills is **capnp binary payloads**, which DevTools shows as raw bytes / `<Binary Data>` / failed-to-parse-as-text. No built-in decoder, no schema awareness. Paste the inspector and you get an expandable decoded tree.
@@ -25,18 +27,29 @@ Both produce the same expandable tree as the live-fetch path: segment count, roo
 
 Tolerant of whatever DevTools actually pasted: whitespace, newlines, URL-safe base64, hex with `0x` prefixes / commas / colons all work.
 
+## Try it in DevTools Console
+
+On the local docs site or production site, open DevTools Console and paste:
+
+```js
+const cw = await import(location.origin + "/inspect.js");
+await cw.inspect(fetch("/api/users/42"));
+```
+
+That hits the live Worker endpoint, receives a real Cap'n Proto `User` frame, and prints the expandable decode tree in the console.
+
 ## Live-fetch form (when you don't have the bytes yet)
 
 If you want to fire a request from the console rather than re-using one DevTools already saw:
 
 ```js
-cw.inspect(fetch("/api/user.capnp"));
+cw.inspect(fetch("/api/users/42"));
 ```
 
 `inspect()` accepts:
 
 ```js
-cw.inspect(fetch("/api/user.capnp"));            // Promise<Response>
+cw.inspect(fetch("/api/users/42"));              // Promise<Response>
 cw.inspect(response);                            // Response
 cw.inspect(arrayBuffer);                         // ArrayBuffer
 cw.inspect(uint8Array);                          // Uint8Array
@@ -55,7 +68,7 @@ import { load } from "capnwasm/browser";
 
 const cpp = await load(...);
 
-cw.inspect(fetch("/api/user.capnp"), { reader: UserReader, cpp });
+cw.inspect(fetch("/api/users/42"), { reader: UserReader, cpp });
 cw.inspectBase64("CAAAAAYAAAA...",   { reader: UserReader, cpp });
 cw.inspectHex("08 00 00 00 ...",      { reader: UserReader, cpp });
 // → { id: 42n, name: "Alice", email: "...", joinedAtMs: ..., active: true, avatar: Uint8Array }

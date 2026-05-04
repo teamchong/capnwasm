@@ -1,5 +1,7 @@
 # Runtime-schema reader / builder
 
+> Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
+
 Read and write Cap'n Proto messages without running `npx capnwasm gen`. The schema lives as plain JS data, the wasm runtime stays the same. This is the same bytes a codegen reader for the same schema would see.
 
 ## When to use

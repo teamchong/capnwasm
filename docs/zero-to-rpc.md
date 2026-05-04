@@ -1,5 +1,7 @@
 # Zero to working RPC in 5 minutes
 
+> Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
+
 A concrete walkthrough: schema → codegen → server → client → live call. Node on both sides; the same client code runs in browsers without changes once you serve the wasm asset.
 
 ## 1. Install

@@ -1,5 +1,7 @@
 # Schema checks and conformance limits
 
+> Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
+
 > Learning notes from building capnwasm and studying schema-driven API
 > tooling. This is not a platform proposal: it names the pieces this repo
 > experiments with, the pieces it does not cover, and the gaps that still

@@ -1,5 +1,7 @@
 # Transports
 
+> Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
+
 capnwasm RPC speaks the Cap'n Proto wire format over a pluggable Transport. A Transport is just `{ send(bytes), onMessage(handler), onClose(handler), close() }`. Anything that can move framed bytes back and forth qualifies.
 
 Three transports ship in the box. Pick by the request shape, not by the runtime.

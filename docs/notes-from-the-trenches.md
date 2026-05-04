@@ -1,5 +1,7 @@
 # Notes from the trenches: rebuilding capnweb's wire format with real Cap'n Proto in wasm
 
+> Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
+
 A field report on what happens when you take Cap'n Proto's actual C++ runtime, statically compile it to wasm, wire it up to JS-side codegen, and benchmark against capnweb. I had a hypothesis ("the binary wire is doing real work that JSON can't") and a few well-known traps to avoid. The actual surprises were elsewhere.
 
 ## Setup
@@ -233,35 +235,13 @@ In-process bench, both peers in the same Node process via a memory transport pai
 | OpenAPI client codegen | yes | structurally no |
 | Schema requirement | yes | no |
 
-The frame: **capnweb kept Cap'n Proto's RPC semantics and dropped the wire format. capnwasm keeps both.** For workloads where the wire matters. Binary data, cross-language interop, sustained throughput. The original Cap'n Proto wire wins by a lot. For workloads where the wire doesn't matter. Small JSON-shaped payloads in a JS-only stack. Capnweb's 18 KB brotli bundle and 0.2 ms cold start are unbeatable.
+The frame: **capnweb keeps Cap'n Proto-style RPC semantics in a compact JS-only package with a JSON-shaped wire. capnwasm keeps the Cap'n Proto binary wire too, by paying for a wasm runtime.** For workloads where the wire matters (binary data, cross-language interop, sustained throughput), the binary wire can win by a lot. For workloads where the wire doesn't matter (small JSON-shaped payloads in a JS-only stack), capnweb's 18 KB brotli bundle and fast cold start are the better tradeoff.
 
-Neither one is wrong. They're optimized for different things. The mistake the framing in capnweb's docs encourages is treating the two halves as equally optional, when in fact dropping the wire format gives away a measurable amount of perf on the workloads that look like 2026 traffic (binary, big, bursty).
+Neither one is wrong. They're optimized for different things. capnweb intentionally favors a small JS-only bundle and a JSON-shaped wire that feels natural in JavaScript apps. capnwasm explores the opposite choice: keep the binary Cap'n Proto wire and pay the wasm/runtime cost. The useful result is the boundary between those choices: capnweb is better for tiny JS-shaped traffic and bundle budgets; capnwasm becomes interesting when the workload is binary-heavy, large, sparse, or cross-language.
 
-## What's been built since this writeup
+## OpenAPI ↔ Cap'n Proto work
 
-The shorter list below was the original "what I'd want next". It's now mostly built:
-
-1. **Schemaless dynamic reader**: shipped as `capnwasm/dynamic` (`js/dynamic.mjs`).
-2. **N+1 across `await`**: shipped as `capnwasm/pipeline`. Explicit batch composition with byte-level result splicing into later params; one round-trip for N dependent calls. Includes optional `validate()` hook so server can reject batch shapes (the GraphQL-persisted-query analog).
-3. **Capnweb-wire compat shim**: shipped as `capnwasm/capnweb-wire`. `JsonWireSession` speaks capnweb's newline-delimited JSON protocol; tested against the real capnweb dist via MessagePort. Lets a capnwasm client talk to an existing capnweb server unchanged.
-
-Plus everything else that came up alongside:
-
-- **Reconnect** (`capnwasm/reconnect`). Auto-reopen with backoff, `onReconnect` hook.
-- **Federation router** (`capnwasm/router`). Gateway dispatches by interface ID to backend caps.
-- **Sturdyrefs** (`capnwasm/sturdyref`). Persistable handles; pluggable store interface.
-- **Three-party handoff** (`capnwasm/handoff`). Alice introduces Carol to Bob; Carol calls Bob directly.
-- **Stream flow control**. Per-stream credit window via `windowSize` opt-in; STREAM_WINDOW frame.
-- **Metrics** (`capnwasm/metrics`). `session.onMetric()` event hook + in-memory aggregator.
-- **MCP / Anthropic tool definitions** (`capnwasm/mcp`). Convert a manifest into LLM-ready tool schemas.
-- **Multi-language wire interop**. Proven with `test/interop.test.mjs` against the upstream `capnp` 1.3.0 binary.
-- **Schema evolution**. Proven with `test/schema_evolution.test.mjs` for both directions of version skew.
-
-What's still open:
-
-1. **Promise-pipelining smarter batching** *across capability chains*. For code like `orders.get(user.get().id)`, capnwasm already pipelines (one frame, one round-trip) when the chained call uses a returned cap. The pipeline-runner approach above handles the scalar-field-dependency case. The remaining gap is automatic detection of pipelinable shapes inside a synchronous expression chain. Currently the user has to write the pipelining form explicitly or use `capnwasm/pipeline`.
-
-2. **A real production deploy** with real workloads, real RTT, and real numbers. The in-process bench is a proxy for "what does the protocol cost"; the real number that matters is "how many MS does my user wait for the page to render."
+Separate from the RPC perf work, this repo now has a manifest pipeline that moves between OpenAPI, TypeScript REST interfaces, and Cap'n Proto schemas: `manifest`, `emit-capnp`, `emit-openapi`, `lock`, `compat`, `probe`, `emit-codec`, and `emit-agents` / `mcp`. The tradeoff is the same theme as the rest of the repo: JSON/OpenAPI is best for public docs, partner APIs, and tiny text payloads; Cap'n Proto becomes interesting when binary payloads, sparse reads, cross-language RPC, or explicit schema evolution matter.
 
 ## Reproducing
 

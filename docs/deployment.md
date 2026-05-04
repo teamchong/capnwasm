@@ -1,5 +1,7 @@
 # Production deployment
 
+> Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
+
 What changes between `node server.mjs` on your laptop and a real production server. Patterns that have come up in actual use.
 
 ## Pick a transport

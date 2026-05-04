@@ -1,5 +1,7 @@
 # capnwasm vs gRPC-Web
 
+> Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
+
 A fair question that comes up: gRPC-Web exists, has Google's name on it, and is the obvious choice for "binary RPC in the browser." When does capnwasm make sense instead?
 
 ## Quick answer

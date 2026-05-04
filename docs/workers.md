@@ -1,5 +1,7 @@
 # capnwasm in Cloudflare Workers
 
+> Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
+
 capnwasm runs in Workers via the **slim wasm + precompiled-Module** pattern shown below. Workers blocks dynamic code generation (`WebAssembly.compile(bytes)` at runtime), so the default `import "capnwasm"` entry (which decompresses bytes + compiles them at load time) does NOT work in Workers. Use `import wasmModule from "capnwasm/capnp.slim.wasm"` so Wrangler precompiles the `.wasm` into a `WebAssembly.Module` at deploy time, then pass the module to `CapnCpp.load(module)`.
 
 Three transport shapes work on top of that. Pick by the request pattern:

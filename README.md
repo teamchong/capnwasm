@@ -1,8 +1,10 @@
 # capnwasm
 
-> **When this matters:** you're moving binary data (no base64 tax), doing sparse reads on large payloads, or talking to non-JS services over the Cap'n Proto wire. If your traffic is pure JS-to-JS text and you want the smallest possible bundle, capnweb is the right call.
+> **Project framing:** capnwasm is me trying to learn Cap'n Proto and capnweb by building the opposite experiment: keep the real Cap'n Proto binary wire in the browser, compile the upstream C++ runtime to wasm, and measure what changes. This is not a scoreboard where Cap'n Proto always wins; the useful question is the tradeoff boundary.
+>
+> **When this matters:** you're moving binary data (no base64 tax), doing sparse reads on large payloads, or talking to non-JS services over the Cap'n Proto wire. If your traffic is tiny JS-to-JS objects, pure text, or you want the smallest possible bundle, JSON/capnweb is often the right call.
 
-I built this to learn how Cloudflare's [capnweb](https://github.com/cloudflare/capnweb) works under the hood and to understand the tradeoffs it makes. capnweb deliberately dropped Cap'n Proto's binary wire format to fit a 21 KB JS-only bundle; I wanted to see what the inverse experiment looks like, keep the binary wire and statically compile the upstream Cap'n Proto C++ to wasm, and measure what that costs and what it buys.
+I built this to learn how Cloudflare's [capnweb](https://github.com/cloudflare/capnweb) works under the hood and to understand the tradeoffs it makes. capnweb chooses a compact JS-only implementation with a JSON-shaped wire; I wanted to see what the inverse experiment looks like, keep the binary wire and statically compile the upstream Cap'n Proto C++ to wasm, and measure what that costs and what it buys.
 
 capnwasm sits at: ~17 KB more brotli than capnweb, but a real Cap'n Proto runtime in the browser, raw bytes for binary data, sparse-access reads on large payloads, and wire interop with C++/Rust/Go services. The numbers below are findings from this exploration, not a scoreboard.
 
@@ -200,7 +202,7 @@ Subpath imports also work standalone (`capnwasm/http-batch` alone is 1.3 KB gz, 
 
 ```js
 const cw = await import("https://capnwasm.teamchong.net/inspect.js");
-cw.inspect(fetch("/api/user.capnp"));   // expandable tree in the console
+cw.inspect(fetch("/api/users/42"));     // expandable tree in the console
 ```
 
 **Live three-way playground** at [capnwasm.teamchong.net](https://capnwasm.teamchong.net/). REST/JSON vs capnweb vs capnwasm side-by-side, fetching the same fixtures and rendering to DOM in your browser. Plus a [WebSocket RPC bench](https://capnwasm.teamchong.net/rpc) that runs burst, pipelining, and 64 KB binary-echo workloads against the same Worker endpoints used after deploy. Source in [`web/`](web/). `pnpm dev` runs the Wrangler-backed local server.

@@ -1,9 +1,13 @@
 # web/
 
+> **Project framing:** this site is part of a learning/exploration repo: what changes if the browser keeps Cap'n Proto's binary wire instead of converting everything into JSON? The docs should show the tradeoff boundary: zero-copy/sparse/raw binary can win; JSON/capnweb can be better for tiny objects, pure JS-to-JS apps, and bundle size.
+
 Wrangler-served docs site for capnwasm. The static assets are built with Vite, then served through the Worker configured in `../wrangler.json`.
 
 - `/`; landing with overview and headline numbers vs capnweb
 - `/playground.html`; live in-browser bench (REST + capnweb + capnwasm)
+- `/dynamic.html`; runtime-schema demo (no codegen): define schema as JS data, build/read, Worker echo
+- `/openapi.html`; live OpenAPI → manifest → `.capnp` conversion demo
 - `/vs-capnweb.html`; full comparison: where capnwasm wins, loses, and ties
 
 ## Run locally
@@ -13,7 +17,7 @@ pnpm install
 pnpm dev          # builds web/dist and runs Wrangler at http://127.0.0.1:8787
 ```
 
-`pnpm dev` runs from the repo root. It first builds `web/dist`, then starts Wrangler so the same Worker entrypoint handles `/api/*`, `/capnwasm`, `/capnweb`, `/chat`, `/capnwasm-http`, and `/capnweb-http` locally.
+`pnpm dev` runs from the repo root. It first builds `web/dist`, then starts Wrangler so the same Worker entrypoint handles `/api/*`, `/capnwasm`, `/capnweb`, `/chat`, `/dynamic`, `/capnwasm-http`, and `/capnweb-http` locally.
 
 The Vite build first runs `web`'s `prepare` script, which:
 
