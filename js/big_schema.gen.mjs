@@ -13,40 +13,273 @@ const _F64_VIEW_BUF = new ArrayBuffer(8);
 const _F64_VIEW_U32 = new Uint32Array(_F64_VIEW_BUF);
 const _F64_VIEW_F64 = new Float64Array(_F64_VIEW_BUF);
 
+const _LIST_HELPERS = {
+  TD: SHARED_TEXT_DECODER,
+  F32U: _F32_VIEW_U32, F32F: _F32_VIEW_F32,
+  F64U: _F64_VIEW_U32, F64F: _F64_VIEW_F64,
+};
+
 // Per-(class, field-list) cache of pre-encoded request bytes. Compiling the
 // request is a tight loop but it's still wasted work in a hot pick loop.
 // We key on a frozen Uint8Array of the descriptor bytes so identical field
 // sets (the common case in batch processing) hit the cache.
 const _PICK_REQ_CACHE = new WeakMap();  // fields -> Map<namesKey, Uint8Array>
+const _DRAFT_PLAN_CACHE = new WeakMap(); // fields -> WeakMap<fn, plan>
 
 function _getPickRequest(fields, names) {
   let perFields = _PICK_REQ_CACHE.get(fields);
   if (!perFields) { perFields = new Map(); _PICK_REQ_CACHE.set(fields, perFields); }
   const key = names.join("\0");
-  let req = perFields.get(key);
-  if (req) return req;
+  let entry = perFields.get(key);
+  if (entry) return entry;
   const buf = new Uint8Array(4 + names.length * 5);
   const dv = new DataView(buf.buffer);
   dv.setUint32(0, names.length, true);
+  // Precompute the field-descriptor array alongside the request bytes. Both
+  // are pure functions of (fields, names); caching them together means the
+  // hot pick path skips a names.length-iteration property-lookup loop on
+  // every call. The cached entry shape is { req, descs, listDecoder } where
+  // listDecoder is lazily compiled the first time a List(Struct) projection
+  // hits this field-set (most Pick callers never trigger it).
+  const descs = new Array(names.length);
   let pos = 4;
   for (let i = 0; i < names.length; i++) {
     const d = fields[names[i]];
     if (!d) throw new Error("unknown field: " + names[i]);
+    descs[i] = d;
     buf[pos] = d.kind; pos += 1;
     dv.setUint32(pos, d.off, true); pos += 4;
   }
-  perFields.set(key, buf);
-  return buf;
+  entry = { req: buf, descs, listDecoder: null };
+  perFields.set(key, entry);
+  return entry;
+}
+
+// Build a specialized JS function that decodes a row-tape produced by
+// cpp_any_list_project into an Array of plain row objects, with the
+// per-cell switch dispatch fully unrolled.
+//
+// The unrolled body lets V8 emit a single inline-cache chain per row, gives
+// the row a stable hidden class via an object literal with all fields named
+// in declaration order, and removes the per-cell descs[]/names[] indexing.
+//
+// Compiled once per (fields, names) pair, then cached on the same entry
+// the request bytes live on. Roughly halves JS materialization cost vs the
+// generic switch loop on the list-1000 user-row workload.
+function _compileListDecoder(descs, names, applyMapFn, filter) {
+  const cols = descs.length;
+  const rowStride = cols * 4;
+  // Validate filter: predicate field must be in projected names AND of a type
+  // we know how to fast-check from a single header. For now we only support
+  // boolean fields (cell is 0 or 1). If unsupported, drop filter — decoder
+  // becomes the no-filter variant and the caller's outer fn re-runs filter
+  // in JS. Correctness preserved.
+  let filterColIdx = -1;
+  if (filter) {
+    filterColIdx = names.indexOf(filter.field);
+    if (filterColIdx < 0 || (descs[filterColIdx] && descs[filterColIdx].type !== "bool")) {
+      filter = null;
+      filterColIdx = -1;
+    }
+  }
+  // Identify runs of consecutive text fields (>=2) that share a contiguous
+  // payload region — i.e. no payload-emitting field appears between them.
+  // For such runs we emit ONE TextDecoder.decode call per row covering the
+  // entire payload, then substring() per field. V8's substring on a freshly
+  // decoded string is cheap, while each TextDecoder.decode has setup cost.
+  // Measured on the 4-field user-row workload: this halves text-decode time
+  // and shaves ~30% off list-1000 materialization.
+  const PAYLOAD_BREAK = new Set(["uint64", "int64", "float64", "data"]);
+  const isTextRunMember = (i) => descs[i] && descs[i].type === "text";
+  const textBatch = new Array(cols).fill(null);
+  for (let i = 0; i < cols; i++) {
+    if (!isTextRunMember(i) || textBatch[i] !== null) continue;
+    let j = i + 1;
+    while (j < cols) {
+      if (isTextRunMember(j)) { j++; continue; }
+      if (PAYLOAD_BREAK.has(descs[j] && descs[j].type)) break;
+      j++;
+    }
+    // j is one past the last index that belongs to this run, considering
+    // non-payload-emitting fields between text fields (small scalars / bool).
+    // Filter run members back to actual text indices for emission.
+    const members = [];
+    for (let k = i; k < j; k++) if (isTextRunMember(k)) members.push(k);
+    if (members.length >= 2) {
+      // Tag each member with a shared run id and its position in the run.
+      const runId = i;
+      for (let p = 0; p < members.length; p++) {
+        textBatch[members[p]] = { runId, pos: p, total: members.length, members };
+      }
+    }
+  }
+  const out = [];
+  out.push(`const TD = H.TD;`);
+  out.push(`const F32U = H.F32U, F32F = H.F32F, F64U = H.F64U, F64F = H.F64F;`);
+  out.push(`if (start === undefined) start = 0;`);
+  out.push(`if (limit === undefined) limit = rows;`);
+  out.push(`if (limit > rows) limit = rows;`);
+  out.push(`if (start > limit) start = limit;`);
+  out.push(`const arr = new Array(limit - start);`);
+  if (filter) out.push(`let arrIdx = 0;`);
+  out.push(`let readPos = 8 + rows * ${rowStride};`);
+  // Skip phase: when start > 0 we walk rows [0, start) advancing readPos by
+  // the payload size of each row but never materializing. Each text/data
+  // field contributes its header value (or 0 for missing); each
+  // u64/i64/f64 contributes 8; smaller scalars and booleans contribute 0.
+  // Specialized at codegen time so V8 sees a straight-line skip body.
+  out.push(`for (let row = 0; row < start; row++) {`);
+  out.push(`  const cellBase = 8 + row * ${rowStride};`);
+  for (let col = 0; col < cols; col++) {
+    const d = descs[col];
+    const headerOff = `cellBase + ${col * 4}`;
+    if (d.type === "text" || d.type === "data") {
+      out.push(`  { const _h = dv.getUint32(${headerOff}, true); if (_h !== 0xFFFFFFFF) readPos += _h; }`);
+    } else if (d.type === "uint64" || d.type === "int64" || d.type === "float64") {
+      out.push(`  readPos += 8;`);
+    }
+  }
+  out.push(`}`);
+  out.push(`for (let row = start; row < limit; row++) {`);
+  out.push(`  const cellBase = 8 + row * ${rowStride};`);
+  if (filter) {
+    // Predicate check: a single u32 read at the predicate field's cell
+    // header. For boolean fields the C++ projector writes 0 or 1.
+    const predRead = `dv.getUint32(cellBase + ${filterColIdx * 4}, true)`;
+    const predCmp = filter.kind === "truthy" ? "=== 0" : "!== 0";
+    out.push(`  if (${predRead} ${predCmp}) {`);
+    // Same skip body as the slice-skip phase: walk every payload-emitting
+    // field and advance readPos by its byte size.
+    for (let col = 0; col < cols; col++) {
+      const d = descs[col];
+      if (d.type === "text" || d.type === "data") {
+        out.push(`    { const _h = dv.getUint32(cellBase + ${col * 4}, true); if (_h !== 0xFFFFFFFF) readPos += _h; }`);
+      } else if (d.type === "uint64" || d.type === "int64" || d.type === "float64") {
+        out.push(`    readPos += 8;`);
+      }
+    }
+    out.push(`    continue;`);
+    out.push(`  }`);
+  }
+  for (let col = 0; col < cols; col++) {
+    const d = descs[col];
+    const headerOff = `cellBase + ${col * 4}`;
+    const batch = textBatch[col];
+    if (batch && batch.pos === 0) {
+      // Emit the batched decode at the first member of the run. All
+      // member _v* locals are produced here, so subsequent text members
+      // skip individual emission below.
+      out.push(`  let ${batch.members.map((m) => `_v${m}`).join(", ")};`);
+      out.push(`  {`);
+      for (let p = 0; p < batch.total; p++) {
+        const m = batch.members[p];
+        out.push(`    const _h${m} = dv.getUint32(cellBase + ${m * 4}, true);`);
+        out.push(`    const _b${m} = _h${m} === 0xFFFFFFFF ? 0 : _h${m};`);
+      }
+      const totalExpr = batch.members.map((m) => `_b${m}`).join(" + ");
+      out.push(`    const _total = ${totalExpr};`);
+      out.push(`    const _blob = _total === 0 ? "" : TD.decode(u8.subarray(out + readPos, out + readPos + _total));`);
+      // Walk substrings.
+      let cumExpr = "0";
+      for (let p = 0; p < batch.total; p++) {
+        const m = batch.members[p];
+        const startExpr = cumExpr;
+        const endExpr = `${cumExpr} + _b${m}`;
+        out.push(
+          `    _v${m} = _h${m} === 0xFFFFFFFF ? undefined : _h${m} === 0 ? "" : _blob.substring(${startExpr}, ${endExpr});`,
+        );
+        cumExpr = endExpr;
+      }
+      out.push(`    readPos += _total;`);
+      out.push(`  }`);
+      continue;
+    }
+    if (batch) {
+      // Subsequent member of an already-emitted run; nothing to do here
+      // because the batch block produced its _v* local.
+      continue;
+    }
+    switch (d.type) {
+      case "text":
+        out.push(`  let _v${col};`);
+        out.push(`  { const _h = dv.getUint32(${headerOff}, true);`);
+        out.push(`    if (_h === 0xFFFFFFFF) _v${col} = undefined;`);
+        out.push(`    else if (_h === 0) _v${col} = "";`);
+        out.push(`    else { _v${col} = TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }`);
+        break;
+      case "data":
+        out.push(`  let _v${col};`);
+        out.push(`  { const _h = dv.getUint32(${headerOff}, true);`);
+        out.push(`    if (_h === 0xFFFFFFFF) _v${col} = undefined;`);
+        out.push(`    else { _v${col} = u8.slice(out + readPos, out + readPos + _h); readPos += _h; } }`);
+        break;
+      case "bool":
+        out.push(`  const _v${col} = dv.getUint32(${headerOff}, true) === 1;`);
+        break;
+      case "uint8":
+      case "uint16":
+        out.push(`  const _v${col} = dv.getUint32(${headerOff}, true);`);
+        break;
+      case "int8":
+        out.push(`  const _v${col} = (dv.getUint32(${headerOff}, true) << 24) >> 24;`);
+        break;
+      case "int16":
+        out.push(`  const _v${col} = (dv.getUint32(${headerOff}, true) << 16) >> 16;`);
+        break;
+      case "uint32":
+        out.push(`  const _v${col} = dv.getUint32(${headerOff}, true) >>> 0;`);
+        break;
+      case "int32":
+        out.push(`  const _v${col} = dv.getUint32(${headerOff}, true) | 0;`);
+        break;
+      case "float32":
+        out.push(`  F32U[0] = dv.getUint32(${headerOff}, true) >>> 0;`);
+        out.push(`  const _v${col} = F32F[0];`);
+        break;
+      case "uint64":
+      case "int64":
+        out.push(`  let _v${col};`);
+        out.push(`  { const _lo = dv.getUint32(readPos, true);`);
+        out.push(`    const _hi = dv.getInt32(readPos + 4, true);`);
+        out.push(`    _v${col} = (_hi >= -0x200000 && _hi <= 0x1FFFFF) ? _hi * 4294967296 + _lo : dv.getBigInt64(readPos, true);`);
+        out.push(`    readPos += 8; }`);
+        break;
+      case "float64":
+        out.push(`  F64U[0] = dv.getUint32(readPos, true);`);
+        out.push(`  F64U[1] = dv.getUint32(readPos + 4, true);`);
+        out.push(`  const _v${col} = F64F[0];`);
+        out.push(`  readPos += 8;`);
+        break;
+      default:
+        out.push(`  const _v${col} = undefined;`);
+    }
+  }
+  // Object literal with the projected names — V8 freezes one hidden class
+  // for the row shape. Stringified names are valid in literal-key form.
+  // When applyMapFn is set, the user's per-row callback consumes the
+  // literal in place; we never store the raw row object in arr.
+  const litParts = names.map((n, i) => `${JSON.stringify(n)}: _v${i}`);
+  const targetExpr = filter ? "arr[arrIdx++]" : "arr[row - start]";
+  if (applyMapFn) {
+    out.push(`  ${targetExpr} = mapFn({ ${litParts.join(", ")} });`);
+  } else {
+    out.push(`  ${targetExpr} = { ${litParts.join(", ")} };`);
+  }
+  out.push(`}`);
+  if (filter) out.push(`arr.length = arrIdx;`);
+  out.push(`return arr;`);
+  return new Function("u8", "dv", "out", "rows", "H", "mapFn", "start", "limit", out.join("\n"));
 }
 
 function _capnwasmPick(cpp, fields, names) {
-  // Cached request prep. Same names hit the WeakMap and skip the encode loop.
-  const req = _getPickRequest(fields, names);
+  // Cached request prep + descriptor array. Same names hit the WeakMap and
+  // skip both the encode loop and the per-call descs-rebuild.
+  const entry = _getPickRequest(fields, names);
+  const req = entry.req;
+  const descs = entry.descs;
   const u8 = cpp._u8;
   const aux = cpp._auxPtr;
   u8.set(req, aux);
-  const descs = new Array(names.length);
-  for (let i = 0; i < names.length; i++) descs[i] = fields[names[i]];
   const written = cpp._exports.cpp_any_batch_read(req.length);
   if (!written) return Object.fromEntries(names.map((n) => [n, undefined]));
   const out = cpp._outPtr;
@@ -100,16 +333,291 @@ function _capnwasmPick(cpp, fields, names) {
   return result;
 }
 
+function _capnwasmListProject(cpp, ptrIndex, fields, names, mapFn, bounds, filter) {
+  const exp = cpp._exports;
+  if (typeof exp.cpp_any_list_project !== "function") return null;
+  if (filter && names.indexOf(filter.field) < 0) return null;
+  const entry = _getPickRequest(fields, names);
+  cpp._u8.set(entry.req, cpp._auxPtr);
+  const written = exp.cpp_any_list_project(ptrIndex, entry.req.length);
+  if (!written) return null;
+  const out = cpp._outPtr;
+  const u8 = cpp._u8;
+  const dv = new DataView(u8.buffer, out, written);
+  const rows = dv.getUint32(0, true);
+  const cols = dv.getUint32(4, true);
+  if (cols !== names.length) return null;
+  let start = 0, limit = rows;
+  if (bounds) {
+    start = bounds[0] | 0;
+    if (start > rows) start = rows;
+    const requested = bounds[1];
+    if (requested !== Infinity) {
+      const max = (requested | 0);
+      if (max < limit - start) limit = start + max;
+    }
+  }
+  if (!entry.listDecoders) entry.listDecoders = new Map();
+  const filterKey = filter ? filter.kind + ":" + filter.field : "";
+  const decKey = (mapFn ? "m" : "p") + "|" + filterKey;
+  let dec = entry.listDecoders.get(decKey);
+  if (!dec) { dec = _compileListDecoder(entry.descs, names, !!mapFn, filter); entry.listDecoders.set(decKey, dec); }
+  return dec(u8, dv, out, rows, _LIST_HELPERS, mapFn, start, limit);
+}
+
+const _STRUCT_FIELDS = Object.create(null);
+export class StaleReaderError extends Error {
+  constructor(message = "Cap'n Proto reader is stale because the CapnCpp runtime opened another message") {
+    super(message);
+    this.name = "StaleReaderError";
+  }
+}
+function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
+  if (!unsafe && typeof cpp._allocMessage === "function") {
+    const msg = cpp._allocMessage(bytes);
+    const dataPtr = cpp._openAnyMessage(msg);
+    return { dataPtr, msg, gen: cpp._generation };
+  }
+  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
+  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
+  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
+  if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();
+  return { dataPtr, msg: null, gen: cpp._generation ?? 0 };
+}
+function _ensureCapnwasmReader(reader) {
+  const gen = reader._cpp._generation ?? 0;
+  if (reader._gen === gen) return;
+  if (reader._rebind) {
+    reader._rebind();
+    reader._gen = reader._cpp._generation ?? 0;
+    reader._u8 = reader._cpp._u8;
+    reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    return;
+  }
+  if (reader._msg) {
+    reader._dataPtr = reader._cpp._openAnyMessage(reader._msg);
+    reader._gen = reader._cpp._generation ?? 0;
+    reader._u8 = reader._cpp._u8;
+    reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    return;
+  }
+  throw new StaleReaderError();
+}
+const _LIST_MAP_TAG = Symbol("_capnwasm_listMap");
+const _LIST_MAP_SLICE_TAG = Symbol("_capnwasm_listMapSlice");
+function _makeListMapTag(idx, slice) {
+  const tag = [];
+  tag[_LIST_MAP_TAG] = idx;
+  if (slice) tag[_LIST_MAP_SLICE_TAG] = slice;
+  Object.defineProperty(tag, "slice", { value: function(start, end) {
+    const s = (start === undefined) ? 0 : start;
+    if (!Number.isInteger(s) || s < 0) return Array.prototype.slice.call(this, start, end);
+    let limit = Infinity;
+    if (end !== undefined) {
+      if (!Number.isInteger(end) || end < s) return Array.prototype.slice.call(this, start, end);
+      limit = end - s;
+    }
+    const prevSlice = this[_LIST_MAP_SLICE_TAG];
+    const prevStart = prevSlice ? prevSlice[0] : 0;
+    const prevLimit = prevSlice ? prevSlice[1] : Infinity;
+    const newStart = prevStart + s;
+    const newLimit = Math.min(prevLimit - s, limit);
+    if (newLimit < 0) return [];
+    return _makeListMapTag(idx, [newStart, newLimit]);
+  }});
+  return tag;
+}
+function _parseSimplePredicate(fn) {
+  let src;
+  try { src = Function.prototype.toString.call(fn); } catch (_) { return null; }
+  const truthyRe = /^\s*(?:\(\s*([a-zA-Z_$][\w$]*)\s*\)|([a-zA-Z_$][\w$]*))\s*=>\s*(\1|\2)\.([a-zA-Z_$][\w$]*)\s*;?\s*$/;
+  const falsyRe = /^\s*(?:\(\s*([a-zA-Z_$][\w$]*)\s*\)|([a-zA-Z_$][\w$]*))\s*=>\s*!\s*(\1|\2)\.([a-zA-Z_$][\w$]*)\s*;?\s*$/;
+  let m = truthyRe.exec(src); if (m) return { kind: "truthy", field: m[4] };
+  m = falsyRe.exec(src); if (m) return { kind: "falsy", field: m[4] };
+  return null;
+}
+function _isShapePreservingMap(fn, leafFields) {
+  let src;
+  try { src = Function.prototype.toString.call(fn); } catch (_) { return false; }
+  const m = /^\s*(?:\(\s*([a-zA-Z_$][\w$]*)\s*\)|([a-zA-Z_$][\w$]*))\s*=>\s*\(\s*\{([\s\S]*)\}\s*\)\s*;?\s*$/.exec(src);
+  if (!m) return false;
+  const param = m[1] || m[2];
+  const body = m[3];
+  if (/[\/{\[\`'"]/.test(body)) return false;
+  const entries = body.split(",").map((s) => s.trim()).filter(Boolean);
+  if (entries.length !== leafFields.length) return false;
+  if (!/^[a-zA-Z_$][\w$]*$/.test(param)) return false;
+  const entryRe = new RegExp("^([a-zA-Z_$][\\w$]*)\\s*:\\s*" + param + "\\.([a-zA-Z_$][\\w$]*)$");
+  const set = new Set(leafFields);
+  const seen = new Set();
+  for (let i = 0; i < entries.length; i++) {
+    const em = entryRe.exec(entries[i]);
+    if (!em || em[1] !== em[2]) return false;
+    if (!set.has(em[1]) || seen.has(em[1])) return false;
+    seen.add(em[1]);
+  }
+  return true;
+}
+function _planRaw(fields, fn) {
+  const selected = [];
+  const seen = new Set();
+  const make = (schema, path) => new Proxy(Object.create(null), {
+    get(_, name) {
+      if (typeof name !== "string") return undefined;
+      const desc = schema[name];
+      if (!desc) return undefined;
+      const nextPath = path.concat(name);
+      const list = /^List\(([^)]+)\)$/.exec(desc.type);
+      if (list && _STRUCT_FIELDS[list[1]]) {
+        const recordMap = (childFn, filter) => {
+          const idx = selected.length;
+          const entry = { kind: "listMap", path: nextPath, inner: list[1], fn: childFn };
+          if (filter) entry.filter = filter;
+          selected.push(entry);
+          return idx;
+        };
+        const buildFusedProxy = (filter) => ({
+          map(childFn) {
+            const idx = recordMap(childFn, filter);
+            return _makeListMapTag(idx, null);
+          },
+          filter(predicateFn) {
+            const parsed = _parseSimplePredicate(predicateFn);
+            if (parsed) return buildFusedProxy(parsed);
+            return buildSafeProxy();
+          }
+        });
+        const buildSafeProxy = () => ({
+          map(childFn) { recordMap(childFn, null); return []; },
+          filter() { return buildSafeProxy(); }
+        });
+        return buildFusedProxy(null);
+      }
+      if (_STRUCT_FIELDS[desc.type]) return make(_STRUCT_FIELDS[desc.type], nextPath);
+      const key = nextPath.join(".");
+      if (!seen.has(key)) { seen.add(key); selected.push({ kind: "field", path: nextPath }); }
+      return undefined;
+    }
+  });
+  const result = fn(make(fields, []));
+  let outerListMapIdx = -1;
+  let outerSlice = null;
+  if (result && typeof result === "object" && _LIST_MAP_TAG in result) {
+    outerListMapIdx = result[_LIST_MAP_TAG];
+    if (_LIST_MAP_SLICE_TAG in result) outerSlice = result[_LIST_MAP_SLICE_TAG];
+  }
+  return { selected, outerListMapIdx, outerSlice };
+}
+function _compilePlan(selected, outerListMapIdx, outerSlice) {
+  const leaf = [];
+  const nestedRaw = new Map();
+  const listMapRaw = [];
+  let outerListMapPos = -1;
+  for (let i = 0; i < selected.length; i++) {
+    const item = selected[i];
+    const head = item.path[0];
+    if (!head) continue;
+    if (item.kind === "field" && item.path.length === 1) {
+      leaf.push(head);
+    } else if (item.kind === "listMap" && item.path.length === 1) {
+      if (i === outerListMapIdx) outerListMapPos = listMapRaw.length;
+      const lmEntry = { name: head, inner: item.inner, fn: item.fn };
+      if (item.filter) lmEntry.filter = item.filter;
+      listMapRaw.push(lmEntry);
+    } else {
+      let entry = nestedRaw.get(head);
+      if (!entry) { entry = []; nestedRaw.set(head, entry); }
+      const sliced = { kind: item.kind, path: item.path.slice(1) };
+      if (item.kind === "listMap") { sliced.inner = item.inner; sliced.fn = item.fn; }
+      entry.push(sliced);
+    }
+  }
+  const nested = [];
+  for (const [name, raw] of nestedRaw) nested.push({ name, plan: _compilePlan(raw, -1, null) });
+  const listMap = listMapRaw.map(({ name, inner, fn, filter }) => {
+    const innerPlan = _planDraft(_STRUCT_FIELDS[inner], fn).plan;
+    const shapePreserving = (innerPlan.nested.length === 0 && innerPlan.listMap.length === 0)
+      && _isShapePreservingMap(fn, innerPlan.leaf);
+    return { name, inner, fn, filter, plan: innerPlan, shapePreserving };
+  });
+  return { leaf, nested, listMap, outerListMapPos, outerSlice };
+}
+function _planDraft(fields, fn) {
+  const raw = _planRaw(fields, fn);
+  return { plan: _compilePlan(raw.selected, raw.outerListMapIdx, raw.outerSlice) };
+}
+function _getDraftPlan(fields, fn) {
+  let perFields = _DRAFT_PLAN_CACHE.get(fields);
+  if (!perFields) { perFields = new WeakMap(); _DRAFT_PLAN_CACHE.set(fields, perFields); }
+  let plan = perFields.get(fn);
+  if (!plan) { plan = _planDraft(fields, fn).plan; perFields.set(fn, plan); }
+  return plan;
+}
+function _materializeDraft(cpp, fields, plan) {
+  const out = {};
+  if (plan.leaf.length > 0) Object.assign(out, _capnwasmPick(cpp, fields, plan.leaf));
+  const exp = cpp._exports;
+  for (let i = 0; i < plan.nested.length; i++) {
+    const sub = plan.nested[i];
+    const desc = fields[sub.name];
+    if (!desc || !_STRUCT_FIELDS[desc.type]) { out[sub.name] = undefined; continue; }
+    if (exp.cpp_any_enter_struct(desc.off) !== 1) { out[sub.name] = null; continue; }
+    try { out[sub.name] = _materializeDraft(cpp, _STRUCT_FIELDS[desc.type], sub.plan); }
+    finally { exp.cpp_any_leave_struct(); }
+  }
+  for (let i = 0; i < plan.listMap.length; i++) {
+    const item = plan.listMap[i];
+    const desc = fields[item.name];
+    if (!desc || !_STRUCT_FIELDS[item.inner]) { out[item.name] = []; continue; }
+    const innerFields = _STRUCT_FIELDS[item.inner];
+    if (item.plan.nested.length === 0 && item.plan.listMap.length === 0) {
+      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf);
+      if (fast !== null) { out[item.name] = fast; continue; }
+    }
+    const size = exp.cpp_any_open_list(desc.off);
+    const arr = new Array(size);
+    for (let j = 0; j < size; j++) {
+      exp.cpp_any_open_list(desc.off);
+      if (exp.cpp_any_enter_list_at(j) !== 1) { arr[j] = null; continue; }
+      try { arr[j] = _materializeDraft(cpp, innerFields, item.plan); }
+      finally { exp.cpp_any_leave_struct(); }
+    }
+    out[item.name] = arr;
+  }
+  return out;
+}
+function _runDraft(cpp, fields, fn) {
+  const plan = _getDraftPlan(fields, fn);
+  if (plan.outerListMapPos >= 0 && plan.listMap.length > 0) {
+    const item = plan.listMap[plan.outerListMapPos];
+    const desc = fields[item.name];
+    if (desc && _STRUCT_FIELDS[item.inner] && item.plan.nested.length === 0 && item.plan.listMap.length === 0) {
+      const innerFields = _STRUCT_FIELDS[item.inner];
+      const fastFn = item.shapePreserving ? null : item.fn;
+      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf, fastFn, plan.outerSlice, item.filter);
+      if (fast !== null) return fast;
+    }
+  }
+  if (plan.nested.length === 0 && plan.listMap.length === 0) {
+    return fn(_capnwasmPick(cpp, fields, plan.leaf));
+  }
+  return fn(_materializeDraft(cpp, fields, plan));
+}
+
 export class BigUserReader {
-  constructor(cpp, dataPtr) {
+  constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
   get field0() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -117,6 +625,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field1() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(1);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -124,6 +633,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field2() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(2);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -131,6 +641,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field3() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(3);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -138,6 +649,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field4() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(4);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -145,6 +657,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field5() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(5);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -152,6 +665,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field6() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(6);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -159,6 +673,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field7() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(7);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -166,6 +681,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field8() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(8);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -173,6 +689,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field9() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(9);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -180,6 +697,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field10() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(10);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -187,6 +705,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field11() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(11);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -194,6 +713,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field12() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(12);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -201,6 +721,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field13() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(13);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -208,6 +729,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field14() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(14);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -215,6 +737,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field15() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(15);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -222,6 +745,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field16() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(16);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -229,6 +753,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field17() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(17);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -236,6 +761,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field18() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(18);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -243,6 +769,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field19() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(19);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -250,6 +777,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field20() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(20);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -257,6 +785,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field21() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(21);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -264,6 +793,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field22() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(22);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -271,6 +801,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field23() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(23);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -278,6 +809,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field24() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(24);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -285,6 +817,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field25() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(25);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -292,6 +825,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field26() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(26);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -299,6 +833,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field27() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(27);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -306,6 +841,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field28() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(28);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -313,6 +849,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field29() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(29);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -320,6 +857,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field30() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(30);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -327,6 +865,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field31() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(31);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -334,6 +873,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field32() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(32);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -341,6 +881,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field33() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(33);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -348,6 +889,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field34() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(34);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -355,6 +897,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field35() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(35);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -362,6 +905,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field36() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(36);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -369,6 +913,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field37() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(37);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -376,6 +921,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field38() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(38);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -383,6 +929,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field39() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(39);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -390,6 +937,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field40() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(40);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -397,6 +945,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field41() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(41);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -404,6 +953,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field42() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(42);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -411,6 +961,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field43() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(43);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -418,6 +969,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field44() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(44);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -425,6 +977,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field45() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(45);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -432,6 +985,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field46() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(46);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -439,6 +993,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field47() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(47);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -446,6 +1001,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field48() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(48);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -453,6 +1009,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field49() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(49);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -460,6 +1017,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field50() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(50);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -467,6 +1025,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field51() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(51);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -474,6 +1033,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field52() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(52);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -481,6 +1041,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field53() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(53);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -488,6 +1049,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field54() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(54);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -495,6 +1057,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field55() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(55);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -502,6 +1065,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field56() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(56);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -509,6 +1073,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field57() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(57);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -516,6 +1081,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field58() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(58);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -523,6 +1089,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field59() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(59);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -530,6 +1097,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field60() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(60);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -537,6 +1105,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field61() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(61);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -544,6 +1113,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field62() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(62);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -551,6 +1121,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field63() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(63);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -558,6 +1129,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field64() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(64);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -565,6 +1137,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field65() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(65);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -572,6 +1145,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field66() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(66);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -579,6 +1153,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field67() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(67);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -586,6 +1161,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field68() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(68);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -593,6 +1169,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field69() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(69);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -600,6 +1177,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field70() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(70);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -607,6 +1185,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field71() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(71);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -614,6 +1193,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field72() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(72);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -621,6 +1201,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field73() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(73);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -628,6 +1209,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field74() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(74);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -635,6 +1217,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field75() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(75);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -642,6 +1225,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field76() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(76);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -649,6 +1233,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field77() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(77);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -656,6 +1241,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field78() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(78);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -663,6 +1249,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field79() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(79);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -670,6 +1257,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field80() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(80);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -677,6 +1265,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field81() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(81);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -684,6 +1273,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field82() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(82);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -691,6 +1281,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field83() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(83);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -698,6 +1289,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field84() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(84);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -705,6 +1297,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field85() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(85);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -712,6 +1305,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field86() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(86);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -719,6 +1313,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field87() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(87);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -726,6 +1321,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field88() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(88);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -733,6 +1329,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field89() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(89);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -740,6 +1337,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field90() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(90);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -747,6 +1345,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field91() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(91);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -754,6 +1353,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field92() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(92);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -761,6 +1361,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field93() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(93);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -768,6 +1369,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field94() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(94);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -775,6 +1377,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field95() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(95);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -782,6 +1385,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field96() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(96);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -789,6 +1393,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field97() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(97);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -796,6 +1401,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field98() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(98);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -803,6 +1409,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field99() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(99);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -810,6 +1417,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field100() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(100);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -817,6 +1425,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field101() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(101);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -824,6 +1433,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field102() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(102);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -831,6 +1441,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field103() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(103);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -838,6 +1449,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field104() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(104);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -845,6 +1457,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field105() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(105);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -852,6 +1465,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field106() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(106);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -859,6 +1473,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field107() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(107);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -866,6 +1481,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field108() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(108);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -873,6 +1489,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field109() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(109);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -880,6 +1497,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field110() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(110);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -887,6 +1505,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field111() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(111);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -894,6 +1513,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field112() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(112);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -901,6 +1521,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field113() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(113);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -908,6 +1529,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field114() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(114);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -915,6 +1537,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field115() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(115);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -922,6 +1545,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field116() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(116);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -929,6 +1553,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field117() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(117);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -936,6 +1561,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field118() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(118);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -943,6 +1569,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field119() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(119);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -950,6 +1577,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field120() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(120);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -957,6 +1585,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field121() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(121);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -964,6 +1593,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field122() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(122);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -971,6 +1601,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field123() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(123);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -978,6 +1609,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field124() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(124);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -985,6 +1617,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field125() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(125);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -992,6 +1625,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field126() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(126);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -999,6 +1633,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field127() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(127);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1006,6 +1641,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field128() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(128);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1013,6 +1649,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field129() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(129);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1020,6 +1657,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field130() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(130);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1027,6 +1665,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field131() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(131);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1034,6 +1673,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field132() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(132);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1041,6 +1681,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field133() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(133);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1048,6 +1689,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field134() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(134);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1055,6 +1697,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field135() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(135);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1062,6 +1705,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field136() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(136);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1069,6 +1713,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field137() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(137);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1076,6 +1721,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field138() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(138);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1083,6 +1729,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field139() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(139);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1090,6 +1737,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field140() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(140);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1097,6 +1745,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field141() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(141);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1104,6 +1753,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field142() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(142);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1111,6 +1761,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field143() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(143);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1118,6 +1769,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field144() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(144);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1125,6 +1777,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field145() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(145);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1132,6 +1785,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field146() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(146);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1139,6 +1793,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field147() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(147);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1146,6 +1801,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field148() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(148);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1153,6 +1809,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field149() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(149);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1160,6 +1817,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field150() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(150);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1167,6 +1825,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field151() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(151);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1174,6 +1833,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field152() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(152);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1181,6 +1841,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field153() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(153);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1188,6 +1849,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field154() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(154);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1195,6 +1857,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field155() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(155);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1202,6 +1865,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field156() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(156);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1209,6 +1873,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field157() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(157);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1216,6 +1881,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field158() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(158);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1223,6 +1889,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field159() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(159);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1230,6 +1897,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field160() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(160);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1237,6 +1905,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field161() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(161);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1244,6 +1913,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field162() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(162);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1251,6 +1921,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field163() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(163);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1258,6 +1929,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field164() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(164);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1265,6 +1937,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field165() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(165);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1272,6 +1945,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field166() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(166);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1279,6 +1953,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field167() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(167);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1286,6 +1961,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field168() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(168);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1293,6 +1969,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field169() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(169);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1300,6 +1977,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field170() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(170);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1307,6 +1985,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field171() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(171);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1314,6 +1993,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field172() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(172);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1321,6 +2001,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field173() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(173);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1328,6 +2009,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field174() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(174);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1335,6 +2017,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field175() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(175);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1342,6 +2025,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field176() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(176);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1349,6 +2033,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field177() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(177);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1356,6 +2041,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field178() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(178);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1363,6 +2049,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field179() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(179);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1370,6 +2057,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field180() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(180);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1377,6 +2065,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field181() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(181);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1384,6 +2073,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field182() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(182);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1391,6 +2081,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field183() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(183);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1398,6 +2089,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field184() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(184);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1405,6 +2097,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field185() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(185);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1412,6 +2105,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field186() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(186);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1419,6 +2113,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field187() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(187);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1426,6 +2121,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field188() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(188);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1433,6 +2129,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field189() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(189);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1440,6 +2137,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field190() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(190);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1447,6 +2145,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field191() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(191);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1454,6 +2153,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field192() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(192);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1461,6 +2161,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field193() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(193);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1468,6 +2169,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field194() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(194);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1475,6 +2177,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field195() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(195);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1482,6 +2185,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field196() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(196);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1489,6 +2193,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field197() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(197);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1496,6 +2201,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field198() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(198);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1503,6 +2209,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field199() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(199);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1510,6 +2217,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field200() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(200);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1517,6 +2225,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field201() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(201);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1524,6 +2233,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field202() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(202);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1531,6 +2241,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field203() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(203);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1538,6 +2249,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field204() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(204);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1545,6 +2257,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field205() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(205);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1552,6 +2265,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field206() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(206);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1559,6 +2273,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field207() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(207);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1566,6 +2281,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field208() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(208);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1573,6 +2289,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field209() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(209);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1580,6 +2297,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field210() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(210);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1587,6 +2305,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field211() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(211);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1594,6 +2313,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field212() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(212);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1601,6 +2321,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field213() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(213);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1608,6 +2329,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field214() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(214);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1615,6 +2337,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field215() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(215);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1622,6 +2345,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field216() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(216);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1629,6 +2353,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field217() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(217);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1636,6 +2361,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field218() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(218);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1643,6 +2369,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field219() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(219);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1650,6 +2377,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field220() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(220);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1657,6 +2385,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field221() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(221);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1664,6 +2393,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field222() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(222);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1671,6 +2401,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field223() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(223);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1678,6 +2409,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field224() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(224);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1685,6 +2417,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field225() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(225);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1692,6 +2425,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field226() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(226);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1699,6 +2433,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field227() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(227);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1706,6 +2441,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field228() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(228);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1713,6 +2449,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field229() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(229);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1720,6 +2457,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field230() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(230);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1727,6 +2465,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field231() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(231);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1734,6 +2473,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field232() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(232);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1741,6 +2481,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field233() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(233);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1748,6 +2489,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field234() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(234);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1755,6 +2497,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field235() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(235);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1762,6 +2505,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field236() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(236);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1769,6 +2513,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field237() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(237);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1776,6 +2521,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field238() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(238);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1783,6 +2529,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field239() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(239);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1790,6 +2537,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field240() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(240);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1797,6 +2545,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field241() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(241);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1804,6 +2553,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field242() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(242);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1811,6 +2561,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field243() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(243);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1818,6 +2569,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field244() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(244);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1825,6 +2577,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field245() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(245);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1832,6 +2585,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field246() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(246);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1839,6 +2593,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field247() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(247);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1846,6 +2601,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field248() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(248);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1853,6 +2609,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field249() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(249);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1860,6 +2617,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field250() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(250);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1867,6 +2625,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field251() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(251);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1874,6 +2633,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field252() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(252);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1881,6 +2641,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field253() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(253);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1888,6 +2649,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field254() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(254);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1895,6 +2657,7 @@ export class BigUserReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field255() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(255);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2161,41 +2924,18 @@ export class BigUserReader {
     field255: {"kind":0,"off":255,"type":"text"},
   };
 
-  pick(names) {
-    return BigUserReader._pickImpl(this._cpp, names);
-  }
-
-  static _pickImpl(cpp, names) {
-    return _capnwasmPick(cpp, BigUserReader._FIELDS, names);
-  }
-
-  get access() {
-    if (!this._plan) {
-      this._plan = [];
-      const recorded = this._plan;
-      const fields = BigUserReader._FIELDS;
-      this._access = new Proxy(Object.create(null), {
-        get(_, name) {
-          if (typeof name === "string" && (name in fields)) recorded.push(name);
-          return undefined;
-        }
-      });
-    }
-    return this._access;
-  }
-
-  apply() {
-    if (!this._plan || this._plan.length === 0) return {};
-    const result = BigUserReader._pickImpl(this._cpp, this._plan);
-    this._plan = null;
-    this._access = null;
-    return result;
+  draft(fn) {
+    _ensureCapnwasmReader(this);
+    return _runDraft(this._cpp, BigUserReader._FIELDS, fn);
   }
 
   toObject() {
-    return BigUserReader._pickImpl(this._cpp, Object.keys(BigUserReader._FIELDS));
+    _ensureCapnwasmReader(this);
+    return _capnwasmPick(this._cpp, BigUserReader._FIELDS, Object.keys(BigUserReader._FIELDS));
   }
 }
+
+_STRUCT_FIELDS["BigUser"] = BigUserReader._FIELDS;
 
 export class BigUserBuilder {
   static _DATA_WORDS = 0;
@@ -4807,10 +5547,14 @@ export class BigUserBuilder {
  * Open framed Cap'n Proto bytes for typed access. Returns a BigUserReader.
  */
 export function openBigUser(cpp, bytes) {
-  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
-  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
-  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
-  return new BigUserReader(cpp, dataPtr);
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new BigUserReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openBigUserUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new BigUserReader(cpp, opened.dataPtr, opened);
 }
 
 /** Begin building a new BigUser message. Returns a BigUserBuilder. */

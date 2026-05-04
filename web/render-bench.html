@@ -37,8 +37,8 @@
 
     <p class="maturity-notice">
       <strong>Not production-ready yet.</strong> This benchmark explores the tradeoff boundary, not
-      a hardened deployment claim. The current <code>0.0.x</code> runtime uses fixed scratch buffers and
-      mutable wasm linear memory while production hardening continues.
+      a hardened deployment claim. Normal readers now use managed <code>WebAssembly.Memory</code>, while
+      allocator, large-data, hostile-input, and secure-memory hardening continues.
     </p>
 
     <section class="banner">

@@ -2,7 +2,7 @@
 
 > Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
 
-> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time, but the current 0.0.x runtime still uses fixed scratch buffers, rejects messages larger than scratch capacity, ties readers to mutable wasm linear memory, and does not zero scratch memory after use. Treat it as a controlled demo, experiment, and small/medium payload prototype while production hardening continues.
+> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time. Normal readers now keep message bytes in managed `WebAssembly.Memory`, but 0.0.x still needs hardening around allocator lifecycle, large payloads, hostile inputs, concurrency, and secure memory hygiene.
 
 A user-facing explanation of what happens between `await cap.method()` and
 `reader.fieldFoo`. Useful when you're trying to reason about cost or
@@ -27,6 +27,13 @@ read against wasm linear memory. No boundary call, no copy. V8/TurboFan
 inlines those DataView calls down to a single load instruction in JIT.
 For text / lists / nested structs we do cross the wasm boundary, which
 adds ~50-100 ns of overhead per call.
+
+The bytes backing a normal generated reader live in a managed region of
+`WebAssembly.Memory`. JS and C++ both read the same Cap'n Proto message:
+JS sees `memory.buffer`, while the upstream C++ reader sees a raw pointer
+to the same region. Re-opening another message on the same `CapnCpp`
+instance does not overwrite that region; boundary-call getters re-bind
+the C++ cursor to the reader's own message before reading.
 
 ## The two-path getter
 
@@ -160,25 +167,26 @@ reads. capnwasm's edge shows up in:
 
 ## What you can't do (and why)
 
-- **You can't hold a Reader across an `await`.** The wasm scratch buffer
-  may be reused for the next inbound message. If you need to keep
-  values, copy them out into JS-owned variables before yielding:
+- **Unsafe readers cannot cross an `await` if the same `CapnCpp` may be reused.**
+  Normal `openFoo(cpp, bytes)` readers own a wasm-memory message region and
+  can be read after other opens. The explicit `openFooUnsafe(cpp, bytes)`
+  fast path uses the shared scratch buffer and throws if the runtime opened
+  another message before you read it:
   ```js
-  // Wrong. Reader bytes may be invalid after await
-  const reader = ctx.openParams(MyParamsReader);
+  // Safe default. Backed by its own wasm-memory message region.
+  const reader = openUser(cpp, bytes);
   await someAsyncWork();
-  console.log(reader.userId);   // possibly garbage
+  console.log(reader.name);     // still valid
 
-  // Right. Copy what you need first
-  const reader = ctx.openParams(MyParamsReader);
-  const userId = reader.userId;
+  // Unsafe fast path. Valid only until the next message open on cpp.
+  const fast = openUserUnsafe(cpp, bytes);
   await someAsyncWork();
-  console.log(userId);          // safe
+  console.log(fast.name);       // throws StaleReaderError if cpp moved on
   ```
-- **You can't construct a Reader from arbitrary bytes.** The Reader
-  expects `dataPtr` to be a position inside the wasm linear memory,
-  managed by the session. The legacy `paramsBytes`/`r.bytes` path is
-  what gives you a JS-owned snapshot. Those go through the slow path.
+- **RPC `extract(reader)` readers are scoped.** The `extract` callback is
+  still the zero-copy RPC hot path. Read from the reader synchronously
+  inside `extract`; if you need values after the callback, return a plain
+  object via `toObject()` / `draft()`.
 
 ## Encode side (Builder)
 

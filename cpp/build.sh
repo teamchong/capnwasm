@@ -185,18 +185,19 @@ FLAGS=(
   -Wl,--export=cpp_out_ptr
   -Wl,--export=cpp_in_capacity
   -Wl,--export=cpp_abi_version
-  # cpp_lazy_* and cpp_any_* are still needed by the production code paths
-  # (cpp_loader scratch helpers, dynamic-API batch reads via cpp_lazy_open).
-  -Wl,--export=cpp_lazy_open
-  -Wl,--export=cpp_lazy_msg_obj_field_text
-  -Wl,--export=cpp_lazy_obj_fields_text
-  -Wl,--export=cpp_lazy_aux_ptr
-  -Wl,--export=cpp_lazy_aux_capacity
-  # cpp_serialize_tape / cpp_deserialize_to_tape are only used by
-  # capnwasm/tape (the capnweb-shape compatibility layer). Moved to bench
-  # mode + we ship a separate tape-enabled wasm if/when that subpath is
-  # actually imported. Browser RPC/dynamic paths don't need them.
+  -Wl,--export=cpp_msg_alloc
+  -Wl,--export=cpp_msg_free
+  # Auxiliary scratch buffer used by cpp_any_batch_read for the field
+  # descriptor list. Production codegen reads cpp._auxPtr/_auxCap from
+  # cpp_loader.mjs which caches these once at load time.
+  -Wl,--export=cpp_scratch_aux_ptr
+  -Wl,--export=cpp_scratch_aux_capacity
+  # cpp_serialize_tape / cpp_deserialize_to_tape are only used by the
+  # capnwasm/tape bench (capnweb-shape compatibility). Moved to bench
+  # mode + we ship a separate tape-enabled wasm if/when needed.
+  # Browser RPC/dynamic paths don't need them.
   -Wl,--export=cpp_any_open
+  -Wl,--export=cpp_any_open_at
   -Wl,--export=cpp_any_enter_struct
   -Wl,--export=cpp_any_leave_struct
   -Wl,--export=cpp_any_open_list
@@ -293,8 +294,13 @@ FLAGS=(
   -Wl,--export=cpp_rpc_finalize
   -Wl,--export=cpp_rpc_open_call_params
   -Wl,--export=cpp_rpc_open_return_results
-  # Demo-only: server-side text-to-PNG renderer. Used by the chat
-  # ChatRoom DO to fill ChatMessage.image with binary bytes.
+  # Demo-only: server-side text-to-PNG renderer used by the public chat
+  # demo's ChatRoom Durable Object (`src/chat_room.mjs`). The npm package
+  # excludes `src/` so no published JS surface calls this; the Cloudflare
+  # Worker that powers https://capnwasm.teamchong.net/chat builds from
+  # this same wasm and does call it. Cost is small (~2 KB of wasm bytes
+  # in the slim runtime) so we keep it in the slim build rather than
+  # double-building. Revisit if slim wasm size becomes a real constraint.
   -Wl,--export=cpp_chat_render_text_png
   -lwasi-emulated-signal
   -lwasi-emulated-mman

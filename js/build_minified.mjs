@@ -36,8 +36,6 @@ const MODULES = [
   "browser.mjs",
   "cpp_loader.mjs",        // imported by browser.mjs
   "dynamic.mjs",
-  "stream.mjs",
-  "tape_serializer.mjs",
   "rest_runtime.mjs",
   "reconnect.mjs",         // optional: auto-reconnect helper
   "router.mjs",            // optional: federation gateway

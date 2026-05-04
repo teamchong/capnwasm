@@ -2,13 +2,6 @@
 // Generates dist/inlined.mjs by concatenating cpp_loader.mjs +
 // cpp_wasi_shim.mjs + the inlined wasm into one file. True single-file
 // bundle: no relative imports inside dist/.
-//
-// tape_codec.mjs is intentionally NOT inlined. It's only needed by the
-// optional capnwasm/tape entrypoint. Pulling it in here would bloat both
-// inlined bundles by ~3 KB gzipped that nobody using `load()` directly
-// needs. Users who want serialize/deserialize import them from
-// `capnwasm/tape` separately, where bundlers can keep them out of
-// browser bundles that don't reference them.
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";

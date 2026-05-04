@@ -10,7 +10,7 @@ import { test, before } from "node:test";
 import { strict as assert } from "node:assert";
 import { load as loadWasm } from "../dist/inlined.mjs";
 import { openPrimitives, PrimitivesReader } from "../js/conformance_schema.gen.mjs";
-import { defineSchema, openDynamic, DynamicReader, buildDynamic } from "../js/dynamic.mjs";
+import { defineSchema, openDynamic, openDynamicUnsafe, DynamicReader, buildDynamic } from "../js/dynamic.mjs";
 
 let cpp, bytes;
 
@@ -78,6 +78,23 @@ test("dynamic.toObject() matches codegen reader.toObject()", () => {
       assert.equal(got[k], expected[k], `${k} mismatch`);
     }
   }
+});
+
+test("safe dynamic reader survives another open on the same CapnCpp", () => {
+  const dyn = openDynamic(cpp, PrimitivesSchema, bytes);
+  assert.equal(dyn.get("text"), "hello");
+  const other = openPrimitives(cpp, bytes);
+  assert.equal(other.u8, 42);
+  assert.equal(dyn.get("text"), "hello");
+  assert.equal(dyn.get("u16"), 1234);
+});
+
+test("unsafe dynamic reader throws after another open on the same CapnCpp", () => {
+  const dyn = openDynamicUnsafe(cpp, PrimitivesSchema, bytes);
+  assert.equal(dyn.get("text"), "hello");
+  const other = openPrimitives(cpp, bytes);
+  assert.equal(other.u8, 42);
+  assert.throws(() => dyn.get("text"), /StaleDynamicReaderError|stale/i);
 });
 
 test("dynamic.pick subset matches codegen draft", () => {

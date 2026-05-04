@@ -44,9 +44,9 @@
     </header>
 
     <p class="maturity-notice">
-      <strong>Not production-ready yet.</strong> This demo uses capnwasm's current <code>0.0.x</code>
-      runtime: fixed scratch buffers, mutable wasm linear memory, and controlled payload sizes.
-      Treat the results as tradeoff exploration while production hardening continues.
+      <strong>Not production-ready yet.</strong> Normal readers now keep message bytes in managed
+      <code>WebAssembly.Memory</code>, but this remains a controlled benchmark surface while allocator,
+      large-data, hostile-input, and secure-memory hardening continues.
     </p>
 
     <noscript>

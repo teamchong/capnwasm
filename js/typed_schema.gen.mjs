@@ -366,6 +366,43 @@ function _capnwasmListProject(cpp, ptrIndex, fields, names, mapFn, bounds, filte
 }
 
 const _STRUCT_FIELDS = Object.create(null);
+export class StaleReaderError extends Error {
+  constructor(message = "Cap'n Proto reader is stale because the CapnCpp runtime opened another message") {
+    super(message);
+    this.name = "StaleReaderError";
+  }
+}
+function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
+  if (!unsafe && typeof cpp._allocMessage === "function") {
+    const msg = cpp._allocMessage(bytes);
+    const dataPtr = cpp._openAnyMessage(msg);
+    return { dataPtr, msg, gen: cpp._generation };
+  }
+  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
+  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
+  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
+  if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();
+  return { dataPtr, msg: null, gen: cpp._generation ?? 0 };
+}
+function _ensureCapnwasmReader(reader) {
+  const gen = reader._cpp._generation ?? 0;
+  if (reader._gen === gen) return;
+  if (reader._rebind) {
+    reader._rebind();
+    reader._gen = reader._cpp._generation ?? 0;
+    reader._u8 = reader._cpp._u8;
+    reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    return;
+  }
+  if (reader._msg) {
+    reader._dataPtr = reader._cpp._openAnyMessage(reader._msg);
+    reader._gen = reader._cpp._generation ?? 0;
+    reader._u8 = reader._cpp._u8;
+    reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    return;
+  }
+  throw new StaleReaderError();
+}
 const _LIST_MAP_TAG = Symbol("_capnwasm_listMap");
 const _LIST_MAP_SLICE_TAG = Symbol("_capnwasm_listMapSlice");
 function _makeListMapTag(idx, slice) {
@@ -568,15 +605,19 @@ function _runDraft(cpp, fields, fn) {
 }
 
 export class WideUserDataReader {
-  constructor(cpp, dataPtr) {
+  constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
   get field0() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -584,6 +625,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field1() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(1);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -591,6 +633,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field2() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(2);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -598,6 +641,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field3() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(3);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -605,6 +649,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field4() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(4);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -612,6 +657,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field5() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(5);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -619,6 +665,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field6() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(6);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -626,6 +673,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field7() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(7);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -633,6 +681,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field8() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(8);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -640,6 +689,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field9() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(9);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -647,6 +697,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field10() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(10);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -654,6 +705,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field11() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(11);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -661,6 +713,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field12() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(12);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -668,6 +721,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field13() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(13);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -675,6 +729,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field14() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(14);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -682,6 +737,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field15() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(15);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -689,6 +745,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field16() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(16);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -696,6 +753,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field17() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(17);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -703,6 +761,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field18() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(18);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -710,6 +769,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field19() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(19);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -717,6 +777,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field20() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(20);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -724,6 +785,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field21() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(21);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -731,6 +793,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field22() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(22);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -738,6 +801,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field23() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(23);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -745,6 +809,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field24() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(24);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -752,6 +817,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field25() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(25);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -759,6 +825,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field26() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(26);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -766,6 +833,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field27() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(27);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -773,6 +841,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field28() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(28);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -780,6 +849,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field29() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(29);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -787,6 +857,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field30() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(30);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -794,6 +865,7 @@ export class WideUserDataReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get field31() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(31);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -837,10 +909,12 @@ export class WideUserDataReader {
   };
 
   draft(fn) {
+    _ensureCapnwasmReader(this);
     return _runDraft(this._cpp, WideUserDataReader._FIELDS, fn);
   }
 
   toObject() {
+    _ensureCapnwasmReader(this);
     return _capnwasmPick(this._cpp, WideUserDataReader._FIELDS, Object.keys(WideUserDataReader._FIELDS));
   }
 }
@@ -1217,10 +1291,14 @@ export class WideUserDataBuilder {
  * Open framed Cap'n Proto bytes for typed access. Returns a WideUserDataReader.
  */
 export function openWideUserData(cpp, bytes) {
-  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
-  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
-  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
-  return new WideUserDataReader(cpp, dataPtr);
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new WideUserDataReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openWideUserDataUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new WideUserDataReader(cpp, opened.dataPtr, opened);
 }
 
 /** Begin building a new WideUserData message. Returns a WideUserDataBuilder. */

@@ -45,8 +45,8 @@
 
     <p class="maturity-notice">
       <strong>Not production-ready yet.</strong> This comparison is about the tradeoff boundary.
-      capnwasm is intended to become production-capable, but the current <code>0.0.x</code> runtime
-      still uses fixed scratch buffers and mutable wasm linear memory.
+      capnwasm is intended to become production-capable, and normal readers now use managed
+      <code>WebAssembly.Memory</code>; allocator and large-data hardening still remain.
     </p>
 
     <section>

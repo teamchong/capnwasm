@@ -32,8 +32,9 @@
 
     <p class="maturity-notice">
       <strong>Not production-ready yet.</strong> capnwasm is intended to become production-capable,
-      but the current <code>0.0.x</code> runtime still uses fixed scratch buffers and mutable wasm
-      linear memory. Treat these pages as controlled demos and benchmarks while hardening continues.
+      and normal readers now keep message bytes in managed <code>WebAssembly.Memory</code>. Treat these
+      pages as controlled demos while allocator, large-data, hostile-input, and secure-memory
+      hardening continues.
     </p>
 
     <section class="framing-card" aria-labelledby="framing-title">
