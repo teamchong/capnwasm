@@ -159,6 +159,22 @@ export class CapnpCompiler {
     const raw = JSON.parse(json);
     return raw.map(s => translateStruct(s, raw));
   }
+
+  /**
+   * Extract interface metadata from the most recently compiled request.
+   * Must be called after compileToModel; they share the buffered
+   * CodeGeneratorRequest in capnpc_in. Returns
+   *   [{ name, id, methods: [{ id, name, paramStructId, resultStructId }] }, ...]
+   * or an empty array when the schema declares no interfaces.
+   */
+  extractInterfaces() {
+    const len = this.#exports.capnpc_extract_interfaces();
+    if (len === 0) return [];
+    const outPtr = this.#exports.capnpc_out_ptr();
+    const u8 = this.#u8();
+    const json = new TextDecoder().decode(u8.slice(outPtr, outPtr + len));
+    return JSON.parse(json);
+  }
 }
 
 ${HELPERS}
