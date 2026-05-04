@@ -49,3 +49,4 @@ export declare class ChatMessageListReader {
 }
 
 export declare function openPostParams(cpp: CapnCpp, bytes: Uint8Array): PostParamsReader;
+export declare function openPostParamsUnsafe(cpp: CapnCpp, bytes: Uint8Array): PostParamsReader;

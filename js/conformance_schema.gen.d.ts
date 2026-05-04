@@ -44,3 +44,4 @@ export declare class PrimitivesReader {
 }
 
 export declare function openPrimitives(cpp: CapnCpp, bytes: Uint8Array): PrimitivesReader;
+export declare function openPrimitivesUnsafe(cpp: CapnCpp, bytes: Uint8Array): PrimitivesReader;

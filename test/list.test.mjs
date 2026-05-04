@@ -195,3 +195,60 @@ test("List<Struct>: at(i) reads correct fields for every element, not just at(0)
     { name: "gamma", weight: 30 },
   ]);
 });
+
+test("List<Struct>: element reader survives another open on the same CapnCpp", async () => {
+  // The whole point of safe-by-default readers: a reader handed to user code
+  // must keep returning the same fields even if the runtime is asked to open
+  // another message in between. For list-element readers fetched via
+  // list.at(i), this requires the element reader's rebind closure to
+  // re-position the cursor onto the correct list element after the parent
+  // message is reopened. Regression for the inner-list rebind hazard.
+  const { defineSchema, buildDynamic } = await import(
+    pathToFileURL(resolve(ROOT, "js", "dynamic.mjs")).href);
+  const TAG = defineSchema({
+    name:   { kind: "text",   slot: 0 },
+    weight: { kind: "uint32", offset: 0 },
+  }, { dataWords: 1, ptrWords: 1 });
+  const POST = defineSchema({
+    title:   { kind: "text",       slot: 0 },
+    tags:    { kind: "listStruct", slot: 1, element: TAG },
+    scores:  { kind: "listUint32", slot: 2 },
+    authors: { kind: "listText",   slot: 3 },
+  }, { dataWords: 0, ptrWords: 4 });
+  const b = buildDynamic(cpp, POST);
+  b.set("title", "first post");
+  b.set("tags", [
+    { name: "alpha", weight: 10 },
+    { name: "beta",  weight: 20 },
+    { name: "gamma", weight: 30 },
+  ]);
+  const firstBytes = b.finalize();
+
+  const b2 = buildDynamic(cpp, POST);
+  b2.set("title", "different post");
+  b2.set("tags", [
+    { name: "zzz", weight: 999 },
+  ]);
+  const otherBytes = b2.finalize();
+
+  const post = gen.openPost(cpp, firstBytes);
+  const elem = post.tags.at(1);
+  // Capture before any interleave so we know the baseline.
+  assert.equal(elem.name, "beta");
+  assert.equal(elem.weight, 20);
+
+  // Open a different message on the same cpp. This bumps generation and
+  // detaches the C++ any_reader from the parent post. A naive
+  // implementation would now read garbage from `elem`.
+  const other = gen.openPost(cpp, otherBytes);
+  assert.equal(other.title, "different post");
+
+  // Element reader must still report its original values: rebind closure
+  // re-opens parent's message, re-opens the parent list, re-enters element 1.
+  assert.equal(elem.name, "beta");
+  assert.equal(elem.weight, 20);
+
+  // And the parent reader (post) is also still readable.
+  assert.equal(post.title, "first post");
+  assert.equal(post.tags.length, 3);
+});

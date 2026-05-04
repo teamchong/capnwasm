@@ -517,13 +517,23 @@ export function encodeDynamic(cpp, schema, obj) {
  * `defineSchema`. `bytes` is a serialized Cap'n Proto message.
  */
 export function openDynamic(cpp, schema, bytes) {
+  if (typeof cpp._allocMessage === "function") {
+    const msg = cpp._allocMessage(bytes);
+    cpp._openAnyMessage(msg);
+    return new DynamicReader(cpp, schema, { msg, gen: cpp._generation });
+  }
+  return openDynamicUnsafe(cpp, schema, bytes);
+}
+
+export function openDynamicUnsafe(cpp, schema, bytes) {
   if (bytes.length > cpp._cap) throw new Error("input larger than scratch buffer");
   cpp._u8.set(bytes, cpp._inPtr);
   // cpp_any_open returns the data section pointer (or 0 for an empty
   // struct. That's still a successful open). It only "fails" by
   // throwing inside the wasm if the bytes are malformed.
   cpp._exports.cpp_any_open(bytes.length);
-  return new DynamicReader(cpp, schema);
+  if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();
+  return new DynamicReader(cpp, schema, { gen: cpp._generation ?? 0 });
 }
 
 /**
@@ -532,14 +542,24 @@ export function openDynamic(cpp, schema, bytes) {
  * which goes through a Proxy and resolves one field per call.
  */
 export class DynamicReader {
-  constructor(cpp, schema) {
+  constructor(cpp, schema, opts = undefined) {
     this._cpp = cpp;
     this._schema = schema;
     this._proxy = null;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+  }
+
+  _ensureOpen() {
+    if (this._gen === (this._cpp._generation ?? 0)) return;
+    if (!this._msg) throw new StaleDynamicReaderError();
+    this._cpp._openAnyMessage(this._msg);
+    this._gen = this._cpp._generation ?? 0;
   }
 
   /** Pick a subset of fields in one wasm round trip. Order matches `names`. */
   pick(names) {
+    this._ensureOpen();
     return _batchPick(this._cpp, this._schema.fields, names);
   }
 
@@ -550,6 +570,7 @@ export class DynamicReader {
 
   /** Get a single field by name. */
   get(name) {
+    this._ensureOpen();
     const desc = this._schema.fields[name];
     if (!desc) return undefined;
     return _readSingle(this._cpp, desc);
@@ -561,6 +582,7 @@ export class DynamicReader {
    */
   get fields() {
     if (this._proxy) return this._proxy;
+    const reader = this;
     const cpp = this._cpp;
     const fields = this._schema.fields;
     this._proxy = new Proxy(Object.create(null), {
@@ -568,16 +590,25 @@ export class DynamicReader {
         if (typeof name !== "string") return undefined;
         const desc = fields[name];
         if (!desc) return undefined;
+        reader._ensureOpen();
         return _readSingle(cpp, desc);
       },
       has(_, name) { return typeof name === "string" && fields[name] !== undefined; },
       ownKeys() { return Object.keys(fields); },
       getOwnPropertyDescriptor(_, name) {
         if (typeof name !== "string" || !fields[name]) return undefined;
+        reader._ensureOpen();
         return { enumerable: true, configurable: true, value: _readSingle(cpp, fields[name]) };
       },
     });
     return this._proxy;
+  }
+}
+
+export class StaleDynamicReaderError extends Error {
+  constructor(message = "DynamicReader is stale because the CapnCpp runtime opened another message") {
+    super(message);
+    this.name = "StaleDynamicReaderError";
   }
 }
 

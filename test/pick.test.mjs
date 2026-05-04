@@ -10,7 +10,7 @@
 import { test, before } from "node:test";
 import { strict as assert } from "node:assert";
 import { load as loadWasm } from "../dist/inlined.mjs";
-import { openPrimitives } from "../js/conformance_schema.gen.mjs";
+import { openPrimitives, openPrimitivesUnsafe } from "../js/conformance_schema.gen.mjs";
 
 let cpp, bytes;
 
@@ -101,4 +101,21 @@ test("draft with an unknown field does not throw and returns undefined", () => {
   const got = r.draft((p) => ({ text: p.text, missing: p.doesNotExist }));
   assert.equal(got.text, "hello");
   assert.equal(got.missing, undefined);
+});
+
+test("safe codegen reader survives another open on the same CapnCpp", () => {
+  const r = openPrimitives(cpp, bytes);
+  const before = r.text;
+  const other = openPrimitives(cpp, bytes);
+  assert.equal(other.u8, 42);
+  assert.equal(r.text, before);
+  assert.equal(r.u16, 1234);
+});
+
+test("unsafe codegen reader throws after another open on the same CapnCpp", () => {
+  const r = openPrimitivesUnsafe(cpp, bytes);
+  assert.equal(r.text, "hello");
+  const other = openPrimitives(cpp, bytes);
+  assert.equal(other.u8, 42);
+  assert.throws(() => r.text, /StaleReaderError|stale/i);
 });

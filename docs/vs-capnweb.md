@@ -2,7 +2,7 @@
 
 > Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
 
-> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time, but the current 0.0.x runtime still uses fixed scratch buffers, rejects messages larger than scratch capacity, ties readers to mutable wasm linear memory, and does not zero scratch memory after use. Treat it as a controlled demo, experiment, and small/medium payload prototype while production hardening continues.
+> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time. Normal readers now keep message bytes in managed `WebAssembly.Memory`, but 0.0.x still needs hardening around allocator lifecycle, large payloads, hostile inputs, concurrency, and secure memory hygiene.
 
 I built capnwasm to learn how capnweb works under the hood and to understand the tradeoffs it made by dropping the Cap'n Proto binary wire format. This page is the side-by-side that exploration produced. It's not a scoreboard; both libraries are valid points on the curve. Where capnweb wins is called out as plainly as where capnwasm wins.
 

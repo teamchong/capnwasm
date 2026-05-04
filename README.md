@@ -4,7 +4,7 @@
 >
 > **When this matters:** you're moving binary data (no base64 tax), doing sparse reads on large payloads, or talking to non-JS services over the Cap'n Proto wire. If your traffic is tiny JS-to-JS objects, pure text, or you want the smallest possible bundle, JSON/[capnweb](https://github.com/cloudflare/capnweb) is often the right call.
 
-> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time, but the current 0.0.x runtime still uses fixed scratch buffers, rejects messages larger than scratch capacity, keeps reader objects tied to mutable wasm linear memory, and does not zero scratch memory after use. Today it is best treated as a controlled demo, experiment, and small/medium payload prototype while production hardening continues.
+> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time. Normal readers now keep their message bytes in managed `WebAssembly.Memory` instead of one shared scratch slot, but 0.0.x still needs hardening around allocator lifecycle, large payloads, hostile inputs, concurrency, and secure memory hygiene.
 
 capnwasm sits at: ~17 KB more brotli than capnweb, but a real Cap'n Proto runtime in the browser, raw bytes for binary data, sparse-access reads on large payloads, and wire interop with C++/Rust/Go services. The numbers below are findings from this exploration, not a scoreboard.
 
@@ -42,11 +42,24 @@ That's the whole core API. Same shape for RPC (`session.callBuilder(IFC, METHOD,
 
 Real upstream Cap'n Proto C++ is statically compiled to WebAssembly via `zig cc`. No `capnp` binary, no version skew, no `emscripten`. The schema compiler itself runs in wasm, including in the browser.
 
+## Cap'n Proto as `WebAssembly.Memory`
+
+The core runtime idea is: **store Cap'n Proto messages directly inside wasm linear memory and let both sides read the same bytes**.
+
+Cap'n Proto's wire format is already an in-memory layout: word-aligned segments, relative pointers, and fields at known offsets. That makes it a natural fit for `WebAssembly.Memory`, which JS sees as `memory.buffer` and C++ sees as raw pointers.
+
+In the safe default path, `openUser(cpp, bytes)` allocates a wasm-memory region for that message, copies the incoming bytes into it once, and opens the upstream C++ Cap'n Proto reader over that region. Generated JS readers then read primitive fields with `DataView` over the same `memory.buffer`; text, data, lists, and dynamic reads re-bind the C++ reader to the message's own wasm-memory region before crossing into wasm.
+
+That means normal readers survive later calls on the same `CapnCpp` instance without silently reading overwritten scratch. The explicit `openUserUnsafe(cpp, bytes)` form keeps the old shared-scratch fast path for measured hot loops; unsafe readers throw if the runtime opens another message before they are read.
+
+This is not a claim that no other project uses Cap'n Proto or in-place binary formats with wasm. The specific capnwasm bet is combining upstream Cap'n Proto C++ in wasm with generated JS readers that treat `WebAssembly.Memory` as the shared message arena. The longer-form roadmap toward a cross-language JS↔wasm ABI lives in [`docs/capnp-in-wasm-memory.md`](docs/capnp-in-wasm-memory.md), with prior art ([WebAssembly/design#1274](https://github.com/WebAssembly/design/issues/1274)) acknowledged up front.
+
 ```bash
 pnpm add capnwasm
 ```
 
 **Docs:**
+[Cap'n Proto in WebAssembly.Memory (design)](docs/capnp-in-wasm-memory.md) ·
 [Zero to RPC](docs/zero-to-rpc.md) ·
 [Dynamic (no codegen)](docs/dynamic.md) ·
 [Decode model (how reads actually work)](docs/decode-model.md) ·

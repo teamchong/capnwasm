@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <new>
+#include <cstdlib>
 
 // Note: __cxa_allocate_exception and __cxa_throw are provided by linking
 // zig's libcxxabi cxa_exception.cpp directly into the build (see build.sh).
@@ -29,20 +30,36 @@ constexpr size_t SCRATCH_CAP = 4 * 1024 * 1024;
 alignas(8) static uint8_t cpp_in[SCRATCH_CAP];
 alignas(8) static uint8_t cpp_out[SCRATCH_CAP];
 
-// Separate input region for lazy-mode side-channel calls (e.g. fieldsText
-// name list). Decoupled so lazy mode's input doesn't clobber cpp_in, which
-// the lazy reader points at after cpp_lazy_open.
-constexpr size_t LAZY_AUX_CAP = 8 * 1024;
-alignas(8) static uint8_t cpp_lazy_aux[LAZY_AUX_CAP];
+// Auxiliary scratch region for boundary-call request payloads (e.g. the
+// field-descriptor list passed to cpp_any_batch_read). Separate from cpp_in
+// so the request encoding does not clobber the parsed message that the
+// reader is pointing at. Originally named "lazy_aux" because LazyReader
+// used it; that reader was removed in 0.0.4 but the scratch region is now
+// the canonical batch-read input buffer used by every generated reader.
+constexpr size_t SCRATCH_AUX_CAP = 8 * 1024;
+alignas(8) static uint8_t cpp_scratch_aux[SCRATCH_AUX_CAP];
 
 uint8_t* cpp_in_ptr() { return cpp_in; }
 uint8_t* cpp_out_ptr() { return cpp_out; }
 uint32_t cpp_in_capacity() { return SCRATCH_CAP; }
 uint32_t cpp_out_capacity() { return SCRATCH_CAP; }
-uint8_t* cpp_lazy_aux_ptr() { return cpp_lazy_aux; }
-uint32_t cpp_lazy_aux_capacity() { return LAZY_AUX_CAP; }
+uint8_t* cpp_scratch_aux_ptr() { return cpp_scratch_aux; }
+uint32_t cpp_scratch_aux_capacity() { return SCRATCH_AUX_CAP; }
 
 uint32_t cpp_abi_version() { return 1; }
+
+uint8_t* cpp_msg_alloc(uint32_t bytes_len) {
+  // Cap'n Proto messages are word-addressed. Align allocations so C++ can
+  // safely reinterpret the region as capnp::word[] and JS can still address
+  // it as bytes through WebAssembly.Memory.
+  size_t n = (static_cast<size_t>(bytes_len) + 7u) & ~static_cast<size_t>(7u);
+  if (n == 0) n = 8;
+  return reinterpret_cast<uint8_t*>(std::malloc(n));
+}
+
+void cpp_msg_free(uint8_t* ptr) {
+  std::free(ptr);
+}
 
 // Serialize a tape (in cpp_in[0..tape_len], same byte format as src/tape.zig)
 // to a Cap'n Proto framed message in cpp_out. Returns bytes written, or 0
@@ -272,7 +289,7 @@ static void decodeExpression(Expression::Reader r, TapeWriter& w) {
 alignas(8) static char lazy_reader_storage[1024];
 static capnp::FlatArrayMessageReader* lazy_reader = nullptr;
 
-uint32_t cpp_lazy_open(uint32_t bytes_len) {
+uint32_t cpp_lazy_open_at(const uint8_t* bytes_ptr, uint32_t bytes_len) {
   if (lazy_reader) {
     lazy_reader->~FlatArrayMessageReader();
     lazy_reader = nullptr;
@@ -280,10 +297,14 @@ uint32_t cpp_lazy_open(uint32_t bytes_len) {
   static_assert(sizeof(capnp::FlatArrayMessageReader) <= sizeof(lazy_reader_storage),
                 "lazy_reader_storage too small");
   auto words = kj::ArrayPtr<const capnp::word>(
-      reinterpret_cast<const capnp::word*>(cpp_in),
+      reinterpret_cast<const capnp::word*>(bytes_ptr),
       bytes_len / sizeof(capnp::word));
   lazy_reader = new (lazy_reader_storage) capnp::FlatArrayMessageReader(words);
   return 1;
+}
+
+uint32_t cpp_lazy_open(uint32_t bytes_len) {
+  return cpp_lazy_open_at(cpp_in, bytes_len);
 }
 
 // Helper: extract the inner Expression payload from a Message reader.
@@ -752,7 +773,7 @@ static inline capnp::AnyStruct::Reader& any_stack(int i) {
 }
 static int32_t any_stack_top = -1;
 
-uint32_t cpp_any_open(uint32_t bytes_len) {
+uint32_t cpp_any_open_at(const uint8_t* bytes_ptr, uint32_t bytes_len) {
   if (any_reader) {
     any_reader->~FlatArrayMessageReader();
     any_reader = nullptr;
@@ -760,7 +781,7 @@ uint32_t cpp_any_open(uint32_t bytes_len) {
   static_assert(sizeof(capnp::FlatArrayMessageReader) <= sizeof(any_reader_storage),
                 "any_reader_storage too small");
   auto words = kj::ArrayPtr<const capnp::word>(
-      reinterpret_cast<const capnp::word*>(cpp_in),
+      reinterpret_cast<const capnp::word*>(bytes_ptr),
       bytes_len / sizeof(capnp::word));
   any_reader = new (any_reader_storage) capnp::FlatArrayMessageReader(words);
   any_stack_top = 0;
@@ -768,6 +789,10 @@ uint32_t cpp_any_open(uint32_t bytes_len) {
   // Return data section pointer so the JS Reader can read primitives
   // straight from wasm memory.
   return reinterpret_cast<uint32_t>(any_stack(0).getDataSection().begin());
+}
+
+uint32_t cpp_any_open(uint32_t bytes_len) {
+  return cpp_any_open_at(cpp_in, bytes_len);
 }
 
 // Push the struct at pointer slot `ptr_idx` of the current top onto the stack.
@@ -984,10 +1009,10 @@ uint32_t cpp_any_bool_at(uint32_t bit_offset, uint32_t default_val) {
   return v ^ (default_val & 1);
 }
 
-// Batched read: caller supplies a flat list of field requests in cpp_lazy_aux,
+// Batched read: caller supplies a flat list of field requests in cpp_scratch_aux,
 // wasm packs results into cpp_out, ONE boundary crossing for N fields.
 //
-// Input layout (in cpp_lazy_aux):
+// Input layout (in cpp_scratch_aux):
 //   u32 count
 //   for each:  u8 kind, u32 offset
 //
@@ -1012,7 +1037,7 @@ uint32_t cpp_any_batch_read(uint32_t input_len) {
   if (any_stack_top < 0) return 0;
   if (input_len < 4) return 0;
   uint32_t count;
-  std::memcpy(&count, cpp_lazy_aux, 4);
+  std::memcpy(&count, cpp_scratch_aux, 4);
   if (count == 0 || count > 1024) return 0;
 
   const size_t request_bytes = 1 + 4;  // u8 kind + u32 offset
@@ -1025,8 +1050,8 @@ uint32_t cpp_any_batch_read(uint32_t input_len) {
   size_t out_pos = count * 4;  // reserve len header
   size_t in_pos = 4;
   for (uint32_t i = 0; i < count; i++) {
-    uint8_t kind = cpp_lazy_aux[in_pos]; in_pos += 1;
-    uint32_t off; std::memcpy(&off, cpp_lazy_aux + in_pos, 4); in_pos += 4;
+    uint8_t kind = cpp_scratch_aux[in_pos]; in_pos += 1;
+    uint32_t off; std::memcpy(&off, cpp_scratch_aux + in_pos, 4); in_pos += 4;
     uint32_t* len_slot = reinterpret_cast<uint32_t*>(cpp_out + i * 4);
 
     switch (kind) {
@@ -1082,15 +1107,15 @@ uint32_t cpp_any_batch_read(uint32_t input_len) {
 
 // Project a List(Struct) in one wasm call. This is the list-shaped sibling
 // of cpp_any_batch_read: caller supplies a field descriptor list in
-// cpp_lazy_aux, C++ loops every row and writes a compact row tape to cpp_out.
+// cpp_scratch_aux, C++ loops every row and writes a compact row tape to cpp_out.
 //
-// Input in cpp_lazy_aux:
+// Input in cpp_scratch_aux:
 //   u32 fieldCount
 //   for each field: u8 kind, u32 offset
 //
 // Arguments:
 //   ptr_idx: pointer slot on current AnyStruct holding List(Struct)
-//   input_len: bytes used in cpp_lazy_aux
+//   input_len: bytes used in cpp_scratch_aux
 //
 // Output in cpp_out:
 //   u32 rowCount
@@ -1106,7 +1131,7 @@ uint32_t cpp_any_list_project(uint32_t ptr_idx, uint32_t input_len) {
   if (input_len < 4) return 0;
 
   uint32_t field_count;
-  std::memcpy(&field_count, cpp_lazy_aux, 4);
+  std::memcpy(&field_count, cpp_scratch_aux, 4);
   if (field_count == 0 || field_count > 256) return 0;
 
   const size_t request_bytes = 1 + 4;
@@ -1136,8 +1161,8 @@ uint32_t cpp_any_list_project(uint32_t ptr_idx, uint32_t input_len) {
 
     size_t in_pos = 4;
     for (uint32_t col = 0; col < field_count; col++) {
-      uint8_t kind = cpp_lazy_aux[in_pos]; in_pos += 1;
-      uint32_t off; std::memcpy(&off, cpp_lazy_aux + in_pos, 4); in_pos += 4;
+      uint8_t kind = cpp_scratch_aux[in_pos]; in_pos += 1;
+      uint32_t off; std::memcpy(&off, cpp_scratch_aux + in_pos, 4); in_pos += 4;
       uint32_t& h = headers[row * field_count + col];
 
       switch (kind) {

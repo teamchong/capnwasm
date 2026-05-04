@@ -74,3 +74,4 @@ export declare class WideUserDataReader {
 }
 
 export declare function openWideUserData(cpp: CapnCpp, bytes: Uint8Array): WideUserDataReader;
+export declare function openWideUserDataUnsafe(cpp: CapnCpp, bytes: Uint8Array): WideUserDataReader;

@@ -2,7 +2,7 @@
 
 > **Project framing:** this site is part of a learning/exploration repo: what changes if the browser keeps Cap'n Proto's binary wire instead of converting everything into JSON? The docs should show the tradeoff boundary: zero-copy/sparse/raw binary can win; JSON/capnweb can be better for tiny objects, pure JS-to-JS apps, and bundle size.
 
-> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time, but the current 0.0.x runtime still uses fixed scratch buffers, reader objects tied to mutable wasm linear memory, and scratch memory that is reused rather than zeroed. Treat this site as a public demo and benchmark surface while production hardening continues.
+> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time. Normal readers now keep message bytes in managed `WebAssembly.Memory`, but 0.0.x still needs hardening around allocator lifecycle, large payloads, hostile inputs, concurrency, and secure memory hygiene. Treat this site as a public demo and benchmark surface while production hardening continues.
 
 Wrangler-served docs site for capnwasm. The static assets are built with Vite, then served through the Worker configured in `../wrangler.json`.
 

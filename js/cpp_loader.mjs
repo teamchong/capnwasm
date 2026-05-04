@@ -1,10 +1,9 @@
 // Loads the C++ capnproto wasm module (built via cpp/build.sh from upstream
 // capnproto sources statically linked through zig cc).
 //
-// CapnCpp itself only depends on the wasi shim. It doesn't pull in
-// tape_codec.mjs. The capnweb-shape tape codec lives in js/tape_serializer.mjs
-// as free functions; bundles that don't use it (e.g. RPC-only browser clients)
-// drop tape_codec entirely.
+// CapnCpp owns the wasm instance, exposes the scratch pointers/capacities,
+// and provides a managed-message allocator (cpp_msg_alloc/free + open_at)
+// so safe Readers can survive other decodes on the same instance.
 
 export class CapnCpp {
   /** @type {WebAssembly.Instance} */
@@ -15,11 +14,13 @@ export class CapnCpp {
   #inPtr = 0;
   #outPtr = 0;
   #cap = 0;
-  // The cpp_lazy_aux scratch is a fixed C++ global. Its address and
-  // capacity never change after wasm init. Cache once so every pick /
-  // batch-read avoids the wasm boundary call to look them up.
+  // cpp_scratch_aux is a fixed C++ global. Its address and capacity never
+  // change after wasm init. Cache once so every pick / batch-read avoids
+  // the wasm boundary call to look them up.
   #auxPtr = 0;
   #auxCap = 0;
+  #generation = 0;
+  #messageFinalizer = null;
   // A cached DataView over memory.buffer. Hot reader paths re-use this
   // instead of `new DataView(...)` per call. Refreshed on memory growth
   // via #refreshDv().
@@ -86,11 +87,14 @@ export class CapnCpp {
     cpp.#inPtr = cpp.#exports.cpp_in_ptr();
     cpp.#outPtr = cpp.#exports.cpp_out_ptr();
     cpp.#cap = cpp.#exports.cpp_in_capacity();
-    if (cpp.#exports.cpp_lazy_aux_ptr) {
-      cpp.#auxPtr = cpp.#exports.cpp_lazy_aux_ptr();
-      cpp.#auxCap = cpp.#exports.cpp_lazy_aux_capacity();
+    if (cpp.#exports.cpp_scratch_aux_ptr) {
+      cpp.#auxPtr = cpp.#exports.cpp_scratch_aux_ptr();
+      cpp.#auxCap = cpp.#exports.cpp_scratch_aux_capacity();
     }
     cpp.#dv = new DataView(mem.buffer);
+    cpp.#messageFinalizer = new FinalizationRegistry((ptr) => {
+      try { cpp.#exports.cpp_msg_free?.(ptr); } catch (_) {}
+    });
     return cpp;
   }
 
@@ -104,21 +108,48 @@ export class CapnCpp {
 
   get exports() { return this.#exports; }
   get memory() { return this.#memory; }
+  get _generation() { return this.#generation; }
 
   #u8() { return new Uint8Array(this.#memory.buffer); }
 
-  /**
-   * Open `bytes` for lazy field access. Returns a LazyReader; calls on it
-   * pull individual fields from the wasm-side parsed message (real capnproto
-   * MessageReader) without materializing the full JS value tree.
-   */
-  openLazy(bytes) {
-    if (bytes.length > this.#cap) throw new Error("input larger than scratch buffer");
-    this.#u8().set(bytes, this.#inPtr);
-    if (this.#exports.cpp_lazy_open(bytes.length) !== 1) {
-      throw new Error("cpp_lazy_open failed");
+  _bumpGeneration() { return ++this.#generation; }
+
+  // Managed message allocation requires the wasm to export cpp_msg_alloc /
+  // cpp_msg_free / cpp_any_open_at. Capnwasm 0.0.3+ ships those by default;
+  // older builds drop into the *Unsafe path. We probe once at load time so
+  // callers can branch on a single boolean instead of every open path doing
+  // its own feature-detect.
+  _supportsManagedMessages() {
+    const e = this.#exports;
+    return !!(e.cpp_msg_alloc && e.cpp_msg_free && e.cpp_any_open_at);
+  }
+
+  _allocMessage(bytes) {
+    if (!this._supportsManagedMessages()) return null;
+    const ptr = this.#exports.cpp_msg_alloc(bytes.length) >>> 0;
+    if (!ptr) throw new Error("cpp_msg_alloc failed");
+    this.#u8().set(bytes, ptr);
+    const msg = { ptr, len: bytes.length };
+    this.#messageFinalizer?.register(msg, ptr, msg);
+    return msg;
+  }
+
+  _freeMessage(msg) {
+    if (!msg || !msg.ptr) return;
+    this.#messageFinalizer?.unregister(msg);
+    this.#exports.cpp_msg_free?.(msg.ptr);
+    msg.ptr = 0;
+    msg.len = 0;
+  }
+
+  _openAnyMessage(msg) {
+    if (!msg || !msg.ptr) throw new Error("reader message has been disposed");
+    if (!this._supportsManagedMessages()) {
+      throw new Error("cpp_any_open_at not exported; rebuild capnwasm wasm runtime");
     }
-    return new LazyReader(this);
+    const dataPtr = this.#exports.cpp_any_open_at(msg.ptr, msg.len);
+    this._bumpGeneration();
+    return dataPtr;
   }
 
   get _exports() { return this.#exports; }
@@ -131,75 +162,3 @@ export class CapnCpp {
 }
 
 function zero() { return 0; }
-
-// Module-scoped cache so repeated lookups of the same field name don't burn
-// allocations in TextEncoder.encode.
-const NAME_ENCODE_CACHE = new Map();
-const SHARED_TEXT_ENCODER = new TextEncoder();
-const SHARED_DECODER = new TextDecoder();
-function encodeName(name) {
-  let e = NAME_ENCODE_CACHE.get(name);
-  if (!e) {
-    e = SHARED_TEXT_ENCODER.encode(name);
-    NAME_ENCODE_CACHE.set(name, e);
-  }
-  return e;
-}
-
-export class LazyReader {
-  #cpp;
-
-  constructor(cpp) { this.#cpp = cpp; }
-
-  /** Single-field text lookup. */
-  fieldText(name) {
-    const enc = encodeName(name);
-    const u8 = this.#cpp._u8;
-    const namePtr = this.#cpp._exports.cpp_lazy_aux_ptr();
-    u8.set(enc, namePtr);
-    const len = this.#cpp._exports.cpp_lazy_msg_obj_field_text(namePtr, enc.length);
-    if (len === 0) return undefined;
-    return SHARED_DECODER.decode(u8.subarray(this.#cpp._outPtr, this.#cpp._outPtr + len));
-  }
-
-  /** Batched fetch. N fields in one wasm boundary call. */
-  fieldsText(names) {
-    if (names.length === 0) return [];
-    if (names.length > 256) throw new Error("fieldsText limit is 256 names");
-    const u8 = this.#cpp._u8;
-    const inPtr = this.#cpp._exports.cpp_lazy_aux_ptr();
-    const inCap = this.#cpp._exports.cpp_lazy_aux_capacity();
-
-    const dv = new DataView(u8.buffer, inPtr, inCap);
-    dv.setUint32(0, names.length, true);
-    const encoded = new Array(names.length);
-    for (let i = 0; i < names.length; i++) {
-      const e = encodeName(names[i]);
-      encoded[i] = e;
-      dv.setUint32(4 + i * 4, e.length, true);
-    }
-    let pos = 4 + names.length * 4;
-    for (let i = 0; i < names.length; i++) {
-      u8.set(encoded[i], inPtr + pos);
-      pos += encoded[i].length;
-    }
-
-    const written = this.#cpp._exports.cpp_lazy_obj_fields_text(inPtr, pos);
-    if (written === 0) return new Array(names.length).fill(undefined);
-
-    const outPtr = this.#cpp._outPtr;
-    const outDv = new DataView(u8.buffer, outPtr, written);
-    const results = new Array(names.length);
-    let readPos = names.length * 4;
-    for (let i = 0; i < names.length; i++) {
-      const len = outDv.getUint32(i * 4, true);
-      if (len === 0xFFFFFFFF) {
-        results[i] = undefined;
-        continue;
-      }
-      results[i] = SHARED_DECODER.decode(u8.subarray(outPtr + readPos, outPtr + readPos + len));
-      readPos += len;
-    }
-    return results;
-  }
-}

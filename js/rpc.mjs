@@ -735,6 +735,7 @@ export class RpcSession {
     }
     this.#stageIn(payload);
     const kind = this.#exp.cpp_rpc_decode(payload.length);
+    this.#cpp._bumpGeneration?.();
     switch (kind) {
       case KIND_BOOTSTRAP:  this.#handleBootstrap(); break;
       case KIND_CALL:       this.#trackInflight(this.#handleCall()); break;
@@ -881,9 +882,17 @@ export class RpcSession {
         // open_call_params returns the data section pointer of the
         // params AnyStruct. Reader uses it for direct-memory primitive
         // reads (no per-field cpp_any_*_at boundary call).
+        //
+        // The reader is *scoped*: it points into rpc_reader, which the
+        // session reuses for the next inbound frame. Its lifetime ends
+        // when the handler returns or yields. We pass `msg: null` so the
+        // safe-reader machinery cannot rebind to a managed message
+        // region (there isn't one); after gen advances, getter access
+        // throws StaleReaderError instead of silently corrupting.
         const dataPtr = this.#exp.cpp_rpc_open_call_params();
+        this.#cpp._bumpGeneration?.();
         if (!dataPtr) throw new Error("cpp_rpc_open_call_params failed");
-        return new ReaderClass(this.#cpp, dataPtr);
+        return new ReaderClass(this.#cpp, dataPtr, { msg: null, gen: this.#cpp._generation ?? 0 });
       },
       beginResults: (BuilderClass) => {
         if (typeof BuilderClass?._DATA_WORDS !== "number") {
@@ -1039,12 +1048,18 @@ export class RpcSession {
         // extractor returns. No result-bytes Uint8Array allocated, no
         // wasm-to-JS copy of the payload.
         const dataPtr = this.#exp.cpp_rpc_open_return_results();
+        this.#cpp._bumpGeneration?.();
         if (!dataPtr) {
           q.deferred.reject(new Error("cpp_rpc_open_return_results failed"));
         } else {
           let extracted;
           try {
-            const reader = q.resultsReader ? new q.resultsReader(this.#cpp, dataPtr) : null;
+            // Scoped reader: points into rpc_reader, valid only inside
+            // this synchronous extract() call. Pass `msg: null` so the
+            // reader cannot rebind to a managed message region; if the
+            // user escapes it past extract(), gen advance will trigger
+            // StaleReaderError on the next access.
+            const reader = q.resultsReader ? new q.resultsReader(this.#cpp, dataPtr, { msg: null, gen: this.#cpp._generation ?? 0 }) : null;
             extracted = q.extract(reader, caps);
           } catch (err) {
             q.deferred.reject(err instanceof Error ? err : new Error(String(err)));

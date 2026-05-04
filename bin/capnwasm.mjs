@@ -1191,6 +1191,52 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`}`);
   lines.push("");
   lines.push(`const _STRUCT_FIELDS = Object.create(null);`);
+  lines.push(`export class StaleReaderError extends Error {`);
+  lines.push(`  constructor(message = "Cap'n Proto reader is stale because the CapnCpp runtime opened another message") {`);
+  lines.push(`    super(message);`);
+  lines.push(`    this.name = "StaleReaderError";`);
+  lines.push(`  }`);
+  lines.push(`}`);
+  lines.push(`function _openCapnwasmMessage(cpp, bytes, unsafe = false) {`);
+  lines.push(`  if (!unsafe && typeof cpp._allocMessage === "function") {`);
+  lines.push(`    const msg = cpp._allocMessage(bytes);`);
+  lines.push(`    const dataPtr = cpp._openAnyMessage(msg);`);
+  lines.push(`    return { dataPtr, msg, gen: cpp._generation };`);
+  lines.push(`  }`);
+  lines.push(`  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");`);
+  lines.push(`  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());`);
+  lines.push(`  const dataPtr = cpp._exports.cpp_any_open(bytes.length);`);
+  lines.push(`  if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();`);
+  lines.push(`  return { dataPtr, msg: null, gen: cpp._generation ?? 0 };`);
+  lines.push(`}`);
+  // Re-position the C++ cursor onto this reader's struct before any
+  // boundary-call read. The C++ side has one any_stack[]; both root readers
+  // and element readers share it, so any other reader's getter (or another
+  // open) can move it. Re-positioning is idempotent and cheap, so we always
+  // do it for managed-message readers. Unsafe readers (no _msg) only get
+  // a stale-check.
+  lines.push(`function _ensureCapnwasmReader(reader) {`);
+  lines.push(`  const gen = reader._cpp._generation ?? 0;`);
+  lines.push(`  if (reader._gen === gen) return;`);
+  lines.push(`  if (reader._rebind) {`);
+  // The rebind closure positions cursor at this reader's struct. It bumps
+  // generation as a side effect (via _ensureCapnwasmReader on the parent
+  // calling _openAnyMessage), so peer readers know to re-bind too.
+  lines.push(`    reader._rebind();`);
+  lines.push(`    reader._gen = reader._cpp._generation ?? 0;`);
+  lines.push(`    reader._u8 = reader._cpp._u8;`);
+  lines.push(`    reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);`);
+  lines.push(`    return;`);
+  lines.push(`  }`);
+  lines.push(`  if (reader._msg) {`);
+  lines.push(`    reader._dataPtr = reader._cpp._openAnyMessage(reader._msg);`);
+  lines.push(`    reader._gen = reader._cpp._generation ?? 0;`);
+  lines.push(`    reader._u8 = reader._cpp._u8;`);
+  lines.push(`    reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);`);
+  lines.push(`    return;`);
+  lines.push(`  }`);
+  lines.push(`  throw new StaleReaderError();`);
+  lines.push(`}`);
   // Recording planner. Runs the user's callback against a Proxy that
   // notes every field path the callback reads. Lists with struct elements
   // expose a .map(childFn) that defers childFn — the planner records
@@ -1493,9 +1539,12 @@ function _capnwasmPick(cpp, fields, names) {`);
     // Don't cache a Uint8Array view here: text/data getters fetch a
     // fresh one via this._cpp._u8 because the wasm calls inside them
     // can grow memory (and detach a pre-existing view).
-    lines.push(`  constructor(cpp, dataPtr) {`);
+    lines.push(`  constructor(cpp, dataPtr, opts = undefined) {`);
     lines.push(`    this._cpp = cpp;`);
     lines.push(`    this._exp = cpp._exports;`);
+    lines.push(`    this._msg = opts && opts.msg ? opts.msg : null;`);
+    lines.push(`    this._rebind = opts && opts.rebind ? opts.rebind : null;`);
+    lines.push(`    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);`);
     // dataPtr is supplied by openX(cpp, bytes) and by the RPC layer's
     // open_call_params / open_return_results paths. When present,
     // primitive getters can read straight from wasm memory at
@@ -1515,6 +1564,7 @@ function _capnwasmPick(cpp, fields, names) {`);
       const byteOff = s.discriminantOffsetBits >> 3;
       lines.push(`  /** Returns the discriminant of this struct's union (0..${s.discriminantCount - 1}). */`);
       lines.push(`  which() {`);
+      lines.push(`    _ensureCapnwasmReader(this);`);
       lines.push(`    return this._exp.cpp_any_uint16_at(${byteOff}, 0);`);
       lines.push(`  }`);
       lines.push("");
@@ -1533,6 +1583,7 @@ function _capnwasmPick(cpp, fields, names) {`);
     for (const f of s.fields) {
       const getter = generateGetter(f);
       lines.push(`  get ${f.name}() {`);
+      lines.push(`    _ensureCapnwasmReader(this);`);
       // If this field is a union variant (or lives inside a group that is),
       // gate the getter on the discriminant matching. Returning undefined
       // for non-active variants matches Cap'n Proto's "default value" model.
@@ -1571,6 +1622,7 @@ function _capnwasmPick(cpp, fields, names) {`);
     // removed in favor of this one. Internally `_capnwasmPick` is still the
     // single-batched-wasm-call primitive that powers leaf reads.
     lines.push(`  draft(fn) {`);
+    lines.push(`    _ensureCapnwasmReader(this);`);
     lines.push(`    return _runDraft(this._cpp, ${s.name}Reader._FIELDS, fn);`);
     lines.push(`  }`);
     lines.push("");
@@ -1580,6 +1632,7 @@ function _capnwasmPick(cpp, fields, names) {`);
     // for "give me everything" callers (logging, JSON.stringify, building
     // an updated message via Builder.from(cpp, reader.toObject())).
     lines.push(`  toObject() {`);
+    lines.push(`    _ensureCapnwasmReader(this);`);
     lines.push(`    return _capnwasmPick(this._cpp, ${s.name}Reader._FIELDS, Object.keys(${s.name}Reader._FIELDS));`);
     lines.push(`  }`);
     lines.push(`}`);
@@ -1755,14 +1808,14 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push(` * Open framed Cap'n Proto bytes for typed access. Returns a ${s.name}Reader.`);
     lines.push(` */`);
     lines.push(`export function open${s.name}(cpp, bytes) {`);
-    lines.push(`  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");`);
-    lines.push(`  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());`);
-    // cpp_any_open returns the data section pointer of the opened
-    // AnyStruct (or 0 if the struct has no data section. Still a valid
-    // open). Pass it through so primitive getters can read direct from
-    // wasm memory.
-    lines.push(`  const dataPtr = cpp._exports.cpp_any_open(bytes.length);`);
-    lines.push(`  return new ${s.name}Reader(cpp, dataPtr);`);
+    lines.push(`  const opened = _openCapnwasmMessage(cpp, bytes, false);`);
+    lines.push(`  return new ${s.name}Reader(cpp, opened.dataPtr, opened);`);
+    lines.push(`}`);
+    lines.push("");
+    lines.push(`/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */`);
+    lines.push(`export function open${s.name}Unsafe(cpp, bytes) {`);
+    lines.push(`  const opened = _openCapnwasmMessage(cpp, bytes, true);`);
+    lines.push(`  return new ${s.name}Reader(cpp, opened.dataPtr, opened);`);
     lines.push(`}`);
     lines.push("");
     lines.push(`/** Begin building a new ${s.name} message. Returns a ${s.name}Builder. */`);
@@ -2036,6 +2089,7 @@ function generateDts(structs, schemaName) {
   if (structs.length > 0) {
     const root = structs[0];
     lines.push(`export declare function open${root.name}(cpp: CapnCpp, bytes: Uint8Array): ${root.name}Reader;`);
+    lines.push(`export declare function open${root.name}Unsafe(cpp: CapnCpp, bytes: Uint8Array): ${root.name}Reader;`);
   }
   return lines.join("\n") + "\n";
 }
@@ -2102,6 +2156,7 @@ function fieldDescriptor(f) {
 function generateListGetter(ptrIndex, innerType) {
   const lines = [];
   // Open the list once, capture size, then return a wrapper.
+  lines.push(`const reader = this;`);
   lines.push(`const cpp = this._cpp;`);
   lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
   // The wrapper closes over `cpp` and `size`. Each .at(i) re-opens the
@@ -2112,9 +2167,10 @@ function generateListGetter(ptrIndex, innerType) {
     const primFn = PRIMITIVE_LIST_GETTERS[innerType];
     lines.push(`return {`);
     lines.push(`  length: size,`);
-    lines.push(`  at(i) {`);
-    lines.push(`    if (i < 0 || i >= size) return undefined;`);
-    lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
+  lines.push(`  at(i) {`);
+  lines.push(`    if (i < 0 || i >= size) return undefined;`);
+  lines.push(`    _ensureCapnwasmReader(reader);`);
+  lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
     lines.push(`    return ${primFn};`);
     lines.push(`  },`);
     lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);
@@ -2125,9 +2181,10 @@ function generateListGetter(ptrIndex, innerType) {
     lines.push(`const decoder = SHARED_TEXT_DECODER;`);
     lines.push(`return {`);
     lines.push(`  length: size,`);
-    lines.push(`  at(i) {`);
-    lines.push(`    if (i < 0 || i >= size) return undefined;`);
-    lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
+  lines.push(`  at(i) {`);
+  lines.push(`    if (i < 0 || i >= size) return undefined;`);
+  lines.push(`    _ensureCapnwasmReader(reader);`);
+  lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
     lines.push(`    const len = cpp._exports.cpp_any_list_get_text(i);`);
     lines.push(`    if (len === 0) return "";`);
     lines.push(`    const out = cpp._outPtr;`);
@@ -2140,9 +2197,10 @@ function generateListGetter(ptrIndex, innerType) {
   if (innerType === "Data") {
     lines.push(`return {`);
     lines.push(`  length: size,`);
-    lines.push(`  at(i) {`);
-    lines.push(`    if (i < 0 || i >= size) return undefined;`);
-    lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
+  lines.push(`  at(i) {`);
+  lines.push(`    if (i < 0 || i >= size) return undefined;`);
+  lines.push(`    _ensureCapnwasmReader(reader);`);
+  lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
     lines.push(`    const len = cpp._exports.cpp_any_list_get_data(i);`);
     lines.push(`    const out = cpp._outPtr;`);
     lines.push(`    return cpp._u8.slice(out, out + len);`);
@@ -2167,11 +2225,20 @@ function generateListGetter(ptrIndex, innerType) {
   lines.push(`  length: size,`);
   lines.push(`  at(i) {`);
   lines.push(`    if (i < 0 || i >= size) return undefined;`);
+  lines.push(`    _ensureCapnwasmReader(reader);`);
   lines.push(`    if (pushed) cpp._exports.cpp_any_leave_struct();`);
   lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
   lines.push(`    cpp._exports.cpp_any_enter_list_at(i);`);
+  // After moving cursor onto element i, bump generation so the parent
+  // reader knows its own cursor position is no longer authoritative.
+  // The element reader records the post-bump generation as its own _gen.
+  lines.push(`    cpp._bumpGeneration();`);
   lines.push(`    pushed = true;`);
-  lines.push(`    const r = new ${innerType}Reader(cpp);`);
+  // The element rebind closure: re-bind the parent's message (positioning
+  // cursor at parent root), then descend into the list element. After we
+  // move the cursor away from the parent root, bump generation so peer
+  // readers know their own cursor position is no longer authoritative.
+  lines.push(`    const r = new ${innerType}Reader(cpp, 0, { msg: reader._msg, gen: cpp._generation ?? 0, rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(${ptrIndex}); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); } });`);
   lines.push(`    return r;`);
   lines.push(`  },`);
   lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);
@@ -2202,7 +2269,7 @@ function generateGetter(field) {
   // containing struct (capnp's group-layout rule), so reading
   // `parent.group.field` is the same wasm cost as `parent.field` would be.
   if (field.kind === "group") {
-    return [`return new ${field.groupStructName}Reader(this._cpp);`];
+    return [`return new ${field.groupStructName}Reader(this._cpp, this._dataPtr, { msg: this._msg, gen: this._gen, rebind: this._rebind });`];
   }
   if (field.kind === "pointer") {
     if (field.type === "Text") {

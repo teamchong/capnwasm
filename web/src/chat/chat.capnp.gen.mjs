@@ -366,6 +366,43 @@ function _capnwasmListProject(cpp, ptrIndex, fields, names, mapFn, bounds, filte
 }
 
 const _STRUCT_FIELDS = Object.create(null);
+export class StaleReaderError extends Error {
+  constructor(message = "Cap'n Proto reader is stale because the CapnCpp runtime opened another message") {
+    super(message);
+    this.name = "StaleReaderError";
+  }
+}
+function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
+  if (!unsafe && typeof cpp._allocMessage === "function") {
+    const msg = cpp._allocMessage(bytes);
+    const dataPtr = cpp._openAnyMessage(msg);
+    return { dataPtr, msg, gen: cpp._generation };
+  }
+  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
+  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
+  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
+  if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();
+  return { dataPtr, msg: null, gen: cpp._generation ?? 0 };
+}
+function _ensureCapnwasmReader(reader) {
+  const gen = reader._cpp._generation ?? 0;
+  if (reader._gen === gen) return;
+  if (reader._rebind) {
+    reader._rebind();
+    reader._gen = reader._cpp._generation ?? 0;
+    reader._u8 = reader._cpp._u8;
+    reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    return;
+  }
+  if (reader._msg) {
+    reader._dataPtr = reader._cpp._openAnyMessage(reader._msg);
+    reader._gen = reader._cpp._generation ?? 0;
+    reader._u8 = reader._cpp._u8;
+    reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    return;
+  }
+  throw new StaleReaderError();
+}
 const _LIST_MAP_TAG = Symbol("_capnwasm_listMap");
 const _LIST_MAP_SLICE_TAG = Symbol("_capnwasm_listMapSlice");
 function _makeListMapTag(idx, slice) {
@@ -568,15 +605,19 @@ function _runDraft(cpp, fields, fn) {
 }
 
 export class PostParamsReader {
-  constructor(cpp, dataPtr) {
+  constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
   get author() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -584,6 +625,7 @@ export class PostParamsReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get text() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(1);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -597,27 +639,34 @@ export class PostParamsReader {
   };
 
   draft(fn) {
+    _ensureCapnwasmReader(this);
     return _runDraft(this._cpp, PostParamsReader._FIELDS, fn);
   }
 
   toObject() {
+    _ensureCapnwasmReader(this);
     return _capnwasmPick(this._cpp, PostParamsReader._FIELDS, Object.keys(PostParamsReader._FIELDS));
   }
 }
 
 export class ChatMessageReader {
-  constructor(cpp, dataPtr) {
+  constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
   get id() {
+    _ensureCapnwasmReader(this);
     return this._dataPtr ? this._dv.getBigUint64(this._dataPtr + 0, true) : this._exp.cpp_any_int64_at(0, 0n);
   }
   get author() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -625,6 +674,7 @@ export class ChatMessageReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get text() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(1);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -632,9 +682,11 @@ export class ChatMessageReader {
     return decodeAscii(u8.subarray(out, out + len));
   }
   get ts() {
+    _ensureCapnwasmReader(this);
     return this._dataPtr ? this._dv.getBigUint64(this._dataPtr + 8, true) : this._exp.cpp_any_int64_at(8, 0n);
   }
   get image() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_data_at(2);
     const u8 = this._cpp._u8;
     const out = this._cpp._outPtr;
@@ -650,24 +702,30 @@ export class ChatMessageReader {
   };
 
   draft(fn) {
+    _ensureCapnwasmReader(this);
     return _runDraft(this._cpp, ChatMessageReader._FIELDS, fn);
   }
 
   toObject() {
+    _ensureCapnwasmReader(this);
     return _capnwasmPick(this._cpp, ChatMessageReader._FIELDS, Object.keys(ChatMessageReader._FIELDS));
   }
 }
 
 export class GetSinceParamsReader {
-  constructor(cpp, dataPtr) {
+  constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
   get since() {
+    _ensureCapnwasmReader(this);
     return this._dataPtr ? this._dv.getBigUint64(this._dataPtr + 0, true) : this._exp.cpp_any_int64_at(0, 0n);
   }
 
@@ -676,24 +734,31 @@ export class GetSinceParamsReader {
   };
 
   draft(fn) {
+    _ensureCapnwasmReader(this);
     return _runDraft(this._cpp, GetSinceParamsReader._FIELDS, fn);
   }
 
   toObject() {
+    _ensureCapnwasmReader(this);
     return _capnwasmPick(this._cpp, GetSinceParamsReader._FIELDS, Object.keys(GetSinceParamsReader._FIELDS));
   }
 }
 
 export class ChatMessageListReader {
-  constructor(cpp, dataPtr) {
+  constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
   get items() {
+    _ensureCapnwasmReader(this);
+    const reader = this;
     const cpp = this._cpp;
     const size = cpp._exports.cpp_any_open_list(0);
     let pushed = false;
@@ -701,11 +766,13 @@ export class ChatMessageListReader {
       length: size,
       at(i) {
         if (i < 0 || i >= size) return undefined;
+        _ensureCapnwasmReader(reader);
         if (pushed) cpp._exports.cpp_any_leave_struct();
         cpp._exports.cpp_any_open_list(0);
         cpp._exports.cpp_any_enter_list_at(i);
+        cpp._bumpGeneration();
         pushed = true;
-        const r = new ChatMessageReader(cpp);
+        const r = new ChatMessageReader(cpp, 0, { msg: reader._msg, gen: cpp._generation ?? 0, rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(0); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); } });
         return r;
       },
       *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
@@ -717,10 +784,12 @@ export class ChatMessageListReader {
   };
 
   draft(fn) {
+    _ensureCapnwasmReader(this);
     return _runDraft(this._cpp, ChatMessageListReader._FIELDS, fn);
   }
 
   toObject() {
+    _ensureCapnwasmReader(this);
     return _capnwasmPick(this._cpp, ChatMessageListReader._FIELDS, Object.keys(ChatMessageListReader._FIELDS));
   }
 }
@@ -1009,10 +1078,14 @@ export class ChatMessageListBuilder {
  * Open framed Cap'n Proto bytes for typed access. Returns a PostParamsReader.
  */
 export function openPostParams(cpp, bytes) {
-  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
-  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
-  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
-  return new PostParamsReader(cpp, dataPtr);
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new PostParamsReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openPostParamsUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new PostParamsReader(cpp, opened.dataPtr, opened);
 }
 
 /** Begin building a new PostParams message. Returns a PostParamsBuilder. */
@@ -1024,10 +1097,14 @@ export function buildPostParams(cpp) {
  * Open framed Cap'n Proto bytes for typed access. Returns a ChatMessageReader.
  */
 export function openChatMessage(cpp, bytes) {
-  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
-  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
-  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
-  return new ChatMessageReader(cpp, dataPtr);
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new ChatMessageReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openChatMessageUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new ChatMessageReader(cpp, opened.dataPtr, opened);
 }
 
 /** Begin building a new ChatMessage message. Returns a ChatMessageBuilder. */
@@ -1039,10 +1116,14 @@ export function buildChatMessage(cpp) {
  * Open framed Cap'n Proto bytes for typed access. Returns a GetSinceParamsReader.
  */
 export function openGetSinceParams(cpp, bytes) {
-  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
-  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
-  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
-  return new GetSinceParamsReader(cpp, dataPtr);
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new GetSinceParamsReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openGetSinceParamsUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new GetSinceParamsReader(cpp, opened.dataPtr, opened);
 }
 
 /** Begin building a new GetSinceParams message. Returns a GetSinceParamsBuilder. */
@@ -1054,10 +1135,14 @@ export function buildGetSinceParams(cpp) {
  * Open framed Cap'n Proto bytes for typed access. Returns a ChatMessageListReader.
  */
 export function openChatMessageList(cpp, bytes) {
-  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
-  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
-  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
-  return new ChatMessageListReader(cpp, dataPtr);
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new ChatMessageListReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openChatMessageListUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new ChatMessageListReader(cpp, opened.dataPtr, opened);
 }
 
 /** Begin building a new ChatMessageList message. Returns a ChatMessageListBuilder. */

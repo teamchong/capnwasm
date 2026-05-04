@@ -49,3 +49,4 @@ export declare class BlobReplyReader {
 }
 
 export declare function openUser(cpp: CapnCpp, bytes: Uint8Array): UserReader;
+export declare function openUserUnsafe(cpp: CapnCpp, bytes: Uint8Array): UserReader;

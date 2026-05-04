@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-04T11:58:39.545Z",
+  "generatedAt": "2026-05-04T15:06:01.334Z",
   "source": "web/scripts/generate-fixtures.mjs",
   "fixtures": {
     "small": {
@@ -40,25 +40,25 @@
     }
   },
   "wasm": {
-    "raw": 85038,
-    "gzip": 33980,
-    "brotli": 28577
+    "raw": 82673,
+    "gzip": 33074,
+    "brotli": 27777
   },
   "bundles": {
     "gzip": {
-      "capnwasmBrowser": 34140,
-      "capnwasmRpc": 40086,
-      "capnwasmTypical": 36217,
+      "capnwasmBrowser": 33234,
+      "capnwasmRpc": 39337,
+      "capnwasmTypical": 35311,
       "capnweb": 21149
     },
     "brotli": {
-      "capnwasmBrowser": 28704,
-      "capnwasmRpc": 34096,
-      "capnwasmTypical": 30545,
+      "capnwasmBrowser": 27904,
+      "capnwasmRpc": 33433,
+      "capnwasmTypical": 29745,
       "capnweb": 18132
     },
     "ratios": {
-      "capnwasmRpcToCapnwebGzip": 1.8954087663719326
+      "capnwasmRpcToCapnwebGzip": 1.859993380301669
     }
   }
 }
