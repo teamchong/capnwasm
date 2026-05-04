@@ -41,6 +41,26 @@ function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) 
   return u8.slice(target, target + count);
 }
 
+const _ELEM_BYTES_TO_SIZE_CODE = { 1: 2, 2: 3, 4: 4, 8: 5 };
+function _jsReadListPrimPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd, elemBytes) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return { elementsBase: 0, count: 0 };
+  if ((word0 & 3) !== 1) return undefined;
+  const elemSizeCode = word1 & 7;
+  const expectedCode = _ELEM_BYTES_TO_SIZE_CODE[elemBytes];
+  if (elemSizeCode !== expectedCode) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const elementCount = word1 >>> 3;
+  const elementsBase = ptrAddr + 8 + offset * 8;
+  if (elementsBase + elementCount * elemBytes > msgEnd) return undefined;
+  if (elementsBase < msgStart) return undefined;
+  return { elementsBase, count: elementCount };
+}
+
 function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
   if (!msgEnd) return undefined;
   const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;

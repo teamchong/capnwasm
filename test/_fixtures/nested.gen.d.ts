@@ -17,11 +17,11 @@ export declare class CommentReader {
   constructor(cpp: CapnCpp);
   readonly author: string;
   readonly body: string;
-  readonly replies: { readonly length: number; at(i: number): CommentReader | undefined };
+  readonly replies: { readonly length: number; at(i: number): CommentReader | undefined; [Symbol.iterator](): IterableIterator<CommentReader> };
   toObject(): {
     author: string;
     body: string;
-    replies: { readonly length: number; at(i: number): CommentReader | undefined };
+    replies: { readonly length: number; at(i: number): CommentReader | undefined; [Symbol.iterator](): IterableIterator<CommentReader> };
   };
   draft<T>(fn: (draft: any) => T): T;
 }
@@ -43,14 +43,14 @@ export declare class PostReader {
   constructor(cpp: CapnCpp);
   readonly title: string;
   readonly author: string;
-  readonly tags: { readonly length: number; at(i: number): TagReader | undefined };
-  readonly comments: { readonly length: number; at(i: number): CommentReader | undefined };
+  readonly tags: { readonly length: number; at(i: number): TagReader | undefined; [Symbol.iterator](): IterableIterator<TagReader> };
+  readonly comments: { readonly length: number; at(i: number): CommentReader | undefined; [Symbol.iterator](): IterableIterator<CommentReader> };
   readonly meta: PostMetaReader;
   toObject(): {
     title: string;
     author: string;
-    tags: { readonly length: number; at(i: number): TagReader | undefined };
-    comments: { readonly length: number; at(i: number): CommentReader | undefined };
+    tags: { readonly length: number; at(i: number): TagReader | undefined; [Symbol.iterator](): IterableIterator<TagReader> };
+    comments: { readonly length: number; at(i: number): CommentReader | undefined; [Symbol.iterator](): IterableIterator<CommentReader> };
     meta: PostMetaReader;
   };
   draft<T>(fn: (draft: any) => T): T;

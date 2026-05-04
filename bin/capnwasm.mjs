@@ -874,6 +874,34 @@ function generateJs(structs, schemaName) {
   // STRUCT-shaped tag word whose offset field is the element count.
   // Returns undefined for FAR / OTHER / wrong elemSize / corrupt
   // tag (caller falls back to C++).
+  // Decode a List(Primitive) pointer. Returns { elementsBase, count } on
+  // success or undefined on any malformed/uncovered case (caller falls back
+  // to the cursor path). `elemBytes` is the JS typed-array element size
+  // (1, 2, 4, or 8); the capnp wire tag uses size codes 2..5 mapping to
+  // 1, 2, 4, 8 bytes respectively. We accept the wire's size code as long
+  // as it converts to the requested elemBytes; this catches misuse of
+  // view() against a list of mismatched element width without falsely
+  // returning bytes.
+  lines.push(`const _ELEM_BYTES_TO_SIZE_CODE = { 1: 2, 2: 3, 4: 4, 8: 5 };`);
+  lines.push(`function _jsReadListPrimPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd, elemBytes) {`);
+  lines.push(`  if (!msgEnd) return undefined;`);
+  lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
+  lines.push(`  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;`);
+  lines.push(`  const word0 = dv.getUint32(ptrAddr, true);`);
+  lines.push(`  const word1 = dv.getUint32(ptrAddr + 4, true);`);
+  lines.push(`  if (word0 === 0 && word1 === 0) return { elementsBase: 0, count: 0 };`);
+  lines.push(`  if ((word0 & 3) !== 1) return undefined;`);
+  lines.push(`  const elemSizeCode = word1 & 7;`);
+  lines.push(`  const expectedCode = _ELEM_BYTES_TO_SIZE_CODE[elemBytes];`);
+  lines.push(`  if (elemSizeCode !== expectedCode) return undefined;`);
+  lines.push(`  const offset = dv.getInt32(ptrAddr, true) >> 2;`);
+  lines.push(`  const elementCount = word1 >>> 3;`);
+  lines.push(`  const elementsBase = ptrAddr + 8 + offset * 8;`);
+  lines.push(`  if (elementsBase + elementCount * elemBytes > msgEnd) return undefined;`);
+  lines.push(`  if (elementsBase < msgStart) return undefined;`);
+  lines.push(`  return { elementsBase, count: elementCount };`);
+  lines.push(`}`);
+  lines.push("");
   lines.push(`function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {`);
   lines.push(`  if (!msgEnd) return undefined;`);
   lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
@@ -2379,15 +2407,37 @@ function generateDts(structs, schemaName) {
   return lines.join("\n") + "\n";
 }
 
+// Maps a primitive capnp type to the typed-array constructor that view()
+// returns. Mirrors PRIMITIVE_LIST_VIEWS but lives in the dts emitter so we
+// can produce precise return types per field. Bool is omitted: it has no
+// view() at runtime either (bit-packed).
+const PRIMITIVE_TYPED_ARRAY = {
+  "UInt8":   "Uint8Array",
+  "Int8":    "Int8Array",
+  "UInt16":  "Uint16Array",
+  "Int16":   "Int16Array",
+  "UInt32":  "Uint32Array",
+  "Int32":   "Int32Array",
+  "UInt64":  "BigUint64Array",
+  "Int64":   "BigInt64Array",
+  "Float32": "Float32Array",
+  "Float64": "Float64Array",
+};
+
 function capnpToTs(capnpType, declaredStructs) {
   const listMatch = /^List\(([^)]+)\)$/.exec(capnpType);
   if (listMatch) {
     const inner = listMatch[1];
     const innerTs = capnpToTs(inner, declaredStructs);
-    if (declaredStructs.has(inner)) {
-      return `{ readonly length: number; at(i: number): ${innerTs} | undefined }`;
+    // Primitive-element lists expose view() with a precise typed-array
+    // return type. Non-primitive lists (Text, Data, Struct, Bool, nested
+    // List) only expose length + at(i) — accessing .view() on those is a
+    // TS error, exactly as the runtime contract.
+    const viewCtor = PRIMITIVE_TYPED_ARRAY[inner];
+    if (viewCtor) {
+      return `{ readonly length: number; at(i: number): ${innerTs} | undefined; view(): ${viewCtor}; [Symbol.iterator](): IterableIterator<${innerTs}> }`;
     }
-    return `{ readonly length: number; at(i: number): ${innerTs} | undefined }`;
+    return `{ readonly length: number; at(i: number): ${innerTs} | undefined; [Symbol.iterator](): IterableIterator<${innerTs}> }`;
   }
   if (declaredStructs.has(capnpType)) return capnpType + "Reader";
   switch (capnpType) {
@@ -2460,6 +2510,7 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
   // Reader.
   if (PRIMITIVE_LIST_GETTERS[innerType]) {
     const primFn = PRIMITIVE_LIST_GETTERS[innerType];
+    const viewSpec = PRIMITIVE_LIST_VIEWS[innerType];
     lines.push(`return {`);
     lines.push(`  length: size,`);
   lines.push(`  at(i) {`);
@@ -2469,6 +2520,31 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
     lines.push(`    return ${primFn};`);
     lines.push(`  },`);
     lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);
+    if (viewSpec) {
+      // Direct typed-array view over wasm.memory.buffer at the list's element
+      // bytes. Zero copy. The view aliases wasm linear memory, so:
+      //  - reads see the same bytes capnwasm wrote on encode
+      //  - the view is invalidated if wasm.memory grows (the underlying
+      //    ArrayBuffer detaches; reads throw TypeError per spec)
+      //  - the view is invalidated if the parent reader is disposed and
+      //    its slot is reused by a subsequent open
+      // Caller owns lifetime: don't retain past reader.dispose() / next open.
+      // Bool is intentionally absent (bit-packed, not array-mappable cleanly).
+      lines.push(`  view() {`);
+      lines.push(`    _ensureCapnwasmReader(reader);`);
+      // M5.5: decode the list pointer in pure JS to find the element byte
+      // range. Falls back to the wasm any_list path on undefined (e.g.
+      // the unsafe / no-msgEnd reader), where we can't safely return a
+      // view because the cursor-based path doesn't expose stable bytes.
+      lines.push(`    const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;`);
+      lines.push(`    if (!_msgEnd) {`);
+      lines.push(`      throw new Error("view() requires a slot-pool reader; got an unsafe / cursor-only reader");`);
+      lines.push(`    }`);
+      lines.push(`    const desc = _jsReadListPrimPtr(reader._u8, reader._dv, reader._dataPtr, ${parentDataWords}, ${ptrIndex}, _msgStart, _msgEnd, ${1 << viewSpec.shift});`);
+      lines.push(`    if (!desc) throw new Error("view(): list pointer decode failed");`);
+      lines.push(`    return new ${viewSpec.ctor}(reader._u8.buffer, desc.elementsBase, desc.count);`);
+      lines.push(`  },`);
+    }
     lines.push(`};`);
     return lines;
   }
@@ -2606,6 +2682,37 @@ const PRIMITIVE_LIST_GETTERS = {
   "Int32":  "cpp._exports.cpp_any_list_get_uint32(i) | 0",
   "UInt64": "cpp._exports.cpp_any_list_get_uint64(i)",
   "Int64":  "cpp._exports.cpp_any_list_get_uint64(i)",
+  // Float bits come back as integer; reinterpret via the module-scoped
+  // shared view so the cost is one typed-array store + load, no per-call
+  // ArrayBuffer alloc. Without these entries codegen incorrectly treated
+  // List(Float32/Float64) as struct-element lists and produced
+  // "FloatXXReader is not defined" errors at first .at(i) call.
+  "Float32": "(_F32_VIEW_U32[0] = (cpp._exports.cpp_any_list_get_float32_bits(i) >>> 0), _F32_VIEW_F32[0])",
+  // Single wasm call returns a 64-bit BigInt; split into two u32 halves for
+  // the bit-reinterpret without a second boundary crossing.
+  "Float64": "((bits) => { _F64_VIEW_U32[0] = Number(bits & 0xFFFFFFFFn) >>> 0; _F64_VIEW_U32[1] = Number(bits >> 32n) >>> 0; return _F64_VIEW_F64[0]; })(cpp._exports.cpp_any_list_get_float64_bits(i))",
+};
+
+// Maps a capnp primitive type to: { ctor, shift } where ctor is the JS
+// typed-array constructor name and shift is log2(elementSize). Used by
+// list.view() codegen. Bool is omitted on purpose: capnp bit-packs bool
+// list elements 8-per-byte, which doesn't map cleanly to a typed array
+// without bit decoding; we leave that as `at(i)` only.
+//
+// Int64 / UInt64 use BigInt typed arrays — the view itself is zero-copy,
+// but iterating it allocates a BigInt per element. Still useful for code
+// that stays in BigInt land or hands the view to a typed consumer.
+const PRIMITIVE_LIST_VIEWS = {
+  "UInt8":   { ctor: "Uint8Array",        shift: 0 },
+  "Int8":    { ctor: "Int8Array",         shift: 0 },
+  "UInt16":  { ctor: "Uint16Array",       shift: 1 },
+  "Int16":   { ctor: "Int16Array",        shift: 1 },
+  "UInt32":  { ctor: "Uint32Array",       shift: 2 },
+  "Int32":   { ctor: "Int32Array",        shift: 2 },
+  "UInt64":  { ctor: "BigUint64Array",    shift: 3 },
+  "Int64":   { ctor: "BigInt64Array",     shift: 3 },
+  "Float32": { ctor: "Float32Array",      shift: 2 },
+  "Float64": { ctor: "Float64Array",      shift: 3 },
 };
 
 function generateGetter(field) {
