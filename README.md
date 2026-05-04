@@ -2,9 +2,7 @@
 
 > **Project framing:** capnwasm is me trying to learn Cap'n Proto and capnweb by building the opposite experiment: keep the real Cap'n Proto binary wire in the browser, compile the upstream C++ runtime to wasm, and measure what changes. This is not a scoreboard where Cap'n Proto always wins; the useful question is the tradeoff boundary.
 >
-> **When this matters:** you're moving binary data (no base64 tax), doing sparse reads on large payloads, or talking to non-JS services over the Cap'n Proto wire. If your traffic is tiny JS-to-JS objects, pure text, or you want the smallest possible bundle, JSON/capnweb is often the right call.
-
-I built this to learn how Cloudflare's [capnweb](https://github.com/cloudflare/capnweb) works under the hood and to understand the tradeoffs it makes. capnweb chooses a compact JS-only implementation with a JSON-shaped wire; I wanted to see what the inverse experiment looks like, keep the binary wire and statically compile the upstream Cap'n Proto C++ to wasm, and measure what that costs and what it buys.
+> **When this matters:** you're moving binary data (no base64 tax), doing sparse reads on large payloads, or talking to non-JS services over the Cap'n Proto wire. If your traffic is tiny JS-to-JS objects, pure text, or you want the smallest possible bundle, JSON/[capnweb](https://github.com/cloudflare/capnweb) is often the right call.
 
 capnwasm sits at: ~17 KB more brotli than capnweb, but a real Cap'n Proto runtime in the browser, raw bytes for binary data, sparse-access reads on large payloads, and wire interop with C++/Rust/Go services. The numbers below are findings from this exploration, not a scoreboard.
 
