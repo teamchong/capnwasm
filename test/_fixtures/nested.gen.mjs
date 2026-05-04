@@ -41,6 +41,31 @@ function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) 
   return u8.slice(target, target + count);
 }
 
+function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return null;
+  if ((word0 & 3) !== 1) return undefined;
+  if ((word1 & 7) !== 7) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const wordCount = word1 >>> 3;
+  const target = ptrAddr + 8 + offset * 8;
+  if (target < msgStart || target + 8 > msgEnd) return undefined;
+  const tag0 = dv.getUint32(target, true);
+  if ((tag0 & 3) !== 0) return undefined;
+  const elementCount = tag0 >>> 2;
+  const tagDataWords = dv.getUint16(target + 4, true);
+  const tagPtrWords = dv.getUint16(target + 6, true);
+  const wordsPerElement = tagDataWords + tagPtrWords;
+  if (wordsPerElement * elementCount !== wordCount) return undefined;
+  const elementsBase = target + 8;
+  if (elementsBase + elementCount * wordsPerElement * 8 > msgEnd) return undefined;
+  return { elementsBase, count: elementCount, dataWords: tagDataWords, ptrWords: tagPtrWords };
+}
+
 const _F32_VIEW_BUF = new ArrayBuffer(4);
 const _F32_VIEW_U32 = new Uint32Array(_F32_VIEW_BUF);
 const _F32_VIEW_F32 = new Float32Array(_F32_VIEW_BUF);
@@ -271,12 +296,20 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
         out.push(`  F32U[0] = dv.getUint32(${headerOff}, true) >>> 0;`);
         out.push(`  const _v${col} = F32F[0];`);
         break;
-      case "uint64":
       case "int64":
         out.push(`  let _v${col};`);
         out.push(`  { const _lo = dv.getUint32(readPos, true);`);
         out.push(`    const _hi = dv.getInt32(readPos + 4, true);`);
         out.push(`    _v${col} = (_hi >= -0x200000 && _hi <= 0x1FFFFF) ? _hi * 4294967296 + _lo : dv.getBigInt64(readPos, true);`);
+        out.push(`    readPos += 8; }`);
+        break;
+      case "uint64":
+        // Unsigned: combine two u32 reads. Past 2^53 use BigInt so
+        // high-bit values like UINT64_MAX do not collapse to -1.
+        out.push(`  let _v${col};`);
+        out.push(`  { const _lo = dv.getUint32(readPos, true) >>> 0;`);
+        out.push(`    const _hi = dv.getUint32(readPos + 4, true) >>> 0;`);
+        out.push(`    _v${col} = (_hi <= 0x001FFFFF) ? _hi * 4294967296 + _lo : ((BigInt(_hi) << 32n) | BigInt(_lo));`);
         out.push(`    readPos += 8; }`);
         break;
       case "float64":
@@ -347,11 +380,17 @@ function _capnwasmPick(cpp, fields, names) {
       case "uint32": result[names[i]] = lenOrVal >>> 0; break;
       case "int32":  result[names[i]] = lenOrVal | 0; break;
       case "float32": _F32_VIEW_U32[0] = lenOrVal >>> 0; result[names[i]] = _F32_VIEW_F32[0]; break;
-      case "uint64":
       case "int64": {
         const lo = dv2.getUint32(out - dv2.byteOffset + readPos, true);
         const hi = dv2.getInt32 (out - dv2.byteOffset + readPos + 4, true);
         result[names[i]] = (hi >= -0x200000 && hi <= 0x1FFFFF) ? hi * 4294967296 + lo : dv2.getBigInt64(out - dv2.byteOffset + readPos, true);
+        readPos += 8;
+        break;
+      }
+      case "uint64": {
+        const lo = dv2.getUint32(out - dv2.byteOffset + readPos, true) >>> 0;
+        const hi = dv2.getUint32(out - dv2.byteOffset + readPos + 4, true) >>> 0;
+        result[names[i]] = (hi <= 0x001FFFFF) ? hi * 4294967296 + lo : ((BigInt(hi) << 32n) | BigInt(lo));
         readPos += 8;
         break;
       }
@@ -736,11 +775,13 @@ export class TagReader {
 
   draft(fn) {
     _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
     return _runDraft(this._cpp, TagReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
     return _capnwasmPick(this._cpp, TagReader._FIELDS, Object.keys(TagReader._FIELDS));
   }
 }
@@ -812,6 +853,29 @@ export class CommentReader {
     _ensureCapnwasmReader(this);
     const reader = this;
     const cpp = this._cpp;
+    const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;
+    const _u8 = reader._u8, _dv = reader._dv;
+    let _listDesc = null;
+    if (_msgEnd) {
+      _listDesc = _jsReadListStructPtr(_u8, _dv, reader._dataPtr, 0, 2, _msgStart, _msgEnd);
+    }
+    if (_listDesc && _listDesc !== undefined) {
+      return {
+        length: _listDesc.count,
+        at(i) {
+          if (i < 0 || i >= _listDesc.count) return undefined;
+          const elemDataPtr = _listDesc.elementsBase + i * (_listDesc.dataWords + _listDesc.ptrWords) * 8;
+          return new CommentReader(cpp, elemDataPtr, {
+            slotIdx: reader._slotIdx,
+            msgStart: _msgStart,
+            msgEnd: _msgEnd,
+            gen: cpp._generation ?? 0,
+            rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(2); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); },
+          });
+        },
+        *[Symbol.iterator]() { for (let i = 0; i < this.length; i++) yield this.at(i); },
+      };
+    }
     const size = cpp._exports.cpp_any_open_list(2);
     let pushed = false;
     return {
@@ -839,11 +903,13 @@ export class CommentReader {
 
   draft(fn) {
     _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
     return _runDraft(this._cpp, CommentReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
     return _capnwasmPick(this._cpp, CommentReader._FIELDS, Object.keys(CommentReader._FIELDS));
   }
 }
@@ -915,11 +981,13 @@ export class PostMetaReader {
 
   draft(fn) {
     _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
     return _runDraft(this._cpp, PostMetaReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
     return _capnwasmPick(this._cpp, PostMetaReader._FIELDS, Object.keys(PostMetaReader._FIELDS));
   }
 }
@@ -991,6 +1059,29 @@ export class PostReader {
     _ensureCapnwasmReader(this);
     const reader = this;
     const cpp = this._cpp;
+    const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;
+    const _u8 = reader._u8, _dv = reader._dv;
+    let _listDesc = null;
+    if (_msgEnd) {
+      _listDesc = _jsReadListStructPtr(_u8, _dv, reader._dataPtr, 0, 2, _msgStart, _msgEnd);
+    }
+    if (_listDesc && _listDesc !== undefined) {
+      return {
+        length: _listDesc.count,
+        at(i) {
+          if (i < 0 || i >= _listDesc.count) return undefined;
+          const elemDataPtr = _listDesc.elementsBase + i * (_listDesc.dataWords + _listDesc.ptrWords) * 8;
+          return new TagReader(cpp, elemDataPtr, {
+            slotIdx: reader._slotIdx,
+            msgStart: _msgStart,
+            msgEnd: _msgEnd,
+            gen: cpp._generation ?? 0,
+            rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(2); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); },
+          });
+        },
+        *[Symbol.iterator]() { for (let i = 0; i < this.length; i++) yield this.at(i); },
+      };
+    }
     const size = cpp._exports.cpp_any_open_list(2);
     let pushed = false;
     return {
@@ -1013,6 +1104,29 @@ export class PostReader {
     _ensureCapnwasmReader(this);
     const reader = this;
     const cpp = this._cpp;
+    const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;
+    const _u8 = reader._u8, _dv = reader._dv;
+    let _listDesc = null;
+    if (_msgEnd) {
+      _listDesc = _jsReadListStructPtr(_u8, _dv, reader._dataPtr, 0, 3, _msgStart, _msgEnd);
+    }
+    if (_listDesc && _listDesc !== undefined) {
+      return {
+        length: _listDesc.count,
+        at(i) {
+          if (i < 0 || i >= _listDesc.count) return undefined;
+          const elemDataPtr = _listDesc.elementsBase + i * (_listDesc.dataWords + _listDesc.ptrWords) * 8;
+          return new CommentReader(cpp, elemDataPtr, {
+            slotIdx: reader._slotIdx,
+            msgStart: _msgStart,
+            msgEnd: _msgEnd,
+            gen: cpp._generation ?? 0,
+            rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(3); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); },
+          });
+        },
+        *[Symbol.iterator]() { for (let i = 0; i < this.length; i++) yield this.at(i); },
+      };
+    }
     const size = cpp._exports.cpp_any_open_list(3);
     let pushed = false;
     return {
@@ -1046,11 +1160,13 @@ export class PostReader {
 
   draft(fn) {
     _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
     return _runDraft(this._cpp, PostReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
     return _capnwasmPick(this._cpp, PostReader._FIELDS, Object.keys(PostReader._FIELDS));
   }
 }
@@ -1117,11 +1233,13 @@ export class PostMetaParentReader {
 
   draft(fn) {
     _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
     return _runDraft(this._cpp, PostMetaParentReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
     return _capnwasmPick(this._cpp, PostMetaParentReader._FIELDS, Object.keys(PostMetaParentReader._FIELDS));
   }
 }

@@ -197,3 +197,71 @@ export function readListBool(dv, list, i) {
   const byte = dv.getUint8(list.target + (i >>> 3));
   return ((byte >> (i & 7)) & 1) === 1;
 }
+
+// M5.5: Read a List<Struct> pointer (INLINE_COMPOSITE element layout).
+//
+// The wire format is:
+//   pointer word at ptrAddr:
+//     kind = LIST (1)
+//     elemSize = INLINE_COMPOSITE (7)
+//     count = total *word* count of the element data (not element count)
+//   target word (ptrAddr + 8 + offset*8): a "tag word" formatted as a
+//     STRUCT WirePointer:
+//       offsetAndKind: low 2 bits = 0 (STRUCT), high 30 bits = element count
+//       word1 lo u16: dataWords per element
+//       word1 hi u16: ptrWords per element
+//   followed by `elementCount` elements, each (dataWords + ptrWords) * 8 bytes.
+//
+// Returns:
+//   { elementsBase, count, dataWords, ptrWords } on success
+//   null on null pointer
+//   undefined on FAR / OTHER / wrong kind / out-of-bounds (caller falls
+//   back to C++)
+//
+// The returned descriptor is enough for callers to compute the i-th
+// element's data section pointer:
+//     elementDataPtr(i) = elementsBase + i * (dataWords + ptrWords) * 8
+// and read primitive fields from it directly. Pointer-section fields
+// of an element use the same readTextPtr / readDataPtr / readListPtr
+// machinery, with the element's dataPtr and the element's dataWords.
+export function readListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return null;
+  const kind = word0 & 3;
+  if (kind !== 1) return undefined;            // not a list
+  const elemSize = word1 & 7;
+  if (elemSize !== 7) return undefined;        // not INLINE_COMPOSITE
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const wordCount = word1 >>> 3;               // total element-data word count
+  const target = ptrAddr + 8 + offset * 8;
+  if (target < msgStart || target + 8 > msgEnd) return undefined;
+  // Tag word.
+  const tag0 = dv.getUint32(target, true);
+  if ((tag0 & 3) !== 0) return undefined;      // tag must encode STRUCT
+  const elementCount = (tag0 >>> 2);
+  const tagDataWords = dv.getUint16(target + 4, true);
+  const tagPtrWords = dv.getUint16(target + 6, true);
+  const wordsPerElement = tagDataWords + tagPtrWords;
+  // Sanity check: pointer's wordCount must equal elementCount * wordsPerElement.
+  // capnp encoders enforce this; rejection means corrupt or unsupported input.
+  if (wordsPerElement * elementCount !== wordCount) return undefined;
+  const elementsBase = target + 8;
+  const totalBytes = elementCount * wordsPerElement * 8;
+  if (elementsBase + totalBytes > msgEnd) return undefined;
+  return {
+    elementsBase,
+    count: elementCount,
+    dataWords: tagDataWords,
+    ptrWords: tagPtrWords,
+  };
+}
+
+// Compute the byte address of the i-th element's data section in a
+// List<Struct>. Cheap; just an arithmetic step. Caller passes the
+// descriptor from readListStructPtr.
+export function listStructElementDataPtr(list, i) {
+  return list.elementsBase + i * (list.dataWords + list.ptrWords) * 8;
+}

@@ -756,8 +756,7 @@ function _readSingle(cpp, desc) {
       _F64_U32[1] = exp.cpp_any_uint32_at(desc.off + 4, 0) >>> 0;
       return _F64_F64[0];
     }
-    case "int64":
-    case "uint64": {
+    case "int64": {
       // cpp_any_int64_at(uint32_t byte_offset, int64_t default_val): the
       // first arg is i32, the second is i64 (so it must be a BigInt). The
       // return value comes back as a BigInt; we coerce to a plain Number
@@ -768,6 +767,22 @@ function _readSingle(cpp, desc) {
         return v;
       }
       return v;
+    }
+    case "uint64": {
+      // Reading uint64 through the int64 export reinterprets values
+      // with the high bit set as negative BigInts (e.g. UINT64_MAX
+      // comes back as -1n), and the safe-integer-range coercion then
+      // returns -1, losing unsigned semantics. Reconstruct from two
+      // u32 reads instead so the magnitude is preserved.
+      const lo = exp.cpp_any_uint32_at(desc.off, 0) >>> 0;
+      const hi = exp.cpp_any_uint32_at(desc.off + 4, 0) >>> 0;
+      // Combine. If the value fits in safe-integer range, return Number;
+      // otherwise return BigInt. UINT64 values above 2^53 require BigInt.
+      if (hi <= 0x001FFFFF) {
+        // hi*2^32 + lo <= 2^53-1; safe Number range.
+        return hi * 4294967296 + lo;
+      }
+      return (BigInt(hi) << 32n) | BigInt(lo);
     }
     case "bool":   return exp.cpp_any_bool_at(desc.off, 0) === 1;
     case "list":       return _readList(cpp, desc);
@@ -997,14 +1012,23 @@ function _batchPick(cpp, fields, names) {
         readPos += 8;
         break;
       }
-      case "int64":
-      case "uint64": {
+      case "int64": {
         const lo = dvOut.getUint32(readPos, true);
         const hi = dvOut.getInt32(readPos + 4, true);
-        // Safe-integer fast path; fall back to BigInt above 2**53.
         result[names[i]] = (hi >= -0x200000 && hi <= 0x1FFFFF)
           ? hi * 4294967296 + lo
           : dvOut.getBigInt64(readPos, true);
+        readPos += 8;
+        break;
+      }
+      case "uint64": {
+        // Treat as unsigned: read both halves as u32 and combine.
+        // Past 2^53 use BigInt so high bits are not lost.
+        const lo = dvOut.getUint32(readPos, true) >>> 0;
+        const hi = dvOut.getUint32(readPos + 4, true) >>> 0;
+        result[names[i]] = (hi <= 0x001FFFFF)
+          ? hi * 4294967296 + lo
+          : (BigInt(hi) << 32n) | BigInt(lo);
         readPos += 8;
         break;
       }

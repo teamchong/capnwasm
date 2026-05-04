@@ -866,6 +866,39 @@ function generateJs(structs, schemaName) {
   lines.push(`  return u8.slice(target, target + count);`);
   lines.push(`}`);
   lines.push("");
+  // M5.5: List<Struct> pointer decoder. Returns a descriptor with
+  // elementsBase, count, dataWords, ptrWords. Element i's data
+  // section sits at elementsBase + i*(dataWords+ptrWords)*8.
+  // INLINE_COMPOSITE wire format: pointer's count field holds total
+  // element-data word count (not element count). The next word is a
+  // STRUCT-shaped tag word whose offset field is the element count.
+  // Returns undefined for FAR / OTHER / wrong elemSize / corrupt
+  // tag (caller falls back to C++).
+  lines.push(`function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {`);
+  lines.push(`  if (!msgEnd) return undefined;`);
+  lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
+  lines.push(`  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;`);
+  lines.push(`  const word0 = dv.getUint32(ptrAddr, true);`);
+  lines.push(`  const word1 = dv.getUint32(ptrAddr + 4, true);`);
+  lines.push(`  if (word0 === 0 && word1 === 0) return null;`);
+  lines.push(`  if ((word0 & 3) !== 1) return undefined;`);
+  lines.push(`  if ((word1 & 7) !== 7) return undefined;`);
+  lines.push(`  const offset = dv.getInt32(ptrAddr, true) >> 2;`);
+  lines.push(`  const wordCount = word1 >>> 3;`);
+  lines.push(`  const target = ptrAddr + 8 + offset * 8;`);
+  lines.push(`  if (target < msgStart || target + 8 > msgEnd) return undefined;`);
+  lines.push(`  const tag0 = dv.getUint32(target, true);`);
+  lines.push(`  if ((tag0 & 3) !== 0) return undefined;`);
+  lines.push(`  const elementCount = tag0 >>> 2;`);
+  lines.push(`  const tagDataWords = dv.getUint16(target + 4, true);`);
+  lines.push(`  const tagPtrWords = dv.getUint16(target + 6, true);`);
+  lines.push(`  const wordsPerElement = tagDataWords + tagPtrWords;`);
+  lines.push(`  if (wordsPerElement * elementCount !== wordCount) return undefined;`);
+  lines.push(`  const elementsBase = target + 8;`);
+  lines.push(`  if (elementsBase + elementCount * wordsPerElement * 8 > msgEnd) return undefined;`);
+  lines.push(`  return { elementsBase, count: elementCount, dataWords: tagDataWords, ptrWords: tagPtrWords };`);
+  lines.push(`}`);
+  lines.push("");
   // Pick helper: takes the FIELDS table + caller-requested names, packs a
   // batch request into cpp_lazy_aux, makes ONE wasm call, materializes the
   // result. Cost: 1 boundary crossing + 1 packed memcpy regardless of N.
@@ -1102,12 +1135,20 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
         out.push(\`  F32U[0] = dv.getUint32(\${headerOff}, true) >>> 0;\`);
         out.push(\`  const _v\${col} = F32F[0];\`);
         break;
-      case "uint64":
       case "int64":
         out.push(\`  let _v\${col};\`);
         out.push(\`  { const _lo = dv.getUint32(readPos, true);\`);
         out.push(\`    const _hi = dv.getInt32(readPos + 4, true);\`);
         out.push(\`    _v\${col} = (_hi >= -0x200000 && _hi <= 0x1FFFFF) ? _hi * 4294967296 + _lo : dv.getBigInt64(readPos, true);\`);
+        out.push(\`    readPos += 8; }\`);
+        break;
+      case "uint64":
+        // Unsigned: combine two u32 reads. Past 2^53 use BigInt so
+        // high-bit values like UINT64_MAX do not collapse to -1.
+        out.push(\`  let _v\${col};\`);
+        out.push(\`  { const _lo = dv.getUint32(readPos, true) >>> 0;\`);
+        out.push(\`    const _hi = dv.getUint32(readPos + 4, true) >>> 0;\`);
+        out.push(\`    _v\${col} = (_hi <= 0x001FFFFF) ? _hi * 4294967296 + _lo : ((BigInt(_hi) << 32n) | BigInt(_lo));\`);
         out.push(\`    readPos += 8; }\`);
         break;
       case "float64":
@@ -1180,11 +1221,20 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`      case "uint32": result[names[i]] = lenOrVal >>> 0; break;`);
   lines.push(`      case "int32":  result[names[i]] = lenOrVal | 0; break;`);
   lines.push(`      case "float32": _F32_VIEW_U32[0] = lenOrVal >>> 0; result[names[i]] = _F32_VIEW_F32[0]; break;`);
-  lines.push(`      case "uint64":`);
   lines.push(`      case "int64": {`);
   lines.push(`        const lo = dv2.getUint32(out - dv2.byteOffset + readPos, true);`);
   lines.push(`        const hi = dv2.getInt32 (out - dv2.byteOffset + readPos + 4, true);`);
   lines.push(`        result[names[i]] = (hi >= -0x200000 && hi <= 0x1FFFFF) ? hi * 4294967296 + lo : dv2.getBigInt64(out - dv2.byteOffset + readPos, true);`);
+  lines.push(`        readPos += 8;`);
+  lines.push(`        break;`);
+  lines.push(`      }`);
+  lines.push(`      case "uint64": {`);
+  // Unsigned: read both halves as u32 so high-bit values keep their
+  // unsigned magnitude. Past 2^53 we shift to BigInt; below stays
+  // as a Number for ergonomics.
+  lines.push(`        const lo = dv2.getUint32(out - dv2.byteOffset + readPos, true) >>> 0;`);
+  lines.push(`        const hi = dv2.getUint32(out - dv2.byteOffset + readPos + 4, true) >>> 0;`);
+  lines.push(`        result[names[i]] = (hi <= 0x001FFFFF) ? hi * 4294967296 + lo : ((BigInt(hi) << 32n) | BigInt(lo));`);
   lines.push(`        readPos += 8;`);
   lines.push(`        break;`);
   lines.push(`      }`);
@@ -1828,6 +1878,16 @@ function _capnwasmPick(cpp, fields, names) {`);
     // single-batched-wasm-call primitive that powers leaf reads.
     lines.push(`  draft(fn) {`);
     lines.push(`    _ensureCapnwasmReader(this);`);
+    // M5.5: when a JS-path element reader runs draft / toObject, the
+    // C++ batch-read still uses any_stack(top), so we must force the
+    // element's rebind closure to position the cursor onto this
+    // element first. _ensureCapnwasmReader skips rebind when _gen
+    // already matches the runtime generation, which is exactly the
+    // common JS-path case. Calling _rebind explicitly here is cheap
+    // (one cpp_any_open_list + cpp_any_enter_list_at) and only
+    // applies to element readers; root readers have no _rebind so
+    // this is a no-op for them.
+    lines.push(`    if (this._rebind) this._rebind();`);
     lines.push(`    return _runDraft(this._cpp, ${s.name}Reader._FIELDS, fn);`);
     lines.push(`  }`);
     lines.push("");
@@ -1838,6 +1898,7 @@ function _capnwasmPick(cpp, fields, names) {`);
     // an updated message via Builder.from(cpp, reader.toObject())).
     lines.push(`  toObject() {`);
     lines.push(`    _ensureCapnwasmReader(this);`);
+    lines.push(`    if (this._rebind) this._rebind();`);
     lines.push(`    return _capnwasmPick(this._cpp, ${s.name}Reader._FIELDS, Object.keys(${s.name}Reader._FIELDS));`);
     lines.push(`  }`);
     lines.push(`}`);
@@ -2365,16 +2426,26 @@ function fieldDescriptor(f) {
 // constructs a typed Reader. The reader is "live". It shares the wasm
 // any_stack[top] slot, so accessing fields on it after another at(i) call
 // would read the new element. Treat at(i) as "open one element at a time."
-function generateListGetter(ptrIndex, innerType) {
+function generateListGetter(ptrIndex, innerType, parentDataWords) {
   const lines = [];
-  // Open the list once, capture size, then return a wrapper.
   lines.push(`const reader = this;`);
   lines.push(`const cpp = this._cpp;`);
-  lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
-  // The wrapper closes over `cpp` and `size`. Each .at(i) re-opens the
-  // list (since other readers may have changed any_list_reader state) and
-  // either reads a primitive or pushes the element struct on the stack
-  // and constructs a typed Reader.
+  // For primitive / Text / Data inner types we still rely on the C++
+  // any_list_reader cursor inside at(i), so open the list eagerly here
+  // so .length is available without a wasm call. The struct branch
+  // below skips the eager open: M5.5 decodes the list pointer in JS
+  // and falls back to C++ only when the JS decoder bails. Doing the
+  // C++ open eagerly for struct lists would push any_stack uselessly
+  // and force every JS-path read to fight cursor state.
+  const eagerOpen = !(innerType !== "Text" && innerType !== "Data" && !PRIMITIVE_LIST_GETTERS[innerType]);
+  if (eagerOpen) {
+    lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
+  }
+  // The wrapper closes over `cpp` (and `size` when eagerly opened).
+  // Each .at(i) re-opens the list (since other readers may have
+  // changed any_list_reader state) and either reads a primitive or
+  // pushes the element struct on the stack and constructs a typed
+  // Reader.
   if (PRIMITIVE_LIST_GETTERS[innerType]) {
     const primFn = PRIMITIVE_LIST_GETTERS[innerType];
     lines.push(`return {`);
@@ -2421,17 +2492,62 @@ function generateListGetter(ptrIndex, innerType) {
     lines.push(`};`);
     return lines;
   }
-  // Struct element list: at(i) navigates into element i and constructs a
-  // typed Reader. The Reader shares any_stack. Calling at again will move
-  // the stack pointer, so callers reading multiple elements should
-  // materialize before iterating further.
+  // Struct element list. M5.5: when the parent reader carries
+  // _msgStart/_msgEnd (slot-pool path), decode the List<Struct>
+  // pointer in pure JS. Each element gets its own static _dataPtr =
+  // elementsBase + i * (dataWords + ptrWords) * 8, so element readers
+  // stay independent: no cursor share, no rebind, no `pushed` flag,
+  // multiple at(i) calls return readers that all stay valid in
+  // parallel. The pre-M5.5 C++ path is kept as a fallback for unsafe-
+  // path readers and any case the JS decoder can't handle.
   //
-  // The `pushed` flag tracks whether THIS wrapper has previously pushed
-  // an element onto the any_stack. If yes, pop it before re-opening the
-  // list (otherwise open_list operates on the *element*, not the parent,
-  // and reads garbage for at(j) where j != 0). If no, don't pop -
-  // leave_struct is too aggressive when the parent itself is a nested
-  // struct sitting on the stack, since it would unwind the parent.
+  // The pre-M5.5 path: at(i) navigates the wasm any_stack and
+  // constructs a Reader that shares the cursor. `pushed` tracks
+  // whether this wrapper previously pushed an element so we pop
+  // before re-opening the list.
+  lines.push(`const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;`);
+  lines.push(`const _u8 = reader._u8, _dv = reader._dv;`);
+  // Decode the List<Struct> pointer once at .tags getter time. Stash
+  // the descriptor on the closure so .at(i) is just an arithmetic
+  // step. Falls back to the C++ path on undefined.
+  lines.push(`let _listDesc = null;`);
+  lines.push(`if (_msgEnd) {`);
+  lines.push(`  _listDesc = _jsReadListStructPtr(_u8, _dv, reader._dataPtr, ${parentDataWords}, ${ptrIndex}, _msgStart, _msgEnd);`);
+  lines.push(`}`);
+  lines.push(`if (_listDesc && _listDesc !== undefined) {`);
+  lines.push(`  return {`);
+  lines.push(`    length: _listDesc.count,`);
+  lines.push(`    at(i) {`);
+  lines.push(`      if (i < 0 || i >= _listDesc.count) return undefined;`);
+  // Per-element reader. _dataPtr is the element's data section start
+  // computed in JS from the M5.5 list descriptor. _msgStart/_msgEnd
+  // propagate from the parent so the element's pointer-section getters
+  // (text / data / nested list) decode in JS. _slotIdx propagates so
+  // _ensureCapnwasmReader keeps the parent's slot active for the C++
+  // fallback paths used by aggregate methods (draft, pick, toObject)
+  // which still go through cpp_any_batch_read on the C++ side.
+  //
+  // _rebind kept for that fallback: it positions the C++ any_stack
+  // cursor onto this element by re-opening the parent's list and
+  // entering element i. Per-field JS reads bypass _rebind entirely
+  // (they read directly from _dataPtr) so there's no overhead in the
+  // hot path; the rebind only fires when something calls into C++.
+  lines.push(`      const elemDataPtr = _listDesc.elementsBase + i * (_listDesc.dataWords + _listDesc.ptrWords) * 8;`);
+  lines.push(`      return new ${innerType}Reader(cpp, elemDataPtr, {`);
+  lines.push(`        slotIdx: reader._slotIdx,`);
+  lines.push(`        msgStart: _msgStart,`);
+  lines.push(`        msgEnd: _msgEnd,`);
+  lines.push(`        gen: cpp._generation ?? 0,`);
+  lines.push(`        rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(${ptrIndex}); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); },`);
+  lines.push(`      });`);
+  lines.push(`    },`);
+  lines.push(`    *[Symbol.iterator]() { for (let i = 0; i < this.length; i++) yield this.at(i); },`);
+  lines.push(`  };`);
+  lines.push(`}`);
+  // Pre-M5.5 C++ fallback (also used by openFooUnsafe). Open the list
+  // here lazily because the eager open at the top of this getter was
+  // skipped for the struct case.
+  lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
   lines.push(`let pushed = false;`);
   lines.push(`return {`);
   lines.push(`  length: size,`);
@@ -2530,7 +2646,7 @@ function generateGetter(field) {
     const listMatch = /^List\(([^)]+)\)$/.exec(field.type);
     if (listMatch) {
       const inner = listMatch[1];
-      return generateListGetter(field.ptrIndex, inner);
+      return generateListGetter(field.ptrIndex, inner, field.parentDataWords ?? 0);
     }
     return [`throw new Error("unsupported pointer type: ${field.type}");`];
   }
