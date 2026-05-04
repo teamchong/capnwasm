@@ -4,7 +4,7 @@
   "packageManager": "pnpm@10.33.2",
   "type": "module",
   "scripts": {
-    "codegen": "node ../bin/capnwasm.mjs gen users.capnp -o src/playground/users.capnp.gen.mjs",
+    "codegen": "node ../bin/capnwasm.mjs gen users.capnp -o src/playground/users.capnp.gen.mjs && node ../bin/capnwasm.mjs gen chat.capnp -o src/chat/chat.capnp.gen.mjs",
     "prepare": "cp ../dist/capnp.slim.wasm public/ && cp ../js/inspect.mjs public/inspect.js && pnpm run codegen && node scripts/generate-fixtures.mjs",
     "dev": "pnpm run prepare && vite",
     "build": "pnpm run prepare && vite build",

@@ -114,6 +114,7 @@ CAPNP_SOURCES=(
 WRAPPER=(
   cpp/wrapper.cpp
   cpp/eh_runtime.cpp
+  cpp/avatar.cpp
 )
 WRAPPER_BENCH_ONLY=(
   cpp/typed_schema.capnp.c++
@@ -292,6 +293,9 @@ FLAGS=(
   -Wl,--export=cpp_rpc_finalize
   -Wl,--export=cpp_rpc_open_call_params
   -Wl,--export=cpp_rpc_open_return_results
+  # Demo-only: server-side text-to-PNG renderer. Used by the chat
+  # ChatRoom DO to fill ChatMessage.image with binary bytes.
+  -Wl,--export=cpp_chat_render_text_png
   -lwasi-emulated-signal
   -lwasi-emulated-mman
   -Wl,--gc-sections

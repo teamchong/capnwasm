@@ -20,6 +20,11 @@ import { load as loadWasm } from "../dist/inlined.mjs";
 import { RpcSession, InterfaceRegistry, wsTransport } from "../js/rpc.mjs";
 import { createHttpBatchHandler } from "../js/http_batch.mjs";
 import { PrimitivesBuilder, PrimitivesReader } from "../js/conformance_schema.gen.mjs";
+import {
+  PostParamsReader,
+  ChatMessageBuilder,
+  GetSinceParamsReader,
+} from "./src/chat/chat.capnp.gen.mjs";
 import { WideUserDataBuilder, WideUserDataReader } from "../js/typed_schema.gen.mjs";
 import { defineSchema, buildDynamic } from "../js/dynamic.mjs";
 import { newWebSocketRpcSession, nodeHttpBatchRpcResponse, RpcTarget } from "capnweb";
@@ -90,35 +95,98 @@ function makeBlob(n) {
 }
 
 // Chat IFC; used by web/chat.html. Constants must agree with web/src/chat/main.ts.
-const CHAT_IFC      = 0xc4a7c4a7c4a7c4a7n;
-const CHAT_M_POST   = 0;
-const CHAT_M_SUBSCR = 1;
+const CHAT_IFC         = 0xc4a7c4a7c4a7c4a7n;
+const CHAT_M_POST      = 0;
+const CHAT_M_SUBSCR    = 1;
+const CHAT_M_GET_SINCE = 2;
 
-// In-memory chat state, shared across every client connection on this
-// dev server. One ring buffer of recent messages plus a Set of waiter
-// callbacks parked on "next post". When a post lands the snapshot of
-// listeners fires; each one immediately re-arms by waiting on a fresh
-// promise via nextChatMessage(). Production would back this with a
-// real broker; Redis Streams, Postgres LISTEN/NOTIFY, etc.
+// Wire-shape mirror of the ChatMessage / ChatMessageList structs in
+// chat.capnp. Same dimensions as the codegen Builder's static fields.
+const CHAT_MESSAGE_SCHEMA = defineSchema({
+  id:     { kind: "uint64", offset: 0 },
+  author: { kind: "text",   slot: 0 },
+  text:   { kind: "text",   slot: 1 },
+  ts:     { kind: "uint64", offset: 8 },
+  image:  { kind: "data",   slot: 2 },
+}, { dataWords: 2, ptrWords: 3 });
+
+const CHAT_MESSAGE_LIST_SCHEMA = defineSchema({
+  items: { kind: "listStruct", slot: 0, element: CHAT_MESSAGE_SCHEMA },
+}, { dataWords: 0, ptrWords: 1 });
+
 const CHAT_HISTORY_LIMIT = 100;
-const chatHistory = [];
-const chatListeners = new Set();
-let nextChatId = 1;
 
-function postChatMessage(author, text) {
-  const m = { id: nextChatId++, author, text, ts: Date.now() };
-  chatHistory.push(m);
-  if (chatHistory.length > CHAT_HISTORY_LIMIT) chatHistory.shift();
+// Two independent in-memory chat sides, one per library framing. A
+// post via /chat-ws or /chat-http only appears on the capnwasm side;
+// a post via /capnweb-chat-ws or /capnweb-chat-http only appears on
+// the capnweb side. Same shape as the worker DO; this is the vite-dev
+// shim's mirror of that state.
+function makeSide(name) {
+  return {
+    name,
+    history: [],
+    streamWakers: new Set(),
+    stubSubscribers: new Set(),
+    nextId: 1,
+  };
+}
+const sideCapnwasm = makeSide("capnwasm");
+const sideCapnweb  = makeSide("capnweb");
+
+// Text-keyed PNG cache, shared across both sides.
+const pngCache = new Map();
+const PNG_TEXT_ENCODER = new TextEncoder();
+
+// First cpp instance to finish loading wins; subsequent calls reuse
+// the same wasm linear memory for avatar rendering.
+let chatCpp = null;
+function setChatCpp(cpp) { chatCpp ??= cpp; }
+
+function renderTextPng(text) {
+  let cached = pngCache.get(text);
+  if (cached) return cached;
+  if (!chatCpp) return new Uint8Array(0);
+  const exp = chatCpp._exports;
+  const bytes = PNG_TEXT_ENCODER.encode(text);
+  chatCpp._u8.set(bytes, exp.cpp_in_ptr());
+  const len = exp.cpp_chat_render_text_png(bytes.length);
+  if (!len) return new Uint8Array(0);
+  const out = exp.cpp_out_ptr();
+  const png = chatCpp._u8.slice(out, out + len);
+  pngCache.set(text, png);
+  return png;
+}
+
+function postTo(side, author, text) {
+  const m = {
+    id: side.nextId++,
+    author,
+    text,
+    ts: Date.now(),
+    // Server-rendered binary echo for this message. Seed includes the
+    // message text so the PNG bytes vary per message, not just per author.
+    image: renderTextPng(`${author}\n${text}`),
+  };
+  side.history.push(m);
+  if (side.history.length > CHAT_HISTORY_LIMIT) side.history.shift();
   // Snapshot before firing; a listener that re-subscribes during its
   // callback can't re-enter mid-loop.
-  const fire = Array.from(chatListeners);
-  chatListeners.clear();
+  const fire = Array.from(side.streamWakers);
+  side.streamWakers.clear();
   for (const cb of fire) cb(m);
+  for (const stub of side.stubSubscribers) {
+    stub.onMessage(m).catch(() => side.stubSubscribers.delete(stub));
+  }
   return m;
 }
 
-function nextChatMessage() {
-  return new Promise((resolve) => chatListeners.add(resolve));
+function nextChatMessage(side) {
+  return new Promise((resolve) => side.streamWakers.add(resolve));
+}
+
+function messagesSince(side, cursor) {
+  if (cursor <= 0) return side.history.slice();
+  return side.history.filter((m) => m.id > cursor);
 }
 
 function buildRegistry() {
@@ -137,34 +205,39 @@ function buildRegistry() {
   });
   reg.register(IFC, M_GET_CHILD, () => ({ caps: [{ kind: "child" }] }));
 
-  // Chat handlers. The wire format here is plain JSON inside Cap'n Proto
-  // text fields; the helpers (subscribeQuery, optimistic) don't care
-  // about wire format. A production app would use a Cap'n Proto schema
-  // for the message struct and skip the JSON encode/decode.
+  // Chat handlers. Capnwasm side only — the registry maps directly to
+  // sideCapnwasm. capnweb has its own RpcTarget (CapnwebChat below)
+  // that operates on sideCapnweb.
   reg.register(CHAT_IFC, CHAT_M_POST, (_t, ctx) => {
-    const p = ctx.openParams(PrimitivesReader);
-    const params = JSON.parse(new TextDecoder().decode(p.data));
-    if (typeof params.author !== "string" || typeof params.text !== "string" || !params.text.trim()) {
-      throw new Error("invalid post: need {author, text}");
-    }
-    // Bound abuse a little: trim and limit length so a busted client
-    // can't flood the buffer.
-    const author = params.author.slice(0, 32);
-    const text = params.text.slice(0, 240);
-    postChatMessage(author, text);
+    const p = ctx.openParams(PostParamsReader);
+    const author = p.author;
+    const text = p.text;
+    if (!text.trim()) throw new Error("invalid post: text is empty");
+    postTo(sideCapnwasm, author.slice(0, 32), text.slice(0, 240));
   });
 
-  reg.registerStream(CHAT_IFC, CHAT_M_SUBSCR, async function* () {
-    // Replay history first so a fresh tab sees recent context.
-    for (const m of chatHistory) {
-      yield new TextEncoder().encode(JSON.stringify(m));
+  reg.registerStream(CHAT_IFC, CHAT_M_SUBSCR, async function* (_t, ctx) {
+    for (const m of sideCapnwasm.history) {
+      yield new ChatMessageBuilder(ctx.cpp).fromObject(m).toBytes();
     }
-    // Then keep yielding new messages forever (until the iterator
-    // unwinds via Finish from the client).
     while (true) {
-      const m = await nextChatMessage();
-      yield new TextEncoder().encode(JSON.stringify(m));
+      const m = await nextChatMessage(sideCapnwasm);
+      yield new ChatMessageBuilder(ctx.cpp).fromObject(m).toBytes();
     }
+  });
+
+  reg.register(CHAT_IFC, CHAT_M_GET_SINCE, (_t, ctx) => {
+    const p = ctx.openParams(GetSinceParamsReader);
+    const items = messagesSince(sideCapnwasm, Number(p.since));
+    const b = buildDynamic(ctx.cpp, CHAT_MESSAGE_LIST_SCHEMA);
+    b.set("items", items.map((m) => ({
+      id: BigInt(m.id),
+      author: m.author,
+      text: m.text,
+      ts: BigInt(m.ts),
+      image: m.image,
+    })));
+    return b.finalize();
   });
 
   // ---- render-bench methods --------------------------------------------
@@ -240,6 +313,27 @@ class CapnwebEcho extends RpcTarget {
   }
 }
 
+// capnweb chat target. Mirror of `CapnwebChatRoomTarget` in
+// src/chat_room.mjs; operates on `sideCapnweb` only.
+class CapnwebChat extends RpcTarget {
+  post(author, text) {
+    if (typeof author !== "string" || typeof text !== "string") {
+      throw new Error("post(author, text) expects strings");
+    }
+    if (!text.trim()) throw new Error("invalid post: text is empty");
+    postTo(sideCapnweb, author.slice(0, 32), text.slice(0, 240));
+  }
+  subscribe(callback) {
+    const held = callback.dup();
+    for (const m of sideCapnweb.history) held.onMessage(m).catch(() => {});
+    sideCapnweb.stubSubscribers.add(held);
+  }
+  getMessagesSince(since) {
+    if (typeof since !== "number" && typeof since !== "bigint") return [];
+    return messagesSince(sideCapnweb, Number(since));
+  }
+}
+
 // Wire RPC handling onto an existing http.Server. Used identically by
 // the dev hook and the preview hook so dev/preview behaviour matches.
 function attachRpc(httpServer, registry, label, log) {
@@ -248,28 +342,41 @@ function attachRpc(httpServer, registry, label, log) {
   wss.on("connection", (ws, req, kind) => {
     if (kind === "capnwasm" || kind === "chat") {
       loadWasm().then((cpp) => {
+        setChatCpp(cpp);
         // Bootstrap target carries the per-connection cpp instance so
         // render-bench handlers can build into THIS connection's arena.
         new RpcSession(cpp, wsTransport(ws), registry, { bootstrap: { kind: "root", cpp } });
       });
     } else if (kind === "capnweb") {
       newWebSocketRpcSession(ws, new CapnwebEcho());
+    } else if (kind === "capnweb-chat") {
+      // Make sure cpp is loaded before the target starts dispatching
+      // post() — the avatar renderer reads the wasm scratch.
+      loadWasm().then((cpp) => {
+        setChatCpp(cpp);
+        newWebSocketRpcSession(ws, new CapnwebChat());
+      });
     }
   });
 
   httpServer?.on("upgrade", (req, socket, head) => {
     const url = req.url ?? "";
-    const isCapnwasm = url.startsWith("/capnwasm");
-    const isCapnweb  = url.startsWith("/capnweb");
-    const isChat     = url.startsWith("/chat-ws");
-    if (!isCapnwasm && !isCapnweb && !isChat) return;  // Vite's own HMR upgrades pass through
-    const which = isCapnwasm ? "capnwasm" : isCapnweb ? "capnweb" : "chat";
+    const isCapnwasm   = url.startsWith("/capnwasm");
+    const isCapnwebChat = url.startsWith("/capnweb-chat-ws");
+    const isCapnweb    = url.startsWith("/capnweb");  // matches /capnweb and /capnweb-http
+    const isChat       = url.startsWith("/chat-ws");
+    if (!isCapnwasm && !isCapnweb && !isCapnwebChat && !isChat) return;  // Vite's own HMR upgrades pass through
+    let which;
+    if (isCapnwasm)         which = "capnwasm";
+    else if (isCapnwebChat) which = "capnweb-chat";
+    else if (isCapnweb)     which = "capnweb";
+    else                    which = "chat";
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit("connection", ws, req, which);
     });
   });
 
-  log?.info(`  \x1b[36m\x1b[1m➜\x1b[0m  RPC server attached at /capnwasm, /capnweb, /chat-ws (${label})`);
+  log?.info(`  \x1b[36m\x1b[1m➜\x1b[0m  RPC server attached at /capnwasm, /capnweb, /chat-ws, /capnweb-chat-ws (${label})`);
   return wss;
 }
 
@@ -326,7 +433,51 @@ function attachHttp(middlewares, registry, log) {
     }
   });
 
-  log?.info("  \x1b[36m\x1b[1m➜\x1b[0m  HTTP batch attached at /capnwasm-http, /capnweb-http");
+  // /chat-http: capnwasm REST mode for the chat. Same registry as the
+  // WS path, so post() and getMessagesSince() see the same in-process
+  // chatHistory. The request body is a capnwasm Call frame (one per
+  // method invocation), exactly like /capnwasm-http.
+  middlewares.use("/chat-http", async (req, res, next) => {
+    if (req.method !== "POST") return next();
+    try {
+      const cpp = await getCpp();
+      setChatCpp(cpp);
+      const handler = createHttpBatchHandler(cpp, registry, {
+        bootstrap: { kind: "root", cpp },
+      });
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const body = Buffer.concat(chunks);
+      const webReq = new Request("http://localhost" + (req.url ?? "/"), {
+        method: "POST",
+        headers: { "Content-Type": req.headers["content-type"] ?? "application/x-capnwasm-batch" },
+        body,
+      });
+      const webRes = await handler(webReq);
+      res.statusCode = webRes.status;
+      webRes.headers.forEach((v, k) => res.setHeader(k, v));
+      res.end(Buffer.from(await webRes.arrayBuffer()));
+    } catch (err) {
+      res.statusCode = 500;
+      res.end(String(err?.stack ?? err));
+    }
+  });
+
+  // /capnweb-chat-http: capnweb REST mode. Same target as the WS
+  // path; clients fetch this with a single Call frame per poll/post.
+  middlewares.use("/capnweb-chat-http", async (req, res, next) => {
+    if (req.method !== "POST") return next();
+    try {
+      // Ensure cpp is loaded for the avatar renderer.
+      setChatCpp(await getCpp());
+      await nodeHttpBatchRpcResponse(req, res, new CapnwebChat());
+    } catch (err) {
+      res.statusCode = 500;
+      res.end(String(err?.stack ?? err));
+    }
+  });
+
+  log?.info("  \x1b[36m\x1b[1m➜\x1b[0m  HTTP batch attached at /capnwasm-http, /capnweb-http, /chat-http, /capnweb-chat-http");
 }
 
 export function rpcDevServer() {

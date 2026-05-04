@@ -20,6 +20,14 @@ export default defineConfig(({ command }) => ({
       outDir: "src/playground",
       extension: ".gen.mjs",
     }),
+    // Same plugin, second invocation for the chat demo schema. The
+    // plugin takes a single outDir per call, so each schema that lives
+    // in its own page directory gets its own plugin entry.
+    capnwasm({
+      schemas: ["chat.capnp"],
+      outDir: "src/chat",
+      extension: ".gen.mjs",
+    }),
     rpcDevServer(),
   ],
   build: {

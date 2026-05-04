@@ -64,6 +64,13 @@ import { PrimitivesBuilder, PrimitivesReader } from "../js/conformance_schema.ge
 import { WideUserDataBuilder } from "../js/typed_schema.gen.mjs";
 import { RpcTarget, newWorkersRpcResponse } from "capnweb";
 
+// The chat demo's WebSocket endpoints (`/chat-ws` and `/capnweb-chat-ws`)
+// route through a Durable Object so all clients share one in-memory chat
+// room and one I/O context. That's what makes live broadcast work on
+// workerd: a POST event on socket A can wake a sleeping subscribe stream
+// on socket B because both events run in the same DO instance.
+export { ChatRoom } from "./chat_room.mjs";
+
 const MAX_ECHO_BODY_BYTES = 64 * 1024;
 const SAME_ORIGIN_HOST = "capnwasm.teamchong.net";
 const ECHO_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -80,15 +87,6 @@ const RENDER_IFC          = 0xb1a5c0deb1a5c0den;
 const RENDER_M_USER_LIST  = 0;
 const RENDER_M_METADATA   = 1;
 const RENDER_M_BLOB       = 2;
-
-const CHAT_IFC      = 0xc4a7c4a7c4a7c4a7n;
-const CHAT_M_POST   = 0;
-const CHAT_M_SUBSCR = 1;
-
-const CHAT_HISTORY_LIMIT = 100;
-const chatHistory = [];
-const chatListeners = new Set();
-let nextChatId = 1;
 
 // One CapnCpp instance per isolate. Each instance is ~25 MB of linear
 // memory; sharing across requests is cheap and avoids re-instantiation
@@ -156,20 +154,6 @@ function makeBlob(n) {
   return out;
 }
 
-function postChatMessage(author, text) {
-  const m = { id: nextChatId++, author, text, ts: Date.now() };
-  chatHistory.push(m);
-  if (chatHistory.length > CHAT_HISTORY_LIMIT) chatHistory.shift();
-  const fire = Array.from(chatListeners);
-  chatListeners.clear();
-  for (const cb of fire) cb(m);
-  return m;
-}
-
-function nextChatMessage() {
-  return new Promise((resolve) => chatListeners.add(resolve));
-}
-
 const registry = buildRegistry();
 
 function buildRegistry() {
@@ -189,18 +173,10 @@ function buildRegistry() {
   });
   reg.register(IFC, M_GET_CHILD, () => ({ caps: [{ kind: "child" }] }));
 
-  reg.register(CHAT_IFC, CHAT_M_POST, (_target, ctx) => {
-    const p = ctx.openParams(PrimitivesReader);
-    const params = JSON.parse(new TextDecoder().decode(p.data));
-    if (typeof params.author !== "string" || typeof params.text !== "string" || !params.text.trim()) {
-      throw new Error("invalid post: need {author, text}");
-    }
-    postChatMessage(params.author.slice(0, 32), params.text.slice(0, 240));
-  });
-  reg.registerStream(CHAT_IFC, CHAT_M_SUBSCR, async function* () {
-    for (const m of chatHistory) yield new TextEncoder().encode(JSON.stringify(m));
-    while (true) yield new TextEncoder().encode(JSON.stringify(await nextChatMessage()));
-  });
+  // Chat handlers live in the ChatRoom Durable Object — see chat_room.mjs.
+  // The /chat-ws and /capnweb-chat-ws endpoints below route into the DO
+  // so all clients share one chat room and one I/O context (which is
+  // what makes live broadcast actually deliver in workerd).
 
   function paramN(pBytes, fallback) {
     if (pBytes.length < 20) return fallback;
@@ -265,8 +241,18 @@ export default {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
-    if (url.pathname === "/capnwasm" || url.pathname === "/chat-ws") {
+    if (url.pathname === "/capnwasm") {
       return acceptCapnwasmWebSocket(req);
+    }
+    if (url.pathname === "/chat-ws"
+        || url.pathname === "/capnweb-chat-ws"
+        || url.pathname === "/chat-http"
+        || url.pathname === "/capnweb-chat-http") {
+      // All chat traffic — both framings, both transports — fans into
+      // one shared ChatRoom DO so every connection sees every message.
+      const id = env.CHAT_ROOM.idFromName("global");
+      const stub = env.CHAT_ROOM.get(id);
+      return stub.fetch(req);
     }
     if (url.pathname === "/capnweb") {
       return newWorkersRpcResponse(req, new CapnwebEcho());
