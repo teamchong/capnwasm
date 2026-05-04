@@ -39,6 +39,35 @@
 
 const SHARED_DECODER = new TextDecoder();
 
+// M7: Hardening notes.
+//
+// The wasm sandbox already prevents out-of-process memory corruption:
+// any load outside [0, memory.size) traps. What it does NOT prevent
+// is a hostile pointer that aims past msgEnd but still inside the
+// wasm linear memory -- the load succeeds and returns unrelated bytes
+// (another slot's buffer, the arena's stale data, etc.). That is an
+// information-disclosure bug from the application's view, not a
+// memory-safety one from wasm's view.
+//
+// The defenses live in the existing bounds checks on every decoder
+// entry point: `target < msgStart || target + count > msgEnd` is
+// what gates each pointer dereference. msgEnd is set per-slot from
+// the message's byte length at acquire time, so it's bounded by the
+// wasm-side allocation regardless of what a hostile pointer claims.
+// JS Number arithmetic is exact below 2^53 so multiplications like
+// `count * 8` do not silently wrap; if they exceed msgEnd, the check
+// rejects them as undefined and codegen falls back to the C++
+// FlatArrayMessageReader, which has its own KJ_REQUIRE bounds checks
+// and surfaces failures as wasm traps the host can catch.
+//
+// We deliberately do NOT add separate MAX_LIST_ELEMENTS or
+// MAX_PAYLOAD_BYTES caps in this module. They would be redundant
+// with the bounds check (you can't claim more bytes than fit in the
+// message) and add a paranoia surface that complicates conformance
+// against upstream capnp. The M7 work that goes alongside this
+// comment is a hostile-input test corpus that exercises every
+// rejection path end-to-end (test/m7_hostile_input.test.mjs).
+
 // Read a Text field from a struct's pointer section. Returns:
 //   string  -- successful decode (UTF-8). Empty string if the text
 //              pointer points at a 1-byte NUL.

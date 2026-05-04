@@ -22,14 +22,12 @@
 import {
   CapnCpp,
   MultiSegmentMessageError,
-  ReaderSlotExhaustedError,
   validateSingleSegment,
 } from "./cpp_loader.mjs";
 
 export {
   CapnCpp,
   MultiSegmentMessageError,
-  ReaderSlotExhaustedError,
   validateSingleSegment,
 };
 

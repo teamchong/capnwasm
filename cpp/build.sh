@@ -187,7 +187,10 @@ FLAGS=(
   -Wl,--export=cpp_abi_version
   -Wl,--export=cpp_msg_alloc
   -Wl,--export=cpp_msg_free
-  -Wl,--export=cpp_msg_validate_single_segment
+  # cpp_msg_validate_single_segment exists in C++ for foreign-language
+  # client use but is not exported in the slim wasm because no such
+  # client lives in this repo yet (M6). The JS path uses pure-JS
+  # validation. Re-export when/if M6 ships a Rust/Go demo that calls it.
   # M2: bump arena for slot message bytes. JS _acquireSlot tries the
   # arena first; on exhaustion or oversized requests, falls back to
   # cpp_msg_alloc. cpp_msg_arena_reset rewinds the cursor when JS
@@ -340,13 +343,14 @@ if [ "$BENCH_MODE" = "1" ]; then
     -Wl,--export=cpp_rpc_build_resolve_cap
     -Wl,--export=cpp_rpc_build_resolve_exception
     -Wl,--export=cpp_rpc_build_disembargo_sender_loopback
-    # Test-only setters that JS replaced with direct-memory writes
-    -Wl,--export=cpp_any_builder_set_uint8
+    # cpp_any_builder_set_uint16 is the only set_<scalar> we keep in
+    # bench mode. Codegen emits it for union-discriminant writes
+    # (bin/capnwasm.mjs around line 1972). The other set_<scalar>
+    # variants (set_bool / set_int64_lo_hi / set_struct_from_bytes /
+    # set_uint8 / set_uint32) were intended as test-only paths after
+    # JS switched to direct-memory writes via _dataPtr+offset, but
+    # no test ever called them. Removed during M7 dead-code audit.
     -Wl,--export=cpp_any_builder_set_uint16
-    -Wl,--export=cpp_any_builder_set_uint32
-    -Wl,--export=cpp_any_builder_set_int64_lo_hi
-    -Wl,--export=cpp_any_builder_set_bool
-    -Wl,--export=cpp_any_builder_set_struct_from_bytes
     # Tape codec — only used by the capnwasm/tape subpath (capnweb-shape
     # serialize/deserialize). The slim build doesn't ship it; the bench
     # build (used by tests + the inlined Node bundle) keeps it.

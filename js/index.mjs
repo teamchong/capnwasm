@@ -7,7 +7,6 @@ export {
   load,
   CapnCpp,
   MultiSegmentMessageError,
-  ReaderSlotExhaustedError,
   validateSingleSegment,
 } from "../dist/inlined.mjs";
 export {

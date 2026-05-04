@@ -20,16 +20,14 @@
 //      long as the JS handle stays alive. _useSlot tracks the active
 //      slot in JS so the steady state for a hot loop is one property
 //      compare, no wasm boundary call.
-//   4. ReaderSlotExhaustedError remains exported (for users who want
-//      strict-mode behavior by calling _acquireSlot directly) but is
-//      no longer thrown from default openFoo / openDynamic paths.
+//   4. Pool exhaustion is non-throwing -- _acquireSlot returns null
+//      and the default open paths fall back to the managed-message
+//      route. (The previous ReaderSlotExhaustedError class was
+//      removed in M7 because no code threw it.)
 
 import { test, before } from "node:test";
 import { strict as assert } from "node:assert";
-import {
-  load as loadWasm,
-  ReaderSlotExhaustedError,
-} from "../dist/inlined.mjs";
+import { load as loadWasm } from "../dist/inlined.mjs";
 import {
   defineSchema,
   buildDynamic,
@@ -205,15 +203,6 @@ test("opening more than the pool size still works (graceful fallback)", () => {
       `reader at index ${i} should read its message`,
     );
   }
-});
-
-test("ReaderSlotExhaustedError class is exported and constructable", () => {
-  // Not thrown by default openFoo paths anymore (silent fallback) but
-  // still exported for users who want strict-mode behavior on top of
-  // _acquireSlot directly.
-  const err = new ReaderSlotExhaustedError("test");
-  assert.ok(err instanceof Error);
-  assert.equal(err.name, "ReaderSlotExhaustedError");
 });
 
 test("_acquireSlot returns null at pool exhaustion", () => {

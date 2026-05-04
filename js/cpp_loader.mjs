@@ -27,21 +27,13 @@ export class MultiSegmentMessageError extends Error {
   }
 }
 
-// M3: Native multi-reader slot pool exhaustion error.
-//
-// The wasm holds READER_SLOT_COUNT-1 (default 31) safe-reader slots.
-// Slot 0 is reserved for the legacy/unsafe path. _acquireSlot returns
-// null when the pool is full, and callers fall back to the
-// managed-message path so applications keep running. This error class
-// is still exported for users who want to wrap _acquireSlot directly
-// and surface a strict-mode failure (e.g. tight loops that should
-// always succeed). It is not thrown from the default open paths.
-export class ReaderSlotExhaustedError extends Error {
-  constructor(message = "capnwasm reader slot pool exhausted; dispose unused readers or use openFooUnsafe for hot loops") {
-    super(message);
-    this.name = "ReaderSlotExhaustedError";
-  }
-}
+// M3 slot pool exhaustion is a non-throwing path: _acquireSlot returns
+// null when the pool is full and callers fall back to the managed-
+// message path. We previously exported a ReaderSlotExhaustedError
+// class for users who might want to wrap _acquireSlot directly with
+// strict-mode behavior, but no caller ever materialized inside or
+// outside this repo. Removed during the M7 dead-code audit; the
+// non-throwing fallback is the documented contract.
 
 /**
  * Validate that `bytes` is a single-segment framed Cap'n Proto message.
