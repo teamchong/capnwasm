@@ -118,12 +118,16 @@ const root = resolve(HERE, "..", "..");
 //   rpc: browser bundle + the RPC client JS.
 const cppLoaderGzip = await gzipSize(resolve(root, "dist", "cpp_loader.mjs"));
 const cppLoaderBr = await brotliSize(resolve(root, "dist", "cpp_loader.mjs"));
+const wasmPath = resolve(root, "dist", "capnp.slim.wasm");
+const wasmRaw = (await readFile(wasmPath)).length;
+const wasmGzip = await gzipSize(wasmPath);
+const wasmBr = await brotliSize(wasmPath);
 const capnwasmBrowserGzip =
   await gzipSize(resolve(root, "dist", "browser.mjs")) +
-  await gzipSize(resolve(root, "dist", "capnp.slim.wasm"));
+  wasmGzip;
 const capnwasmBrowserBr =
   await brotliSize(resolve(root, "dist", "browser.mjs")) +
-  await brotliSize(resolve(root, "dist", "capnp.slim.wasm"));
+  wasmBr;
 const capnwasmRpcGzip =
   capnwasmBrowserGzip +
   await gzipSize(resolve(root, "dist", "rpc.mjs"));
@@ -147,6 +151,11 @@ await writeFile(resolve(metricsDir, "build.json"), JSON.stringify({
   generatedAt: new Date().toISOString(),
   source: "web/scripts/generate-fixtures.mjs",
   fixtures: { small, blob },
+  wasm: {
+    raw: wasmRaw,
+    gzip: wasmGzip,
+    brotli: wasmBr,
+  },
   bundles: {
     gzip: {
       capnwasmBrowser: capnwasmBrowserGzip,

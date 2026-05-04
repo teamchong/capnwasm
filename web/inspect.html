@@ -35,17 +35,22 @@
       </nav>
     </header>
 
-    <section>
-      <h2>One line</h2>
+    <section class="try-box">
+      <h2>Try it in DevTools Console</h2>
+      <ol>
+        <li>Open DevTools on this page.</li>
+        <li>Paste the snippet below into the Console.</li>
+        <li>Expand the logged tree to inspect the live Cap&apos;n Proto bytes returned by <code>/api/users/42</code>.</li>
+      </ol>
       <pre class="copyable" id="snippet-import"><code>const cw = await import(<span class="origin"></span> + "/inspect.js");
-cw.inspect(fetch("/api/user.capnp"));</code></pre>
-      <p>That&apos;s it. The console gets an expandable tree: segment count, root pointer,
-        struct shape, list elements, embedded text, hex previews of binary data.</p>
+await cw.inspect(fetch("/api/users/42"));</code></pre>
+      <p>The console gets an expandable tree: segment count, root pointer,
+        struct shape, list elements, embedded text, and hex previews of binary data.</p>
     </section>
 
     <section>
       <h2>What <code>inspect()</code> accepts</h2>
-      <pre><code>cw.inspect(fetch("/api/user.capnp"));            // Promise&lt;Response&gt;
+      <pre><code>cw.inspect(fetch("/api/users/42"));              // Promise&lt;Response&gt;
 cw.inspect(response);                            // Response
 cw.inspect(arrayBuffer);                         // ArrayBuffer
 cw.inspect(uint8Array);                          // Uint8Array
@@ -64,7 +69,7 @@ import { load } from "capnwasm/browser";
 
 const cpp = await load(...);
 
-cw.inspect(fetch("/api/user.capnp"), { reader: UserReader, cpp });
+cw.inspect(fetch("/api/users/42"), { reader: UserReader, cpp });
 <span class="dim-comment">// → { id: 42n, name: "Alice", email: "...", joinedAtMs: ..., active: true, avatar: Uint8Array }</span></code></pre>
     </section>
 

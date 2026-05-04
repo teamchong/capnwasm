@@ -32,6 +32,28 @@ pre.copyable:hover {
   border-color: #4fc3f7;
 }
 
+.try-box {
+  border: 1px solid #2d3c47;
+  border-radius: 12px;
+  background: #0d1418;
+  padding: 18px 20px;
+}
+
+.try-box h2 {
+  margin-top: 0;
+}
+
+.try-box ol {
+  margin-left: 20px;
+  color: #aaa;
+  font-size: 0.86rem;
+  line-height: 1.7;
+}
+
+.try-box p {
+  color: #aaa;
+}
+
 pre.copyable::after {
   content: "click to copy";
   position: absolute;

@@ -74,7 +74,15 @@ async function ensureCpp(): Promise<any> {
 }
 
 let capnwasmRoot: any = null;
-async function ensureCapnwasmRoot(): Promise<any> {
+let capnwasmBurstRoot: any = null;
+async function ensureCapnwasmRoot(opts: { batchWindow?: boolean } = {}): Promise<any> {
+  if (opts.batchWindow) {
+    if (capnwasmBurstRoot) return capnwasmBurstRoot;
+    const cpp = await ensureCpp();
+    const session = await connectWebSocket(cpp, WS_ORIGIN + "/capnwasm", { batchWindowMs: 2 });
+    capnwasmBurstRoot = session.bootstrap();
+    return capnwasmBurstRoot;
+  }
   if (capnwasmRoot) return capnwasmRoot;
   const cpp = await ensureCpp();
   const session = await connectWebSocket(cpp, WS_ORIGIN + "/capnwasm");
@@ -90,7 +98,7 @@ async function ensureCapnwebRoot(): Promise<any> {
 }
 
 async function burstCapnwasm(n: number): Promise<number> {
-  const root = await ensureCapnwasmRoot();
+  const root = await ensureCapnwasmRoot({ batchWindow: true });
   const t0 = performance.now();
   const promises: Promise<number>[] = new Array(n);
   for (let i = 0; i < n; i++) {
@@ -209,48 +217,48 @@ function setPair(rowPrefix: string, values: { wasm: number; web: number }, forma
 }
 
 async function renderLiveRpcMetrics(): Promise<void> {
+  const unavailable = (rowPrefix: string, noteId: string | null, err: unknown) => {
+    console.warn(`vs-capnweb live row failed: ${rowPrefix}`, err);
+    setMetric(`${rowPrefix}-wasm`, "live RPC unavailable", false);
+    setMetric(`${rowPrefix}-web`, "live RPC unavailable", false);
+    if (noteId) setText(noteId, "live RPC unavailable");
+  };
+  const runPair = async (
+    rowPrefix: string,
+    fnWasm: () => Promise<number>,
+    fnWeb: () => Promise<number>,
+    formatter: (v: number) => string,
+    noteId: string | null,
+    iters: number,
+  ) => {
+    try {
+      const values = await measurePair(fnWasm, fnWeb, iters);
+      setPair(rowPrefix, values, formatter, noteId);
+    } catch (err) {
+      unavailable(rowPrefix, noteId, err);
+    }
+  };
+
   try {
-    await ensureCpp();
-    await ensureCapnwebRoot();
-    // Warmup: keep cheap but enough to avoid cold handshake/JIT dominating.
     await burstCapnwasm(20);
     await burstCapnweb(20);
     await tinyCapnwasm();
     await tinyCapnweb();
-
-    const burst = await measurePair(() => burstCapnwasm(1000), () => burstCapnweb(1000), 3);
-    setPair("live-burst", burst, (v) => `${v.toFixed(1)} µs`, "live-burst-note");
-
-    const text64 = "x".repeat(64 * 1024);
-    const text64Values = await measurePair(() => textCapnwasm(text64), () => textCapnweb(text64), 3);
-    setPair("live-text64", text64Values, fmtMs, "live-text64-note");
-
-    const text4 = "x".repeat(4 * 1024);
-    const text4Values = await measurePair(() => textCapnwasm(text4), () => textCapnweb(text4), 5);
-    setPair("live-text4", text4Values, fmtMs, "live-text4-note");
-
-    const tiny = await measurePair(tinyCapnwasm, tinyCapnweb, 7);
-    setPair("live-tiny", tiny, fmtMs, "live-tiny-note");
-
-    const cap = await measurePair(capPassCapnwasm, capPassCapnweb, 5);
-    setMetric("live-cap-wasm", fmtMs(cap.wasm), cap.wasm < cap.web);
-    setMetric("live-cap-web", fmtMs(cap.web), cap.web < cap.wasm);
-
-    const sparse = await measurePair(sparseCapnwasm, sparseCapnweb, 5);
-    setPair("live-sparse", sparse, fmtMs, "live-sparse-note");
   } catch (err) {
-    console.warn("vs-capnweb live RPC metrics failed", err);
-    for (const id of [
-      "live-burst-wasm", "live-burst-web", "live-burst-note",
-      "live-text64-wasm", "live-text64-web", "live-text64-note",
-      "live-text4-wasm", "live-text4-web", "live-text4-note",
-      "live-tiny-wasm", "live-tiny-web", "live-tiny-note",
-      "live-cap-wasm", "live-cap-web",
-      "live-sparse-wasm", "live-sparse-web", "live-sparse-note",
-    ]) {
-      try { setText(id, "live RPC unavailable"); } catch {}
-    }
+    console.warn("vs-capnweb warmup failed; rows will report individually", err);
   }
+
+  await runPair("live-burst", () => burstCapnwasm(1000), () => burstCapnweb(1000), (v) => `${v.toFixed(1)} µs`, "live-burst-note", 3);
+
+  const text64 = "x".repeat(64 * 1024);
+  await runPair("live-text64", () => textCapnwasm(text64), () => textCapnweb(text64), fmtMs, "live-text64-note", 3);
+
+  const text4 = "x".repeat(4 * 1024);
+  await runPair("live-text4", () => textCapnwasm(text4), () => textCapnweb(text4), fmtMs, "live-text4-note", 5);
+
+  await runPair("live-tiny", tinyCapnwasm, tinyCapnweb, fmtMs, "live-tiny-note", 7);
+  await runPair("live-cap", capPassCapnwasm, capPassCapnweb, fmtMs, null, 5);
+  await runPair("live-sparse", sparseCapnwasm, sparseCapnweb, fmtMs, "live-sparse-note", 5);
 }
 
 function renderWireMetrics(m: any): void {

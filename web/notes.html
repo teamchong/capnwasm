@@ -202,28 +202,57 @@ function buildFinishFrame(questionId) {
           <tr><td>Schema requirement</td><td>yes</td><td class="win">no</td></tr>
         </tbody>
       </table>
-      <p>The frame: <strong>capnweb kept Cap&apos;n Proto&apos;s RPC semantics and dropped the wire format. capnwasm keeps both.</strong> For workloads where the wire matters &mdash; binary data, cross-language interop, sustained throughput &mdash; the original Cap&apos;n Proto wire wins by a lot. For workloads where the wire doesn&apos;t matter &mdash; small JSON-shaped payloads in a JS-only stack &mdash; capnweb&apos;s 21 KB bundle and 0.2 ms cold start are unbeatable.</p>
-      <p>Neither one is wrong. They&apos;re optimized for different things. The mistake the framing in capnweb&apos;s docs encourages is treating the two halves as equally optional, when in fact dropping the wire format gives away a measurable amount of perf on the workloads that look like 2026 traffic (binary, big, bursty).</p>
+      <p>The frame: <strong>capnweb keeps Cap&apos;n Proto-style RPC semantics in a compact JS-only package with a JSON-shaped wire. capnwasm keeps the Cap&apos;n Proto binary wire too, by paying for a wasm runtime.</strong> For workloads where the wire matters &mdash; binary data, cross-language interop, sustained throughput &mdash; the binary wire can win by a lot. For workloads where the wire doesn&apos;t matter &mdash; small JSON-shaped payloads in a JS-only stack &mdash; capnweb&apos;s small bundle and fast cold start are the better tradeoff.</p>
+      <p>Neither one is wrong. They&apos;re optimized for different things. capnweb intentionally favors a small JS-only bundle and a JSON-shaped wire that feels natural in JavaScript apps. capnwasm explores the opposite choice: keep the binary Cap&apos;n Proto wire and pay the wasm/runtime cost. The useful result is the boundary between those choices: capnweb is better for tiny JS-shaped traffic and bundle budgets; capnwasm becomes interesting when the workload is binary-heavy, large, sparse, or cross-language.</p>
     </section>
 
     <section>
-      <h2>What I&apos;d want next</h2>
-      <p>If I keep working on this:</p>
-      <ol>
-        <li><strong>Schemaless dynamic reader</strong> (<code>capnwasm/dynamic</code>). Cap&apos;n Proto&apos;s wire format supports reading without compile-time schema; capnwasm&apos;s codegen-only API doesn&apos;t yet expose it. That&apos;s the gap that makes capnweb feel right for dynamic-data use cases (multi-tenant SaaS, GraphQL fragments, admin tools where users define types at runtime).</li>
-        <li><strong>Promise-pipelining smarter batching</strong>. Currently we batch sends within a microtask. If we tracked the dependency graph (call B uses promise from call A), we could send both in the same frame even when there&apos;s an <code>await</code> between them. That&apos;s what the original Cap&apos;n Proto pipelining model targets. Real win for chained RPC patterns (<code>getUser &rarr; getOrders &rarr; getItems</code>).</li>
-        <li><strong>The capnweb-wire compat shim</strong>, so existing capnweb deployments can drop capnwasm in alongside without a flag-day migration. Phase 1 = same speed (we&apos;re talking JSON over the wire). Phase 2 = flip the flag, both ends use binary wire, perf wins kick in.</li>
-        <li><strong>A real production deploy</strong> with real workloads, real RTT, and real numbers. The in-process bench is a proxy for &ldquo;what does the protocol cost&rdquo;; the real number that matters is &ldquo;how many MS does my user wait for the page to render.&rdquo;</li>
-      </ol>
+      <h2>What exists now</h2>
+      <p>The repo has grown beyond the original perf experiment. The useful pieces today are:</p>
+      <table class="cmp small">
+        <thead><tr><th>piece</th><th>what it is for</th><th>tradeoff</th></tr></thead>
+        <tbody>
+          <tr><td>generated readers/builders</td><td>schema known at build time; fastest typed path</td><td>requires codegen</td></tr>
+          <tr><td><code>capnwasm/dynamic</code></td><td>schema known only at runtime; admin tools, tenant schemas, schema explorers</td><td>string-keyed API (<code>get</code> / <code>pick</code>) is less ergonomic and slower than generated readers</td></tr>
+          <tr><td>RPC over WebSocket / HTTP-batch</td><td>Cap&apos;n Proto RPC frames in browser/Worker/Node</td><td>wasm/runtime cost vs JS-only RPC</td></tr>
+          <tr><td>streaming</td><td>server can push chunks; optional flow-control window</td><td>custom stream extension on top of <code>rpc.capnp</code></td></tr>
+          <tr><td>batching / pipelining</td><td>same-tick call batching, small optional <code>batchWindowMs</code>, promised-cap pipelining</td><td>cannot batch calls that user code has not constructed yet</td></tr>
+          <tr><td>binary <code>Data</code> fields</td><td>raw bytes, no base64 tax</td><td>best payoff on binary-heavy payloads, not tiny control-plane calls</td></tr>
+          <tr><td>interop + schema evolution tests</td><td>verify upstream <code>capnp</code> wire compatibility and version-skew behavior</td><td>still only covers the shapes tested in this repo</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>OpenAPI &harr; Cap&apos;n Proto work</h2>
+      <p>This became a second major thread: use one manifest pipeline to move between OpenAPI, TypeScript REST interfaces, and Cap&apos;n Proto schemas.</p>
+      <p>What is built:</p>
+      <ul>
+        <li><strong><code>capnwasm manifest</code></strong>: converts <code>.capnp</code>, TypeScript <code>@rest</code> interfaces, or OpenAPI into one manifest shape.</li>
+        <li><strong><code>emit-capnp</code></strong>: manifest/OpenAPI &rarr; canonical <code>.capnp</code>, including components, REST methods, annotations, and deterministic file IDs.</li>
+        <li><strong><code>emit-openapi</code></strong>: manifest &rarr; canonical OpenAPI, so the flow can round-trip back to REST tooling.</li>
+        <li><strong><code>lock</code></strong>: pins Cap&apos;n Proto field ordinals and operation IDs across schema edits; supports rename detection.</li>
+        <li><strong><code>compat</code> / <code>diff</code></strong>: flags breaking vs non-breaking contract changes across manifest/OpenAPI versions.</li>
+        <li><strong><code>probe</code></strong>: hits a real REST or Cap&apos;n Proto target and compares observed response shape with declared schema shape.</li>
+        <li><strong><code>emit-codec</code>, <code>emit-agents</code>, <code>mcp</code></strong>: JSON &harr; capnp converters and LLM/tool schemas from the same contract.</li>
+      </ul>
+      <table class="cmp small">
+        <thead><tr><th>path</th><th>good for</th><th>tradeoff</th></tr></thead>
+        <tbody>
+          <tr><td>OpenAPI / JSON</td><td>public REST docs, partner APIs, tiny text payloads, DevTools-friendly debugging</td><td class="win">smallest adoption cost</td></tr>
+          <tr><td>Cap&apos;n Proto / capnwasm</td><td>binary payloads, sparse reads, cross-language RPC, explicit schema evolution</td><td>pays wasm/runtime cost</td></tr>
+          <tr><td>Manifest pipeline</td><td>keeping both worlds in sync, detecting breaking changes, emitting docs/tools/codec</td><td>extra contract discipline up front</td></tr>
+        </tbody>
+      </table>
     </section>
 
     <section>
       <h2>Reproducing</h2>
 <pre><code>git clone https://github.com/teamchong/capnwasm
 cd capnwasm
-npm install
+pnpm install
 bash cpp/build.sh       # builds wasm + inlined.mjs
-npm test                # 100+ tests
+pnpm test               # 400+ tests; installs Playwright Chromium on first run if missing
 node bench/rpc_bench.mjs # in-process RPC bench
 node bench/realistic.mjs # burst throughput, wire bytes, sparse access</code></pre>
       <p>For the SIMD experiment specifically, edit <code>cpp/build.sh</code> to add <code>-msimd128 -mrelaxed-simd</code> and switch <code>-Oz</code> to <code>-O3</code>, then re-run <code>bash cpp/build.sh &amp;&amp; node bench/rpc_bench.mjs</code>. Numbers come out within 10% of baseline &mdash; confirm or refute on your hardware.</p>

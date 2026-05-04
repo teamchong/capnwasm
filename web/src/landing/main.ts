@@ -64,29 +64,41 @@ async function renderBuildMetrics() {
       `${fmtBytes(rpc)}; ${(rpc / cw).toFixed(2)}× capnweb`,
       "lose",
     );
+
+    const wasm = m.wasm;
+    setMetric(
+      "metric-browser-load",
+      `${fmtBytes(wasm.gzip)} gzip (${fmtBytes(wasm.raw)} raw)`,
+      "",
+    );
   } catch (err) {
     setMetric("metric-fixture-wire", "build metrics unavailable", "measuring");
     setMetric("metric-bundle", "build metrics unavailable", "measuring");
+    setMetric("metric-browser-load", "build metrics unavailable", "measuring");
     console.warn("landing build metrics failed", err);
   }
 }
 
 let cppPromise: Promise<any> | null = null;
-let browserLoadMs: number | null = null;
 async function ensureCpp() {
   if (!cppPromise) {
-    const t0 = performance.now();
     cppPromise = load(new URL("/capnp.slim.wasm", location.origin));
     const cpp = await cppPromise;
-    browserLoadMs = performance.now() - t0;
-    setMetric("metric-browser-load", fmtMs(browserLoadMs), browserLoadMs > 10 ? "lose" : "");
     return cpp;
   }
   return await cppPromise;
 }
 
 let capnwasmRoot: any = null;
-async function ensureCapnwasmRoot() {
+let capnwasmBurstRoot: any = null;
+async function ensureCapnwasmRoot(opts: { batchWindow?: boolean } = {}) {
+  if (opts.batchWindow) {
+    if (capnwasmBurstRoot) return capnwasmBurstRoot;
+    const cpp = await ensureCpp();
+    const session = await connectWebSocket(cpp, SERVER + "/capnwasm", { batchWindowMs: 2 });
+    capnwasmBurstRoot = session.bootstrap();
+    return capnwasmBurstRoot;
+  }
   if (capnwasmRoot) return capnwasmRoot;
   const cpp = await ensureCpp();
   const session = await connectWebSocket(cpp, SERVER + "/capnwasm");
@@ -102,7 +114,7 @@ async function ensureCapnwebRoot() {
 }
 
 async function burstCapnwasm(n: number): Promise<number> {
-  const root = await ensureCapnwasmRoot();
+  const root = await ensureCapnwasmRoot({ batchWindow: true });
   const t0 = performance.now();
   const promises: Promise<number>[] = new Array(n);
   for (let i = 0; i < n; i++) {
@@ -183,7 +195,6 @@ async function renderLiveMetrics() {
   } catch (err) {
     setMetric("metric-rpc-burst", "live RPC unavailable", "measuring");
     setMetric("metric-rpc-blob", "live RPC unavailable", "measuring");
-    if (browserLoadMs === null) setMetric("metric-browser-load", "unavailable", "measuring");
     console.warn("landing live metrics failed", err);
   }
 }

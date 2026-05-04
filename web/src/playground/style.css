@@ -12,6 +12,23 @@ body {
   padding: 32px 24px;
 }
 
+.network-tip {
+  position: fixed;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  max-width: 190px;
+  padding: 10px 12px;
+  border: 1px solid #2d3c47;
+  border-radius: 10px;
+  background: rgba(13, 20, 24, 0.94);
+  color: #b7c4ce;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.24);
+}
+
 #app {
   max-width: 1280px;
   margin: 0 auto;
@@ -119,6 +136,8 @@ nav a:hover {
 }
 
 @media (max-width: 1000px) {
+  .network-tip { display: none; }
+
   #results {
     grid-template-columns: 1fr;
   }
@@ -257,4 +276,3 @@ nav a:hover {
 #summary strong {
   color: #fff;
 }
-

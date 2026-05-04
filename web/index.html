@@ -17,6 +17,9 @@
   <link rel="stylesheet" href="./src/landing/style.css" />
 </head>
 <body>
+  <aside class="network-tip" aria-label="Network throttle tip">
+    Try DevTools &rarr; Network &rarr; Fast/Slow 3G. Latency changes which rows win.
+  </aside>
   <div id="app">
     <h1>capn<span class="dim">wasm</span></h1>
     <p class="tagline">Real Cap'n Proto C++ in the browser. Typed RPC, binary wire.</p>
@@ -25,6 +28,38 @@
       a fast typed JS client back. <code>npx capnwasm gen user.capnp</code> emits a reader/builder
       that runs against real upstream Cap'n Proto C++ statically compiled to wasm.
     </p>
+
+    <section class="framing-card" aria-labelledby="framing-title">
+      <h2 id="framing-title">What this project is</h2>
+      <p>
+        capnwasm is me trying to learn Cap'n Proto and capnweb by building the opposite
+        experiment: keep the real Cap'n Proto binary wire in the browser, compile the upstream
+        C++ runtime to wasm, and measure what changes.
+      </p>
+      <p>
+        This is not a scoreboard where Cap'n Proto always wins. The useful question is the
+        tradeoff boundary: <strong>when does zero-copy / sparse access / raw binary pay off, and
+        when is JSON or capnweb the better choice?</strong>
+      </p>
+      <div class="tradeoff-grid">
+        <div>
+          <strong>JSON / capnweb is usually better for</strong>
+          <ul>
+            <li>tiny JS-to-JS objects</li>
+            <li>control-plane calls where payload is a few bytes</li>
+            <li>smallest bundle / no wasm runtime</li>
+          </ul>
+        </div>
+        <div>
+          <strong>Cap'n Proto / capnwasm is interesting for</strong>
+          <ul>
+            <li>raw binary data without base64</li>
+            <li>large payloads where you read only a few fields</li>
+            <li>wire interop with non-JS Cap'n Proto services</li>
+          </ul>
+        </div>
+      </div>
+    </section>
 
     <div class="headline">
       <h2>vs capnweb &amp; REST/JSON</h2>
@@ -50,9 +85,9 @@
         <span class="metric-source">build</span>
       </div>
       <div class="headline-row">
-        <span class="label">Browser wasm load on this page</span>
-        <span id="metric-browser-load" class="value measuring">measuring…</span>
-        <span class="metric-source">live</span>
+        <span class="label">Wasm runtime asset (gzip)</span>
+        <span id="metric-browser-load" class="value measuring">loading…</span>
+        <span class="metric-source">build</span>
       </div>
     </div>
 
@@ -87,6 +122,26 @@
           in a working chat. Open in two tabs to watch messages stream live across.
         </div>
         <span class="demo-tag">Interactive</span>
+      </a>
+
+      <a href="./dynamic.html" class="demo-card">
+        <div class="demo-icon">&#x1F9E9;</div>
+        <div class="demo-title">Dynamic schema demo</div>
+        <div class="demo-desc">
+          No codegen: define the schema as JS data, build Cap&apos;n Proto bytes,
+          pick selected fields, and round-trip through the Worker.
+        </div>
+        <span class="demo-tag">No codegen</span>
+      </a>
+
+      <a href="./openapi.html" class="demo-card">
+        <div class="demo-icon">&#x1F501;</div>
+        <div class="demo-title">OpenAPI conversion</div>
+        <div class="demo-desc">
+          Paste OpenAPI JSON, convert to manifest, emit canonical <code>.capnp</code>,
+          and round-trip back to canonical OpenAPI in the browser.
+        </div>
+        <span class="demo-tag">Contract</span>
       </a>
 
       <a href="./vs-capnweb.html" class="demo-card">
@@ -131,25 +186,6 @@
         <span class="demo-tag">Write-up</span>
       </a>
 
-      <a href="https://github.com/teamchong/capnwasm#three-quickstarts" class="demo-card">
-        <div class="demo-icon">&#x1F680;</div>
-        <div class="demo-title">Quickstart</div>
-        <div class="demo-desc">
-          <code>.capnp</code> schemas, TypeScript interfaces with <code>@rest</code> directives,
-          or OpenAPI specs &rarr; typed JS client. <code>npx capnwasm gen</code>.
-        </div>
-        <span class="demo-tag">3 quickstarts</span>
-      </a>
-
-      <a href="https://github.com/teamchong/capnwasm#rpc--full-capn-proto-pillars" class="demo-card">
-        <div class="demo-icon">&#x1F517;</div>
-        <div class="demo-title">RPC pillars</div>
-        <div class="demo-desc">
-          Promise pipelining, capability passing, auto-release via FinalizationRegistry,
-          microtask batching, streaming. Wire-compatible with C++/Rust/Go peers.
-        </div>
-        <span class="demo-tag">Full RPC</span>
-      </a>
     </div>
 
     <div class="links">
