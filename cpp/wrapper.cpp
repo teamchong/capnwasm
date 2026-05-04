@@ -560,7 +560,10 @@ uint32_t cpp_typed_field_at(uint32_t field_idx) {
   return static_cast<uint32_t>(text.size());
 }
 
-// Forward decl; the AnyStruct section below owns the storage.
+// Forward decl; the AnyStruct section below owns the storage. M3 keeps
+// `any_reader` as a real pointer (shadow of the active slot's
+// FlatArrayMessageReader*) so the bench helpers and any external
+// reference compile unchanged.
 extern capnp::FlatArrayMessageReader* any_reader;
 
 // ---------------------------------------------------------------------------
@@ -780,47 +783,229 @@ uint32_t cpp_conformance_serialize(uint32_t input_len) {
 // No string lookups, no schema reflection at runtime.
 // ---------------------------------------------------------------------------
 
-alignas(8) static char any_reader_storage[1024];
-capnp::FlatArrayMessageReader* any_reader = nullptr;
-
-// Stack of struct readers so generated code can navigate into sub-structs
-// without persisting opaque handles in JS.
+// M3: Native multi-reader slot pool.
 //
-// Wrapped in a union so the array doesn't trigger default-construction at
-// module init. AnyStruct::Reader has a trivial default ctor, but the
-// compiler still emits a 32-iteration init loop in _initialize for the
-// static array; that's responsible for ~30k instructions, 75% of the
-// slim wasm's code section. The union skips per-element init; the wasm
-// spec already zero-initializes BSS, which matches what the default
-// Reader ctor would have produced. Slots are accessed via `any_stack(i)`.
+// Pre-M3, this file held a single any_reader / any_stack / any_list_reader
+// triple. JS multiplexed multiple live readers onto that one cursor by
+// re-binding before every read (the _ensureCapnwasmReader plumbing in
+// generated code). Correct, but not what the architecture should be.
+//
+// M3 promotes the cursor to a fixed pool of READER_SLOT_COUNT slots. JS
+// readers carry a slot index; before any boundary call they call
+// cpp_any_use_slot(idx) to make their slot active. We use a *shadow*
+// design: the existing globals (any_reader, any_stack_top, etc.) remain,
+// and represent the active slot's state. cpp_any_use_slot saves the
+// outgoing slot's globals into its persistent store and loads the
+// incoming slot's. Existing function bodies (cpp_any_text_at, etc.)
+// stay untouched because they keep reading the same globals as before.
+//
+// Slot 0 is reserved for the legacy single-slot path: openFooUnsafe,
+// openDynamicUnsafe, bench harnesses, and the legacy cpp_any_open_at
+// entrypoint all target it implicitly.
+// Pool size. 32 dedicated slots fit comfortably (each slot is ~1.5 KB of
+// reader storage + stack), and tracks the size we want for typical
+// applications: a request handler holding a couple of params readers,
+// a few headers / index lookups, and a results builder. Tests
+// occasionally hold more readers alive than production code; we still
+// fall back to managed-message + rebind on exhaustion so the worst case
+// is a few extra wasm boundary calls, not a thrown error.
+constexpr size_t READER_SLOT_COUNT = 32;
 constexpr size_t ANY_STACK_DEPTH = 32;
+
 union AnyStackSlot {
   AnyStackSlot() {}
   ~AnyStackSlot() {}
   capnp::AnyStruct::Reader r;
 };
+
+// Persistent per-slot state. The active slot's working copy is mirrored
+// into the file-scope globals declared just below. All getter functions
+// read those globals; cpp_any_use_slot keeps them coherent.
+struct ReaderSlot {
+  alignas(8) char reader_storage[1024];
+  capnp::FlatArrayMessageReader* reader;
+  AnyStackSlot stack[ANY_STACK_DEPTH];
+  int32_t stack_top;
+  capnp::AnyList::Reader list_reader;
+  bool list_reader_set;
+  bool in_use;
+};
+
+static ReaderSlot reader_slots[READER_SLOT_COUNT];
+static int32_t active_slot_idx = 0;
+
+// Active-slot mirror state. These are the same names the rest of the
+// file already uses for reads, so existing function bodies don't change.
+alignas(8) static char any_reader_storage[1024];
+capnp::FlatArrayMessageReader* any_reader = nullptr;
 static AnyStackSlot any_stack_slots[ANY_STACK_DEPTH];
 static inline capnp::AnyStruct::Reader& any_stack(int i) {
   return any_stack_slots[i].r;
 }
 static int32_t any_stack_top = -1;
+static capnp::AnyList::Reader any_list_reader;
+static bool any_list_reader_set = false;
 
-uint32_t cpp_any_open_at(const uint8_t* bytes_ptr, uint32_t bytes_len) {
-  if (any_reader) {
-    any_reader->~FlatArrayMessageReader();
-    any_reader = nullptr;
+// Save the live mirror state back into a slot's persistent store. Used
+// when switching slots so the outgoing slot's cursor is preserved.
+static void save_active_into(ReaderSlot& s) {
+  s.reader = any_reader;
+  s.stack_top = any_stack_top;
+  for (int i = 0; i <= any_stack_top && i < (int32_t)ANY_STACK_DEPTH; i++) {
+    s.stack[i].r = any_stack(i);
   }
-  static_assert(sizeof(capnp::FlatArrayMessageReader) <= sizeof(any_reader_storage),
-                "any_reader_storage too small");
+  s.list_reader = any_list_reader;
+  s.list_reader_set = any_list_reader_set;
+}
+
+// Load a slot's persistent store into the live mirror state. Used after
+// switching slots so subsequent reads see the incoming slot's cursor.
+static void load_active_from(ReaderSlot& s) {
+  any_reader = s.reader;
+  any_stack_top = s.stack_top;
+  for (int i = 0; i <= s.stack_top && i < (int32_t)ANY_STACK_DEPTH; i++) {
+    any_stack(i) = s.stack[i].r;
+  }
+  any_list_reader = s.list_reader;
+  any_list_reader_set = s.list_reader_set;
+}
+
+// Open a message into a specific slot, replacing any existing reader
+// in that slot. Sets the mirror globals so subsequent reads on the
+// active slot work immediately. Caller is responsible for setting
+// active_slot_idx to slot_idx before calling.
+static uint32_t open_into_slot(uint32_t slot_idx, const uint8_t* bytes_ptr, uint32_t bytes_len) {
+  if (slot_idx >= READER_SLOT_COUNT) return 0;
+  ReaderSlot& s = reader_slots[slot_idx];
+  if (s.reader) {
+    s.reader->~FlatArrayMessageReader();
+    s.reader = nullptr;
+  }
+  // Slot 0 reuses the file-scope any_reader_storage; other slots use
+  // their own storage. This keeps the legacy slot's reader pointer
+  // pointing into the same memory as before, which matters for the
+  // bench helpers that read any_reader directly.
+  void* storage = (slot_idx == 0)
+    ? static_cast<void*>(any_reader_storage)
+    : static_cast<void*>(s.reader_storage);
+  static_assert(sizeof(capnp::FlatArrayMessageReader) <= sizeof(s.reader_storage),
+                "ReaderSlot::reader_storage too small");
   auto words = kj::ArrayPtr<const capnp::word>(
       reinterpret_cast<const capnp::word*>(bytes_ptr),
       bytes_len / sizeof(capnp::word));
-  any_reader = new (any_reader_storage) capnp::FlatArrayMessageReader(words);
-  any_stack_top = 0;
-  any_stack(0) = any_reader->getRoot<capnp::AnyPointer>().getAs<capnp::AnyStruct>();
-  // Return data section pointer so the JS Reader can read primitives
-  // straight from wasm memory.
-  return reinterpret_cast<uint32_t>(any_stack(0).getDataSection().begin());
+  s.reader = new (storage) capnp::FlatArrayMessageReader(words);
+  s.stack_top = 0;
+  s.stack[0].r = s.reader->getRoot<capnp::AnyPointer>().getAs<capnp::AnyStruct>();
+  s.list_reader_set = false;
+  // Mirror into the live globals if this slot is currently active.
+  if (active_slot_idx == static_cast<int32_t>(slot_idx)) {
+    load_active_from(s);
+  }
+  return reinterpret_cast<uint32_t>(s.stack[0].r.getDataSection().begin());
+}
+
+// Acquire a free slot, copy the message in, return the slot index. JS
+// allocates the message bytes via cpp_msg_alloc (so they live in stable
+// wasm memory for the slot's lifetime) and passes (ptr, len) here. On
+// exhaustion returns 0xFFFFFFFF. Slot 0 is excluded from the free pool;
+// it is reserved for the legacy single-slot / unsafe path. The caller
+// usually follows with cpp_any_use_slot(idx) to make the new slot
+// active before reading.
+uint32_t cpp_any_acquire_slot(const uint8_t* bytes_ptr, uint32_t bytes_len) {
+  for (uint32_t i = 1; i < READER_SLOT_COUNT; i++) {
+    if (!reader_slots[i].in_use) {
+      reader_slots[i].in_use = true;
+      uint32_t data_ptr = open_into_slot(i, bytes_ptr, bytes_len);
+      if (!data_ptr) {
+        reader_slots[i].in_use = false;
+        return 0xFFFFFFFFu;
+      }
+      return i;
+    }
+  }
+  return 0xFFFFFFFFu;
+}
+
+// Release a slot back to the pool. Destroys its reader and clears its
+// in_use flag. Idempotent. Releasing slot 0 is a no-op.
+void cpp_any_release_slot(uint32_t slot_idx) {
+  if (slot_idx == 0 || slot_idx >= READER_SLOT_COUNT) return;
+  ReaderSlot& s = reader_slots[slot_idx];
+  if (!s.in_use) return;
+  // If this is the active slot, also clear the live mirror state so a
+  // stale read after release doesn't accidentally find usable cursor.
+  if (active_slot_idx == static_cast<int32_t>(slot_idx)) {
+    if (any_reader) {
+      any_reader->~FlatArrayMessageReader();
+      any_reader = nullptr;
+    }
+    any_stack_top = -1;
+    any_list_reader_set = false;
+    active_slot_idx = 0;
+    load_active_from(reader_slots[0]);
+  } else {
+    if (s.reader) {
+      s.reader->~FlatArrayMessageReader();
+      s.reader = nullptr;
+    }
+    s.stack_top = -1;
+    s.list_reader_set = false;
+  }
+  s.in_use = false;
+}
+
+// Switch which slot the cpp_any_* functions read from. JS calls this
+// once before a series of getter calls on a given reader; subsequent
+// reads on the same reader skip the call. Calling with an out-of-range
+// index is a no-op.
+void cpp_any_use_slot(uint32_t slot_idx) {
+  if (slot_idx >= READER_SLOT_COUNT) return;
+  if (active_slot_idx == static_cast<int32_t>(slot_idx)) return;
+  // Save outgoing into its persistent store.
+  save_active_into(reader_slots[active_slot_idx]);
+  active_slot_idx = static_cast<int32_t>(slot_idx);
+  load_active_from(reader_slots[active_slot_idx]);
+}
+
+// Reset the active slot's any_stack back to depth 0 (root struct).
+// Used by root readers after another reader (typically an element
+// reader) pushed deeper into the stack. Pointer-section getters
+// (cpp_any_text_at / cpp_any_data_at / cpp_any_*_at) read from
+// any_stack(top), so without this reset the root reader would
+// accidentally read from the nested element's struct.
+void cpp_any_slot_reset_root() {
+  if (any_stack_top > 0) any_stack_top = 0;
+  any_list_reader_set = false;
+}
+
+// Return the data section pointer of a slot's root AnyStruct. JS caches
+// this on construction so primitive reads can go straight to wasm
+// memory without a boundary call. Reads from the slot's persistent
+// store, so the caller does not need to use_slot first.
+uint32_t cpp_any_slot_data_ptr(uint32_t slot_idx) {
+  if (slot_idx >= READER_SLOT_COUNT) return 0;
+  // If this is the active slot, the live mirror has the freshest
+  // cursor; if not, the persistent store is up to date because
+  // use_slot saves before switching.
+  if (active_slot_idx == static_cast<int32_t>(slot_idx)) {
+    if (!any_reader || any_stack_top < 0) return 0;
+    return reinterpret_cast<uint32_t>(any_stack(0).getDataSection().begin());
+  }
+  ReaderSlot& s = reader_slots[slot_idx];
+  if (!s.reader || s.stack_top < 0) return 0;
+  return reinterpret_cast<uint32_t>(s.stack[0].r.getDataSection().begin());
+}
+
+uint32_t cpp_any_open_at(const uint8_t* bytes_ptr, uint32_t bytes_len) {
+  // Legacy single-slot path: opens into slot 0 and makes it active.
+  // Used by openFooUnsafe / openDynamicUnsafe / bench harnesses /
+  // capnwasm-internal RPC params extraction (which is scoped, not
+  // pooled, so slot 0 is exactly right).
+  if (active_slot_idx != 0) {
+    save_active_into(reader_slots[active_slot_idx]);
+    active_slot_idx = 0;
+  }
+  return open_into_slot(0, bytes_ptr, bytes_len);
 }
 
 uint32_t cpp_any_open(uint32_t bytes_len) {
@@ -850,9 +1035,10 @@ void cpp_any_leave_struct() {
 // cpp_any_enter_list_at to position the reader on the i-th element. The
 // element appears on the AnyStruct stack just like cpp_any_enter_struct,
 // so all the typed Reader getters work unchanged.
-
-static capnp::AnyList::Reader any_list_reader;
-static bool any_list_reader_set = false;
+//
+// any_list_reader / any_list_reader_set are declared with the M3 slot
+// pool above; both are mirrored per slot so a list-iter cursor doesn't
+// leak between readers.
 
 // Open the pointer at `ptr_idx` of the current top struct as a List of
 // AnyStructs. Returns the element count (0 if missing or wrong type).

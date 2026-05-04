@@ -524,6 +524,16 @@ export function openDynamic(cpp, schema, bytes) {
   if (typeof cpp._validateSingleSegment === "function") {
     cpp._validateSingleSegment(bytes);
   }
+  // M3: Native multi-reader slot pool. Acquire a dedicated slot so this
+  // reader survives unrelated decodes without rebinding. Falls back to
+  // managed-message + rebind on older runtimes that don't export the
+  // slot entry points, or when the pool is full (returns null).
+  if (typeof cpp._acquireSlot === "function" && cpp._supportsReaderSlotPool && cpp._supportsReaderSlotPool()) {
+    const acquired = cpp._acquireSlot(bytes);
+    if (acquired) {
+      return new DynamicReader(cpp, schema, { slotIdx: acquired.slotIdx, slotHandle: acquired.handle, gen: cpp._generation });
+    }
+  }
   if (typeof cpp._allocMessage === "function") {
     const msg = cpp._allocMessage(bytes);
     cpp._openAnyMessage(msg);
@@ -560,11 +570,31 @@ export class DynamicReader {
     this._schema = schema;
     this._proxy = null;
     this._msg = opts && opts.msg ? opts.msg : null;
+    // M3: Slot pool. _slotIdx > 0 means this reader owns a wasm slot
+    // and _ensureOpen flips the active slot via cpp._useSlot before
+    // any boundary call. _slotHandle is the registration object the
+    // slot finalizer holds (release runs on GC; M4 will add explicit
+    // dispose()).
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
   }
 
   _ensureOpen() {
+    // M3 fast path: slot pool. Skip the gen check entirely -- the
+    // slot's cursor is preserved across other readers' activity, so
+    // the only thing we need to confirm is that *our* slot is the
+    // active one. _useSlot is already a JS-level no-op when the
+    // active slot already matches, so the cost on the steady state is
+    // a single property compare.
+    if (this._slotIdx) {
+      this._cpp._useSlot(this._slotIdx);
+      this._gen = this._cpp._generation ?? 0;
+      return;
+    }
     if (this._gen === (this._cpp._generation ?? 0)) return;
+    // Pre-M3 fallback: managed-message rebind, or stale-throw for
+    // unsafe / scoped readers.
     if (!this._msg) throw new StaleDynamicReaderError();
     this._cpp._openAnyMessage(this._msg);
     this._gen = this._cpp._generation ?? 0;

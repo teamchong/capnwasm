@@ -376,18 +376,43 @@ function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
   if (typeof cpp._validateSingleSegment === "function") {
     cpp._validateSingleSegment(bytes);
   }
+  if (!unsafe && typeof cpp._acquireSlot === "function" && cpp._supportsReaderSlotPool && cpp._supportsReaderSlotPool()) {
+    const acquired = cpp._acquireSlot(bytes);
+    if (acquired) {
+      return { dataPtr: acquired.dataPtr, slotIdx: acquired.slotIdx, slotHandle: acquired.handle, msg: null, gen: cpp._generation };
+    }
+  }
   if (!unsafe && typeof cpp._allocMessage === "function") {
     const msg = cpp._allocMessage(bytes);
     const dataPtr = cpp._openAnyMessage(msg);
-    return { dataPtr, msg, gen: cpp._generation };
+    return { dataPtr, slotIdx: 0, slotHandle: null, msg, gen: cpp._generation };
   }
   if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
   cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
   const dataPtr = cpp._exports.cpp_any_open(bytes.length);
   if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();
-  return { dataPtr, msg: null, gen: cpp._generation ?? 0 };
+  return { dataPtr, slotIdx: 0, slotHandle: null, msg: null, gen: cpp._generation ?? 0 };
 }
 function _ensureCapnwasmReader(reader) {
+  if (reader._slotIdx) {
+    const cpp = reader._cpp;
+    if (cpp._activeSlot !== reader._slotIdx) {
+      cpp._useSlot(reader._slotIdx);
+    }
+    const gen = cpp._generation ?? 0;
+    if (reader._gen !== gen) {
+      if (reader._rebind) {
+        reader._rebind();
+      } else {
+        cpp._exports.cpp_any_slot_reset_root?.();
+        cpp._bumpGeneration();
+      }
+      reader._gen = cpp._generation ?? 0;
+      reader._u8 = cpp._u8;
+      reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    }
+    return;
+  }
   const gen = reader._cpp._generation ?? 0;
   if (reader._gen === gen) return;
   if (reader._rebind) {
@@ -614,6 +639,8 @@ export class PostParamsReader {
     this._msg = opts && opts.msg ? opts.msg : null;
     this._rebind = opts && opts.rebind ? opts.rebind : null;
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -659,6 +686,8 @@ export class ChatMessageReader {
     this._msg = opts && opts.msg ? opts.msg : null;
     this._rebind = opts && opts.rebind ? opts.rebind : null;
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -722,6 +751,8 @@ export class GetSinceParamsReader {
     this._msg = opts && opts.msg ? opts.msg : null;
     this._rebind = opts && opts.rebind ? opts.rebind : null;
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -754,6 +785,8 @@ export class ChatMessageListReader {
     this._msg = opts && opts.msg ? opts.msg : null;
     this._rebind = opts && opts.rebind ? opts.rebind : null;
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -775,7 +808,7 @@ export class ChatMessageListReader {
         cpp._exports.cpp_any_enter_list_at(i);
         cpp._bumpGeneration();
         pushed = true;
-        const r = new ChatMessageReader(cpp, 0, { msg: reader._msg, gen: cpp._generation ?? 0, rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(0); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); } });
+        const r = new ChatMessageReader(cpp, 0, { msg: reader._msg, slotIdx: reader._slotIdx, gen: cpp._generation ?? 0, rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(0); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); } });
         return r;
       },
       *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },

@@ -1,4 +1,4 @@
-// Generated from example_user.capnp by capnwasm-gen. Do not edit by hand.
+// Generated from nested.capnp by capnwasm-gen. Do not edit by hand.
 
 const SHARED_TEXT_DECODER = new TextDecoder();
 const SHARED_ENCODER = new TextEncoder();
@@ -632,7 +632,7 @@ function _runDraft(cpp, fields, fn) {
   return fn(_materializeDraft(cpp, fields, plan));
 }
 
-export class UserReader {
+export class TagReader {
   constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
@@ -646,18 +646,6 @@ export class UserReader {
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
-  get id() {
-    _ensureCapnwasmReader(this);
-    return this._dataPtr ? this._dv.getBigUint64(this._dataPtr + 0, true) : this._exp.cpp_any_int64_at(0, 0n);
-  }
-  get age() {
-    _ensureCapnwasmReader(this);
-    return this._dataPtr ? this._dv.getUint32(this._dataPtr + 8, true) : this._exp.cpp_any_uint32_at(8, 0);
-  }
-  get active() {
-    _ensureCapnwasmReader(this);
-    return this._dataPtr ? ((this._u8[this._dataPtr + 12] >> 0) & 1) === 1 : this._exp.cpp_any_bool_at(96, 0) === 1;
-  }
   get name() {
     _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(0);
@@ -666,44 +654,28 @@ export class UserReader {
     const out = this._cpp._outPtr;
     return decodeAscii(u8.subarray(out, out + len));
   }
-  get email() {
+  get weight() {
     _ensureCapnwasmReader(this);
-    const len = this._exp.cpp_any_text_at(1);
-    if (len === 0) return "";
-    const u8 = this._cpp._u8;
-    const out = this._cpp._outPtr;
-    return decodeAscii(u8.subarray(out, out + len));
-  }
-  get bio() {
-    _ensureCapnwasmReader(this);
-    const len = this._exp.cpp_any_text_at(2);
-    if (len === 0) return "";
-    const u8 = this._cpp._u8;
-    const out = this._cpp._outPtr;
-    return decodeAscii(u8.subarray(out, out + len));
+    return this._dataPtr ? this._dv.getUint32(this._dataPtr + 0, true) : this._exp.cpp_any_uint32_at(0, 0);
   }
 
   static _FIELDS = {
-    id: {"kind":4,"off":0,"type":"uint64"},
-    age: {"kind":3,"off":8,"type":"uint32"},
-    active: {"kind":5,"off":96,"type":"bool"},
     name: {"kind":0,"off":0,"type":"text"},
-    email: {"kind":0,"off":1,"type":"text"},
-    bio: {"kind":0,"off":2,"type":"text"},
+    weight: {"kind":3,"off":0,"type":"uint32"},
   };
 
   draft(fn) {
     _ensureCapnwasmReader(this);
-    return _runDraft(this._cpp, UserReader._FIELDS, fn);
+    return _runDraft(this._cpp, TagReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
-    return _capnwasmPick(this._cpp, UserReader._FIELDS, Object.keys(UserReader._FIELDS));
+    return _capnwasmPick(this._cpp, TagReader._FIELDS, Object.keys(TagReader._FIELDS));
   }
 }
 
-export class GreetingReader {
+export class CommentReader {
   constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
@@ -717,7 +689,7 @@ export class GreetingReader {
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
-  get message() {
+  get author() {
     _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
@@ -725,135 +697,250 @@ export class GreetingReader {
     const out = this._cpp._outPtr;
     return decodeAscii(u8.subarray(out, out + len));
   }
-  get timestamp() {
+  get body() {
     _ensureCapnwasmReader(this);
-    return this._dataPtr ? this._dv.getBigUint64(this._dataPtr + 0, true) : this._exp.cpp_any_int64_at(0, 0n);
+    const len = this._exp.cpp_any_text_at(1);
+    if (len === 0) return "";
+    const u8 = this._cpp._u8;
+    const out = this._cpp._outPtr;
+    return decodeAscii(u8.subarray(out, out + len));
+  }
+  get replies() {
+    _ensureCapnwasmReader(this);
+    const reader = this;
+    const cpp = this._cpp;
+    const size = cpp._exports.cpp_any_open_list(2);
+    let pushed = false;
+    return {
+      length: size,
+      at(i) {
+        if (i < 0 || i >= size) return undefined;
+        _ensureCapnwasmReader(reader);
+        if (pushed) cpp._exports.cpp_any_leave_struct();
+        cpp._exports.cpp_any_open_list(2);
+        cpp._exports.cpp_any_enter_list_at(i);
+        cpp._bumpGeneration();
+        pushed = true;
+        const r = new CommentReader(cpp, 0, { msg: reader._msg, slotIdx: reader._slotIdx, gen: cpp._generation ?? 0, rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(2); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); } });
+        return r;
+      },
+      *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
+    };
   }
 
   static _FIELDS = {
-    message: {"kind":0,"off":0,"type":"text"},
-    timestamp: {"kind":4,"off":0,"type":"uint64"},
+    author: {"kind":0,"off":0,"type":"text"},
+    body: {"kind":0,"off":1,"type":"text"},
+    replies: {"kind":-1,"off":2,"type":"List(Comment)"},
   };
 
   draft(fn) {
     _ensureCapnwasmReader(this);
-    return _runDraft(this._cpp, GreetingReader._FIELDS, fn);
+    return _runDraft(this._cpp, CommentReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
-    return _capnwasmPick(this._cpp, GreetingReader._FIELDS, Object.keys(GreetingReader._FIELDS));
+    return _capnwasmPick(this._cpp, CommentReader._FIELDS, Object.keys(CommentReader._FIELDS));
   }
 }
 
-_STRUCT_FIELDS["User"] = UserReader._FIELDS;
-_STRUCT_FIELDS["Greeting"] = GreetingReader._FIELDS;
-
-export class UserBuilder {
-  static _DATA_WORDS = 2;
-  static _PTR_WORDS = 3;
-  constructor(cpp, opts) {
+export class PostMetaReader {
+  constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
-    if (!opts || !opts.preinitialized) {
-      if (this._exp.cpp_any_builder_init(2, 3) !== 1) {
-        throw new Error("cpp_any_builder_init failed");
-      }
-    }
-    this._dataPtr = (opts && opts.dataPtr !== undefined)
-      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
-  set id(value) {
-    const dv = this._dv;
-    if (typeof value === "bigint") {
-      dv.setBigInt64(this._dataPtr + 0, value, true);
-    } else {
-      let lo, hi;
-      if (value >= 0) { lo = (value >>> 0); hi = ((value / 4294967296) >>> 0); }
-      else { const abs = -value; const aLo = (abs >>> 0); const aHi = ((abs / 4294967296) >>> 0);
-             lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0; }
-      dv.setUint32(this._dataPtr + 0, lo, true);
-      dv.setUint32(this._dataPtr + 4, hi, true);
-    }
+  get views() {
+    _ensureCapnwasmReader(this);
+    return this._dataPtr ? this._dv.getUint32(this._dataPtr + 0, true) : this._exp.cpp_any_uint32_at(0, 0);
   }
-  set age(value) {
-    const u8 = this._u8;
-    const o = this._dataPtr + 8;
-    u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
-    u8[o+2] = (value >>> 16) & 0xff; u8[o+3] = (value >>> 24) & 0xff;
-  }
-  set active(value) {
-    const u8 = this._u8;
-    const off = this._dataPtr + 12;
-    if (value) u8[off] |= 1;
-    else u8[off] &= 254;
-  }
-  set name(value) {
-    const inPtr = this._exp.cpp_in_ptr();
-    const inCap = this._exp.cpp_in_capacity();
-    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
-    const { written } = SHARED_ENCODER.encodeInto(value, dst);
-    this._exp.cpp_any_builder_set_text(0, written);
-    this._u8 = this._cpp._u8;
-    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
-  }
-  set email(value) {
-    const inPtr = this._exp.cpp_in_ptr();
-    const inCap = this._exp.cpp_in_capacity();
-    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
-    const { written } = SHARED_ENCODER.encodeInto(value, dst);
-    this._exp.cpp_any_builder_set_text(1, written);
-    this._u8 = this._cpp._u8;
-    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
-  }
-  set bio(value) {
-    const inPtr = this._exp.cpp_in_ptr();
-    const inCap = this._exp.cpp_in_capacity();
-    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
-    const { written } = SHARED_ENCODER.encodeInto(value, dst);
-    this._exp.cpp_any_builder_set_text(2, written);
-    this._u8 = this._cpp._u8;
-    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
-  }
-
-  /**
-   * Apply fields from a plain JS object to this builder. Same shape
-   * as JSON.stringify on the wire side: pass any object whose keys
-   * match the schema field names. Missing keys are skipped, unknown
-   * keys are ignored. Returns `this` for chaining.
-   */
-  fromObject(o) {
-    if (o == null) return this;
-    if (o.id !== undefined) this.id = o.id;
-    if (o.age !== undefined) this.age = o.age;
-    if (o.active !== undefined) this.active = o.active;
-    if (o.name !== undefined) this.name = o.name;
-    if (o.email !== undefined) this.email = o.email;
-    if (o.bio !== undefined) this.bio = o.bio;
-    return this;
-  }
-
-  /**
-   * Build a User from a plain JS object in one call.
-   * Shorthand for `new UserBuilder(cpp).fromObject(o)`.
-   */
-  static from(cpp, o) {
-    return new UserBuilder(cpp).fromObject(o);
-  }
-
-  /** Serialize the message to framed Cap'n Proto bytes. */
-  toBytes() {
-    const len = this._exp.cpp_any_builder_finalize();
-    if (!len) throw new Error("cpp_any_builder_finalize failed");
+  get category() {
+    _ensureCapnwasmReader(this);
+    const len = this._exp.cpp_any_text_at(0);
+    if (len === 0) return "";
+    const u8 = this._cpp._u8;
     const out = this._cpp._outPtr;
-    return this._cpp._u8.slice(out, out + len);
+    return decodeAscii(u8.subarray(out, out + len));
+  }
+  get parent() {
+    _ensureCapnwasmReader(this);
+    throw new Error("unsupported pointer type: PostMetaParent");
+  }
+
+  static _FIELDS = {
+    views: {"kind":3,"off":0,"type":"uint32"},
+    category: {"kind":0,"off":0,"type":"text"},
+    parent: {"kind":-1,"off":1,"type":"PostMetaParent"},
+  };
+
+  draft(fn) {
+    _ensureCapnwasmReader(this);
+    return _runDraft(this._cpp, PostMetaReader._FIELDS, fn);
+  }
+
+  toObject() {
+    _ensureCapnwasmReader(this);
+    return _capnwasmPick(this._cpp, PostMetaReader._FIELDS, Object.keys(PostMetaReader._FIELDS));
   }
 }
 
-export class GreetingBuilder {
+export class PostReader {
+  constructor(cpp, dataPtr, opts = undefined) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._dataPtr = dataPtr | 0;
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+  }
+
+  get title() {
+    _ensureCapnwasmReader(this);
+    const len = this._exp.cpp_any_text_at(0);
+    if (len === 0) return "";
+    const u8 = this._cpp._u8;
+    const out = this._cpp._outPtr;
+    return decodeAscii(u8.subarray(out, out + len));
+  }
+  get author() {
+    _ensureCapnwasmReader(this);
+    const len = this._exp.cpp_any_text_at(1);
+    if (len === 0) return "";
+    const u8 = this._cpp._u8;
+    const out = this._cpp._outPtr;
+    return decodeAscii(u8.subarray(out, out + len));
+  }
+  get tags() {
+    _ensureCapnwasmReader(this);
+    const reader = this;
+    const cpp = this._cpp;
+    const size = cpp._exports.cpp_any_open_list(2);
+    let pushed = false;
+    return {
+      length: size,
+      at(i) {
+        if (i < 0 || i >= size) return undefined;
+        _ensureCapnwasmReader(reader);
+        if (pushed) cpp._exports.cpp_any_leave_struct();
+        cpp._exports.cpp_any_open_list(2);
+        cpp._exports.cpp_any_enter_list_at(i);
+        cpp._bumpGeneration();
+        pushed = true;
+        const r = new TagReader(cpp, 0, { msg: reader._msg, slotIdx: reader._slotIdx, gen: cpp._generation ?? 0, rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(2); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); } });
+        return r;
+      },
+      *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
+    };
+  }
+  get comments() {
+    _ensureCapnwasmReader(this);
+    const reader = this;
+    const cpp = this._cpp;
+    const size = cpp._exports.cpp_any_open_list(3);
+    let pushed = false;
+    return {
+      length: size,
+      at(i) {
+        if (i < 0 || i >= size) return undefined;
+        _ensureCapnwasmReader(reader);
+        if (pushed) cpp._exports.cpp_any_leave_struct();
+        cpp._exports.cpp_any_open_list(3);
+        cpp._exports.cpp_any_enter_list_at(i);
+        cpp._bumpGeneration();
+        pushed = true;
+        const r = new CommentReader(cpp, 0, { msg: reader._msg, slotIdx: reader._slotIdx, gen: cpp._generation ?? 0, rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(3); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); } });
+        return r;
+      },
+      *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
+    };
+  }
+  get meta() {
+    _ensureCapnwasmReader(this);
+    throw new Error("unsupported pointer type: PostMeta");
+  }
+
+  static _FIELDS = {
+    title: {"kind":0,"off":0,"type":"text"},
+    author: {"kind":0,"off":1,"type":"text"},
+    tags: {"kind":-1,"off":2,"type":"List(Tag)"},
+    comments: {"kind":-1,"off":3,"type":"List(Comment)"},
+    meta: {"kind":-1,"off":4,"type":"PostMeta"},
+  };
+
+  draft(fn) {
+    _ensureCapnwasmReader(this);
+    return _runDraft(this._cpp, PostReader._FIELDS, fn);
+  }
+
+  toObject() {
+    _ensureCapnwasmReader(this);
+    return _capnwasmPick(this._cpp, PostReader._FIELDS, Object.keys(PostReader._FIELDS));
+  }
+}
+
+export class PostMetaParentReader {
+  constructor(cpp, dataPtr, opts = undefined) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._dataPtr = dataPtr | 0;
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+  }
+
+  get parentId() {
+    _ensureCapnwasmReader(this);
+    return this._dataPtr ? this._dv.getBigUint64(this._dataPtr + 0, true) : this._exp.cpp_any_int64_at(0, 0n);
+  }
+  get label() {
+    _ensureCapnwasmReader(this);
+    const len = this._exp.cpp_any_text_at(0);
+    if (len === 0) return "";
+    const u8 = this._cpp._u8;
+    const out = this._cpp._outPtr;
+    return decodeAscii(u8.subarray(out, out + len));
+  }
+
+  static _FIELDS = {
+    parentId: {"kind":4,"off":0,"type":"uint64"},
+    label: {"kind":0,"off":0,"type":"text"},
+  };
+
+  draft(fn) {
+    _ensureCapnwasmReader(this);
+    return _runDraft(this._cpp, PostMetaParentReader._FIELDS, fn);
+  }
+
+  toObject() {
+    _ensureCapnwasmReader(this);
+    return _capnwasmPick(this._cpp, PostMetaParentReader._FIELDS, Object.keys(PostMetaParentReader._FIELDS));
+  }
+}
+
+_STRUCT_FIELDS["Tag"] = TagReader._FIELDS;
+_STRUCT_FIELDS["Comment"] = CommentReader._FIELDS;
+_STRUCT_FIELDS["PostMeta"] = PostMetaReader._FIELDS;
+_STRUCT_FIELDS["Post"] = PostReader._FIELDS;
+_STRUCT_FIELDS["PostMetaParent"] = PostMetaParentReader._FIELDS;
+
+export class TagBuilder {
   static _DATA_WORDS = 1;
   static _PTR_WORDS = 1;
   constructor(cpp, opts) {
@@ -870,7 +957,7 @@ export class GreetingBuilder {
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
-  set message(value) {
+  set name(value) {
     const inPtr = this._exp.cpp_in_ptr();
     const inCap = this._exp.cpp_in_capacity();
     const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
@@ -879,7 +966,261 @@ export class GreetingBuilder {
     this._u8 = this._cpp._u8;
     if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
-  set timestamp(value) {
+  set weight(value) {
+    const u8 = this._u8;
+    const o = this._dataPtr + 0;
+    u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
+    u8[o+2] = (value >>> 16) & 0xff; u8[o+3] = (value >>> 24) & 0xff;
+  }
+
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.name !== undefined) this.name = o.name;
+    if (o.weight !== undefined) this.weight = o.weight;
+    return this;
+  }
+
+  /**
+   * Build a Tag from a plain JS object in one call.
+   * Shorthand for `new TagBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new TagBuilder(cpp).fromObject(o);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const out = this._cpp._outPtr;
+    return this._cpp._u8.slice(out, out + len);
+  }
+}
+
+export class CommentBuilder {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 3;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    if (!opts || !opts.preinitialized) {
+      if (this._exp.cpp_any_builder_init(0, 3) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+  }
+
+  set author(value) {
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._exp.cpp_any_builder_set_text(0, written);
+    this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+  set body(value) {
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._exp.cpp_any_builder_set_text(1, written);
+    this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.author !== undefined) this.author = o.author;
+    if (o.body !== undefined) this.body = o.body;
+    // replies: List(Comment). No Builder setter yet (list / struct ref); skipped by fromObject
+    return this;
+  }
+
+  /**
+   * Build a Comment from a plain JS object in one call.
+   * Shorthand for `new CommentBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new CommentBuilder(cpp).fromObject(o);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const out = this._cpp._outPtr;
+    return this._cpp._u8.slice(out, out + len);
+  }
+}
+
+export class PostMetaBuilder {
+  static _DATA_WORDS = 1;
+  static _PTR_WORDS = 2;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    if (!opts || !opts.preinitialized) {
+      if (this._exp.cpp_any_builder_init(1, 2) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+  }
+
+  set views(value) {
+    const u8 = this._u8;
+    const o = this._dataPtr + 0;
+    u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
+    u8[o+2] = (value >>> 16) & 0xff; u8[o+3] = (value >>> 24) & 0xff;
+  }
+  set category(value) {
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._exp.cpp_any_builder_set_text(0, written);
+    this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.views !== undefined) this.views = o.views;
+    if (o.category !== undefined) this.category = o.category;
+    // parent: PostMetaParent. No Builder setter yet (list / struct ref); skipped by fromObject
+    return this;
+  }
+
+  /**
+   * Build a PostMeta from a plain JS object in one call.
+   * Shorthand for `new PostMetaBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new PostMetaBuilder(cpp).fromObject(o);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const out = this._cpp._outPtr;
+    return this._cpp._u8.slice(out, out + len);
+  }
+}
+
+export class PostBuilder {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 5;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    if (!opts || !opts.preinitialized) {
+      if (this._exp.cpp_any_builder_init(0, 5) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+  }
+
+  set title(value) {
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._exp.cpp_any_builder_set_text(0, written);
+    this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+  set author(value) {
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._exp.cpp_any_builder_set_text(1, written);
+    this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.title !== undefined) this.title = o.title;
+    if (o.author !== undefined) this.author = o.author;
+    // tags: List(Tag). No Builder setter yet (list / struct ref); skipped by fromObject
+    // comments: List(Comment). No Builder setter yet (list / struct ref); skipped by fromObject
+    // meta: PostMeta. No Builder setter yet (list / struct ref); skipped by fromObject
+    return this;
+  }
+
+  /**
+   * Build a Post from a plain JS object in one call.
+   * Shorthand for `new PostBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new PostBuilder(cpp).fromObject(o);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const out = this._cpp._outPtr;
+    return this._cpp._u8.slice(out, out + len);
+  }
+}
+
+export class PostMetaParentBuilder {
+  static _DATA_WORDS = 1;
+  static _PTR_WORDS = 1;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    if (!opts || !opts.preinitialized) {
+      if (this._exp.cpp_any_builder_init(1, 1) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+  }
+
+  set parentId(value) {
     const dv = this._dv;
     if (typeof value === "bigint") {
       dv.setBigInt64(this._dataPtr + 0, value, true);
@@ -892,6 +1233,15 @@ export class GreetingBuilder {
       dv.setUint32(this._dataPtr + 4, hi, true);
     }
   }
+  set label(value) {
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._exp.cpp_any_builder_set_text(0, written);
+    this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
 
   /**
    * Apply fields from a plain JS object to this builder. Same shape
@@ -901,17 +1251,17 @@ export class GreetingBuilder {
    */
   fromObject(o) {
     if (o == null) return this;
-    if (o.message !== undefined) this.message = o.message;
-    if (o.timestamp !== undefined) this.timestamp = o.timestamp;
+    if (o.parentId !== undefined) this.parentId = o.parentId;
+    if (o.label !== undefined) this.label = o.label;
     return this;
   }
 
   /**
-   * Build a Greeting from a plain JS object in one call.
-   * Shorthand for `new GreetingBuilder(cpp).fromObject(o)`.
+   * Build a PostMetaParent from a plain JS object in one call.
+   * Shorthand for `new PostMetaParentBuilder(cpp).fromObject(o)`.
    */
   static from(cpp, o) {
-    return new GreetingBuilder(cpp).fromObject(o);
+    return new PostMetaParentBuilder(cpp).fromObject(o);
   }
 
   /** Serialize the message to framed Cap'n Proto bytes. */
@@ -924,40 +1274,97 @@ export class GreetingBuilder {
 }
 
 /**
- * Open framed Cap'n Proto bytes for typed access. Returns a UserReader.
+ * Open framed Cap'n Proto bytes for typed access. Returns a TagReader.
  */
-export function openUser(cpp, bytes) {
+export function openTag(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, false);
-  return new UserReader(cpp, opened.dataPtr, opened);
+  return new TagReader(cpp, opened.dataPtr, opened);
 }
 
 /** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
-export function openUserUnsafe(cpp, bytes) {
+export function openTagUnsafe(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, true);
-  return new UserReader(cpp, opened.dataPtr, opened);
+  return new TagReader(cpp, opened.dataPtr, opened);
 }
 
-/** Begin building a new User message. Returns a UserBuilder. */
-export function buildUser(cpp) {
-  return new UserBuilder(cpp);
+/** Begin building a new Tag message. Returns a TagBuilder. */
+export function buildTag(cpp) {
+  return new TagBuilder(cpp);
 }
 
 /**
- * Open framed Cap'n Proto bytes for typed access. Returns a GreetingReader.
+ * Open framed Cap'n Proto bytes for typed access. Returns a CommentReader.
  */
-export function openGreeting(cpp, bytes) {
+export function openComment(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, false);
-  return new GreetingReader(cpp, opened.dataPtr, opened);
+  return new CommentReader(cpp, opened.dataPtr, opened);
 }
 
 /** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
-export function openGreetingUnsafe(cpp, bytes) {
+export function openCommentUnsafe(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, true);
-  return new GreetingReader(cpp, opened.dataPtr, opened);
+  return new CommentReader(cpp, opened.dataPtr, opened);
 }
 
-/** Begin building a new Greeting message. Returns a GreetingBuilder. */
-export function buildGreeting(cpp) {
-  return new GreetingBuilder(cpp);
+/** Begin building a new Comment message. Returns a CommentBuilder. */
+export function buildComment(cpp) {
+  return new CommentBuilder(cpp);
+}
+
+/**
+ * Open framed Cap'n Proto bytes for typed access. Returns a PostMetaReader.
+ */
+export function openPostMeta(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new PostMetaReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openPostMetaUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new PostMetaReader(cpp, opened.dataPtr, opened);
+}
+
+/** Begin building a new PostMeta message. Returns a PostMetaBuilder. */
+export function buildPostMeta(cpp) {
+  return new PostMetaBuilder(cpp);
+}
+
+/**
+ * Open framed Cap'n Proto bytes for typed access. Returns a PostReader.
+ */
+export function openPost(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new PostReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openPostUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new PostReader(cpp, opened.dataPtr, opened);
+}
+
+/** Begin building a new Post message. Returns a PostBuilder. */
+export function buildPost(cpp) {
+  return new PostBuilder(cpp);
+}
+
+/**
+ * Open framed Cap'n Proto bytes for typed access. Returns a PostMetaParentReader.
+ */
+export function openPostMetaParent(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new PostMetaParentReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openPostMetaParentUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new PostMetaParentReader(cpp, opened.dataPtr, opened);
+}
+
+/** Begin building a new PostMetaParent message. Returns a PostMetaParentBuilder. */
+export function buildPostMetaParent(cpp) {
+  return new PostMetaParentBuilder(cpp);
 }
 

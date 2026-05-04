@@ -27,6 +27,22 @@ export class MultiSegmentMessageError extends Error {
   }
 }
 
+// M3: Native multi-reader slot pool exhaustion error.
+//
+// The wasm holds READER_SLOT_COUNT-1 (default 31) safe-reader slots.
+// Slot 0 is reserved for the legacy/unsafe path. _acquireSlot returns
+// null when the pool is full, and callers fall back to the
+// managed-message path so applications keep running. This error class
+// is still exported for users who want to wrap _acquireSlot directly
+// and surface a strict-mode failure (e.g. tight loops that should
+// always succeed). It is not thrown from the default open paths.
+export class ReaderSlotExhaustedError extends Error {
+  constructor(message = "capnwasm reader slot pool exhausted; dispose unused readers or use openFooUnsafe for hot loops") {
+    super(message);
+    this.name = "ReaderSlotExhaustedError";
+  }
+}
+
 /**
  * Validate that `bytes` is a single-segment framed Cap'n Proto message.
  * Returns nothing on success; throws MultiSegmentMessageError otherwise.
@@ -113,7 +129,15 @@ export class CapnCpp {
   #auxPtr = 0;
   #auxCap = 0;
   #generation = 0;
+  #activeSlot = 0;
   #messageFinalizer = null;
+  // M3: Per-CapnCpp reader-slot finalizer. Releases a slot back to the
+  // wasm pool when the JS reader holding it becomes unreachable. The
+  // held value is the slot handle ({ slotIdx, ptr }); the cleanup
+  // callback runs cpp_any_release_slot(slotIdx) + cpp_msg_free(ptr).
+  // This is a backstop -- M4 (explicit lifetime) will add reader.dispose()
+  // and TC39 `using` so production code does not depend on GC timing.
+  #slotFinalizer = null;
   // A cached DataView over memory.buffer. Hot reader paths re-use this
   // instead of `new DataView(...)` per call. Refreshed on memory growth
   // via #refreshDv().
@@ -188,6 +212,20 @@ export class CapnCpp {
     cpp.#messageFinalizer = new FinalizationRegistry((ptr) => {
       try { cpp.#exports.cpp_msg_free?.(ptr); } catch (_) {}
     });
+    cpp.#slotFinalizer = new FinalizationRegistry((handle) => {
+      // GC-time release. handle was registered with itself as the held
+      // value so this callback receives the same { slotIdx, ptr } pair
+      // we set up in _acquireSlot. _releaseSlot is idempotent so an
+      // explicit dispose() before GC is safe.
+      try {
+        if (handle && handle.slotIdx) {
+          cpp.#exports.cpp_any_release_slot?.(handle.slotIdx);
+        }
+        if (handle && handle.ptr) {
+          cpp.#exports.cpp_msg_free?.(handle.ptr);
+        }
+      } catch (_) {}
+    });
     return cpp;
   }
 
@@ -215,6 +253,19 @@ export class CapnCpp {
   _supportsManagedMessages() {
     const e = this.#exports;
     return !!(e.cpp_msg_alloc && e.cpp_msg_free && e.cpp_any_open_at);
+  }
+
+  // M3: Native multi-reader slot pool. Returns true when the wasm
+  // exports the slot-pool entry points so codegen + dynamic readers
+  // can acquire dedicated cursors instead of multiplexing onto a
+  // single rebind-on-demand cursor. Older runtimes return false; the
+  // generated code falls back to the pre-M3 _allocMessage path.
+  _supportsReaderSlotPool() {
+    const e = this.#exports;
+    return !!(
+      e.cpp_any_acquire_slot && e.cpp_any_release_slot &&
+      e.cpp_any_use_slot && e.cpp_any_slot_data_ptr
+    );
   }
 
   _allocMessage(bytes) {
@@ -247,6 +298,88 @@ export class CapnCpp {
     this._bumpGeneration();
     return dataPtr;
   }
+
+  // M3: Acquire a free reader slot, copy `bytes` in (validated as
+  // single-segment), and return { slotIdx, dataPtr, handle }. The slot
+  // is dedicated to this reader for its lifetime. JS readers register
+  // themselves with the slot finalizer so the slot is released when
+  // the reader becomes unreachable.
+  //
+  // Returns `null` on pool exhaustion so callers can fall back to the
+  // managed-message + rebind path (still safe, just slower). Pool
+  // exhaustion is an unusual condition in production code -- 32
+  // simultaneously live readers is a lot -- but keeping the call
+  // total/non-throwing means a runaway test or a leak doesn't blow up
+  // the whole CapnCpp instance.
+  _acquireSlot(bytes) {
+    if (!this._supportsReaderSlotPool()) {
+      throw new Error("cpp_any_acquire_slot not exported; rebuild capnwasm wasm runtime");
+    }
+    validateSingleSegment(bytes);
+    // We allocate the message bytes via cpp_msg_alloc so they live
+    // outside the scratch region for the slot's lifetime, then hand
+    // the (ptr, len) pair to acquire_slot which copies them into the
+    // FlatArrayMessageReader. The acquire path keeps ownership of the
+    // bytes until release.
+    const ptr = this.#exports.cpp_msg_alloc(bytes.length) >>> 0;
+    if (!ptr) throw new Error("cpp_msg_alloc failed");
+    this.#u8().set(bytes, ptr);
+    const slotIdx = this.#exports.cpp_any_acquire_slot(ptr, bytes.length) >>> 0;
+    if (slotIdx === 0xFFFFFFFF) {
+      this.#exports.cpp_msg_free?.(ptr);
+      return null;
+    }
+    // The slot now owns the message bytes. Switch the wasm's active
+    // slot to this one so the caller's first reads don't need an
+    // explicit cpp_any_use_slot. data_ptr reads from the slot's
+    // persistent store; safe to call without use_slot first.
+    const dataPtr = this.#exports.cpp_any_slot_data_ptr(slotIdx) >>> 0;
+    // Go through _useSlot so the JS-tracked #activeSlot stays in sync
+    // with the wasm's active_slot_idx.
+    this._useSlot(slotIdx);
+    this._bumpGeneration();
+    // FinalizationRegistry forbids target === holdings. Use a separate
+    // holdings object that captures slotIdx + ptr so the cleanup
+    // callback can release both. The handle stays the registered
+    // target so explicit dispose() can unregister.
+    const handle = { slotIdx, ptr };
+    const holdings = { slotIdx, ptr };
+    this.#slotFinalizer?.register(handle, holdings, handle);
+    return { slotIdx, dataPtr, handle };
+  }
+
+  // M3: Release a slot back to the wasm pool. Idempotent. After
+  // release, the slot's reader storage is destroyed and any cached
+  // dataPtr from this reader becomes invalid. Called by the
+  // FinalizationRegistry when the JS reader is GC'd, or explicitly via
+  // reader.dispose() (M4).
+  _releaseSlot(handle) {
+    if (!handle || handle.slotIdx === 0) return;
+    this.#slotFinalizer?.unregister(handle);
+    if (this._supportsReaderSlotPool()) {
+      this.#exports.cpp_any_release_slot(handle.slotIdx);
+    }
+    if (handle.ptr) {
+      this.#exports.cpp_msg_free?.(handle.ptr);
+      handle.ptr = 0;
+    }
+    handle.slotIdx = 0;
+  }
+
+  // M3: Switch the wasm's active reader slot. JS readers call this once
+  // before a series of getter calls; subsequent reads on the same
+  // reader skip the call. We track the active slot in JS too so
+  // _ensureCapnwasmReader can short-circuit when the requested slot is
+  // already active, without paying a wasm boundary call to flip it.
+  _useSlot(slotIdx) {
+    if (this.#activeSlot === slotIdx) return;
+    if (this._supportsReaderSlotPool()) {
+      this.#exports.cpp_any_use_slot(slotIdx);
+    }
+    this.#activeSlot = slotIdx;
+  }
+
+  get _activeSlot() { return this.#activeSlot; }
 
   get _exports() { return this.#exports; }
   get _inPtr()   { return this.#inPtr; }

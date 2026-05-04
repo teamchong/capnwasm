@@ -1205,30 +1205,86 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`  if (typeof cpp._validateSingleSegment === "function") {`);
   lines.push(`    cpp._validateSingleSegment(bytes);`);
   lines.push(`  }`);
+  // M3: Native multi-reader slot pool. Each safe reader acquires its
+  // own wasm cursor slot and carries the slot index. Subsequent reads
+  // call cpp_any_use_slot(slotIdx) instead of re-binding a shared
+  // cursor. Returns { dataPtr, slotIdx, slotHandle, msg, gen } so older
+  // call sites that only used { dataPtr, msg, gen } keep working; new
+  // readers prefer slotIdx > 0 when set.
+  // _acquireSlot returns null on pool exhaustion; fall through to the
+  // managed-message path which still works (just rebinds on stale).
+  lines.push(`  if (!unsafe && typeof cpp._acquireSlot === "function" && cpp._supportsReaderSlotPool && cpp._supportsReaderSlotPool()) {`);
+  lines.push(`    const acquired = cpp._acquireSlot(bytes);`);
+  lines.push(`    if (acquired) {`);
+  lines.push(`      return { dataPtr: acquired.dataPtr, slotIdx: acquired.slotIdx, slotHandle: acquired.handle, msg: null, gen: cpp._generation };`);
+  lines.push(`    }`);
+  lines.push(`  }`);
+  // M1 fallback path: managed-message via _allocMessage. Used when the
+  // wasm runtime predates the slot pool exports. Keeps legacy semantics
+  // (rebind on stale-gen) so 0.0.5 -> 0.0.6 upgrades stay seamless.
   lines.push(`  if (!unsafe && typeof cpp._allocMessage === "function") {`);
   lines.push(`    const msg = cpp._allocMessage(bytes);`);
   lines.push(`    const dataPtr = cpp._openAnyMessage(msg);`);
-  lines.push(`    return { dataPtr, msg, gen: cpp._generation };`);
+  lines.push(`    return { dataPtr, slotIdx: 0, slotHandle: null, msg, gen: cpp._generation };`);
   lines.push(`  }`);
   lines.push(`  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");`);
   lines.push(`  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());`);
   lines.push(`  const dataPtr = cpp._exports.cpp_any_open(bytes.length);`);
   lines.push(`  if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();`);
-  lines.push(`  return { dataPtr, msg: null, gen: cpp._generation ?? 0 };`);
+  lines.push(`  return { dataPtr, slotIdx: 0, slotHandle: null, msg: null, gen: cpp._generation ?? 0 };`);
   lines.push(`}`);
   // Re-position the C++ cursor onto this reader's struct before any
-  // boundary-call read. The C++ side has one any_stack[]; both root readers
-  // and element readers share it, so any other reader's getter (or another
-  // open) can move it. Re-positioning is idempotent and cheap, so we always
-  // do it for managed-message readers. Unsafe readers (no _msg) only get
-  // a stale-check.
+  // boundary-call read.
+  //
+  // M3: For slot-pool readers (reader._slotIdx > 0), repositioning is
+  // a single cpp_any_use_slot(slotIdx) call. The slot retains the
+  // reader's own cursor across other readers' activity. We still
+  // gate on a generation token so the use_slot call is skipped when
+  // the slot is already active (the common case in tight loops on a
+  // single reader).
+  //
+  // Pre-M3 fallback: managed-message readers re-bind via
+  // _openAnyMessage; element readers (from list.at(i)) use _rebind
+  // closures. Both paths bump generation as a side effect so peer
+  // readers know to re-bind too.
   lines.push(`function _ensureCapnwasmReader(reader) {`);
+  // M3 fast path: slot pool. Three things to keep coherent:
+  //   1) Active slot. JS tracks cpp._activeSlot in lockstep with
+  //      cpp_any_use_slot, so the single-reader hot loop short-circuits
+  //      with one property compare and one wasm call.
+  //   2) Generation token. Bumped on any cursor-moving operation
+  //      (acquire, list enter, struct enter). When _gen != generation,
+  //      the cursor may have moved away from this reader's struct.
+  //   3) Element readers (with _rebind) re-run their rebind closure to
+  //      reposition. Root readers (no _rebind) reset the slot's stack
+  //      back to depth 0 so pointer-section getters (cpp_any_text_at)
+  //      read from the root struct again.
+  lines.push(`  if (reader._slotIdx) {`);
+  lines.push(`    const cpp = reader._cpp;`);
+  lines.push(`    if (cpp._activeSlot !== reader._slotIdx) {`);
+  lines.push(`      cpp._useSlot(reader._slotIdx);`);
+  lines.push(`    }`);
+  lines.push(`    const gen = cpp._generation ?? 0;`);
+  lines.push(`    if (reader._gen !== gen) {`);
+  // Both branches move the C++ cursor, which invalidates peer readers
+  // on the same slot (any element reader of the same parent). Bump
+  // generation so the next peer access re-runs its own rebind /
+  // reset_root before reading.
+  lines.push(`      if (reader._rebind) {`);
+  lines.push(`        reader._rebind();`);
+  lines.push(`      } else {`);
+  lines.push(`        cpp._exports.cpp_any_slot_reset_root?.();`);
+  lines.push(`        cpp._bumpGeneration();`);
+  lines.push(`      }`);
+  lines.push(`      reader._gen = cpp._generation ?? 0;`);
+  lines.push(`      reader._u8 = cpp._u8;`);
+  lines.push(`      reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+  lines.push(`    }`);
+  lines.push(`    return;`);
+  lines.push(`  }`);
   lines.push(`  const gen = reader._cpp._generation ?? 0;`);
   lines.push(`  if (reader._gen === gen) return;`);
   lines.push(`  if (reader._rebind) {`);
-  // The rebind closure positions cursor at this reader's struct. It bumps
-  // generation as a side effect (via _ensureCapnwasmReader on the parent
-  // calling _openAnyMessage), so peer readers know to re-bind too.
   lines.push(`    reader._rebind();`);
   lines.push(`    reader._gen = reader._cpp._generation ?? 0;`);
   lines.push(`    reader._u8 = reader._cpp._u8;`);
@@ -1552,6 +1608,14 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push(`    this._msg = opts && opts.msg ? opts.msg : null;`);
     lines.push(`    this._rebind = opts && opts.rebind ? opts.rebind : null;`);
     lines.push(`    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);`);
+    // M3: Slot pool. _slotIdx > 0 means this reader owns a wasm slot
+    // and _ensureCapnwasmReader uses cpp._useSlot() to switch to it.
+    // _slotHandle is the registration object the slot finalizer holds;
+    // dispose() releases it explicitly (M4) instead of waiting for GC.
+    // Element readers (from list.at(i)) inherit the parent's slot but
+    // pass _rebind to position the cursor inside it.
+    lines.push(`    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;`);
+    lines.push(`    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;`);
     // dataPtr is supplied by openX(cpp, bytes) and by the RPC layer's
     // open_call_params / open_return_results paths. When present,
     // primitive getters can read straight from wasm memory at
@@ -2245,7 +2309,11 @@ function generateListGetter(ptrIndex, innerType) {
   // cursor at parent root), then descend into the list element. After we
   // move the cursor away from the parent root, bump generation so peer
   // readers know their own cursor position is no longer authoritative.
-  lines.push(`    const r = new ${innerType}Reader(cpp, 0, { msg: reader._msg, gen: cpp._generation ?? 0, rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(${ptrIndex}); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); } });`);
+  // Element reader inherits the parent's slot (slot pool) or message
+  // (legacy) so _ensureCapnwasmReader picks the right path. The rebind
+  // closure runs after _useSlot/use_slot so the parent slot is active
+  // before we open the list and enter the element.
+  lines.push(`    const r = new ${innerType}Reader(cpp, 0, { msg: reader._msg, slotIdx: reader._slotIdx, gen: cpp._generation ?? 0, rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(${ptrIndex}); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); } });`);
   lines.push(`    return r;`);
   lines.push(`  },`);
   lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);

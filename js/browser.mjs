@@ -22,10 +22,16 @@
 import {
   CapnCpp,
   MultiSegmentMessageError,
+  ReaderSlotExhaustedError,
   validateSingleSegment,
 } from "./cpp_loader.mjs";
 
-export { CapnCpp, MultiSegmentMessageError, validateSingleSegment };
+export {
+  CapnCpp,
+  MultiSegmentMessageError,
+  ReaderSlotExhaustedError,
+  validateSingleSegment,
+};
 
 // Default URL. Used when load() is called with no argument. Keep this lazy:
 // Workers/workerd can import this module only to access `CapnCpp.load(module)`,
