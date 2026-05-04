@@ -2,7 +2,7 @@
   "name": "capnwasm",
   "version": "0.0.2",
   "packageManager": "pnpm@10.33.2",
-  "description": "Real Cap'n Proto C++ compiled to wasm + npx CLI for typed JS bindings",
+  "description": "Real Cap'n Proto C++ compiled to wasm plus npx CLI for typed JS bindings",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -84,6 +84,15 @@ jobs:
       - name: Run tests before publishing
         run: pnpm test
 
+      - name: Set up Node for npm Trusted Publisher
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Show npm version
+        run: npm --version
+
       - name: Publish to npm
         run: npm publish --provenance --access public
 
