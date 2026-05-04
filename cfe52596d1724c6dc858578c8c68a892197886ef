@@ -1,0 +1,23 @@
+package.json
+  a40863a2008f4bc3 11-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "cfe52596d1724c6dc858578c8c68a892197886ef",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "stevenchongcloudflare.com",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
