@@ -78,6 +78,18 @@ async function __debrotli(bytes) {
   try {
     ds = new DecompressionStream("brotli");
   } catch (err) {
+    if (typeof process !== "undefined" && process.versions?.node) {
+      try {
+        const zlib = await import("node:zlib");
+        const decompressed = zlib.brotliDecompressSync(Buffer.from(bytes));
+        return new Uint8Array(decompressed.buffer, decompressed.byteOffset, decompressed.byteLength);
+      } catch (nodeErr) {
+        throw new Error(
+          "capnwasm: DecompressionStream(\\"brotli\\") and Node zlib brotli fallback both failed. " +
+          "Original DecompressionStream error: " + err.message + "; Node fallback error: " + nodeErr.message
+        );
+      }
+    }
     throw new Error(
       "capnwasm: DecompressionStream(\\"brotli\\") not available in this runtime. " +
       "The default \`import \\"capnwasm\\"\` entry needs Chrome 124+ / Firefox 126+ / " +
