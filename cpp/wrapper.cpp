@@ -48,6 +48,43 @@ uint32_t cpp_scratch_aux_capacity() { return SCRATCH_AUX_CAP; }
 
 uint32_t cpp_abi_version() { return 1; }
 
+// M2: Per-instance bump arena for slot message bytes.
+//
+// Pre-M2, every cpp_msg_alloc went through std::malloc and every
+// cpp_msg_free went through std::free. For request-shaped workloads
+// that decode dozens of small messages per request and dispose them
+// all at the request boundary, malloc/free dominated CPU + caused
+// fragmentation. M2 introduces a 4 MB linear bump arena: alloc bumps
+// a cursor; free is a no-op; reset rewinds the cursor when JS knows
+// no live readers point into the arena.
+//
+// Allocations larger than the arena (or that don't fit in the
+// remaining tail) fall through to std::malloc. JS records which path
+// was taken on the slot handle so release knows whether to free.
+constexpr size_t MSG_ARENA_CAP = 4 * 1024 * 1024;
+alignas(8) static uint8_t cpp_msg_arena[MSG_ARENA_CAP];
+static size_t cpp_msg_arena_used_bytes = 0;
+
+uint32_t cpp_msg_arena_capacity() { return static_cast<uint32_t>(MSG_ARENA_CAP); }
+uint32_t cpp_msg_arena_used() { return static_cast<uint32_t>(cpp_msg_arena_used_bytes); }
+
+// Reset the arena cursor. JS calls this when its tracked count of
+// arena-backed slot allocations returns to 0 -- the safe point at
+// which no live reader can be pointing into the arena.
+void cpp_msg_arena_reset() { cpp_msg_arena_used_bytes = 0; }
+
+// Bump-allocate `bytes_len` from the arena, 8-byte aligned. Returns 0
+// when the request doesn't fit; callers (JS _acquireSlot) fall back
+// to cpp_msg_alloc for malloc-backed storage in that case.
+uint8_t* cpp_msg_arena_alloc(uint32_t bytes_len) {
+  size_t n = (static_cast<size_t>(bytes_len) + 7u) & ~static_cast<size_t>(7u);
+  if (n == 0) n = 8;
+  if (cpp_msg_arena_used_bytes + n > MSG_ARENA_CAP) return nullptr;
+  uint8_t* out = cpp_msg_arena + cpp_msg_arena_used_bytes;
+  cpp_msg_arena_used_bytes += n;
+  return out;
+}
+
 uint8_t* cpp_msg_alloc(uint32_t bytes_len) {
   // Cap'n Proto messages are word-addressed. Align allocations so C++ can
   // safely reinterpret the region as capnp::word[] and JS can still address

@@ -188,6 +188,14 @@ FLAGS=(
   -Wl,--export=cpp_msg_alloc
   -Wl,--export=cpp_msg_free
   -Wl,--export=cpp_msg_validate_single_segment
+  # M2: bump arena for slot message bytes. JS _acquireSlot tries the
+  # arena first; on exhaustion or oversized requests, falls back to
+  # cpp_msg_alloc. cpp_msg_arena_reset rewinds the cursor when JS
+  # knows no live readers point into the arena.
+  -Wl,--export=cpp_msg_arena_alloc
+  -Wl,--export=cpp_msg_arena_reset
+  -Wl,--export=cpp_msg_arena_capacity
+  -Wl,--export=cpp_msg_arena_used
   # Auxiliary scratch buffer used by cpp_any_batch_read for the field
   # descriptor list. Production codegen reads cpp._auxPtr/_auxCap from
   # cpp_loader.mjs which caches these once at load time.

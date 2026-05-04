@@ -130,6 +130,11 @@ export class CapnCpp {
   #auxCap = 0;
   #generation = 0;
   #activeSlot = 0;
+  // M2: count of currently in-flight arena-backed slot allocations.
+  // Incremented on _acquireSlot when arena alloc succeeds, decremented
+  // on _releaseSlot. When it returns to zero, no live reader points
+  // into the arena and the bump cursor can be reset.
+  #arenaInFlight = 0;
   #messageFinalizer = null;
   // M3: Per-CapnCpp reader-slot finalizer. Releases a slot back to the
   // wasm pool when the JS reader holding it becomes unreachable. The
@@ -212,17 +217,29 @@ export class CapnCpp {
     cpp.#messageFinalizer = new FinalizationRegistry((ptr) => {
       try { cpp.#exports.cpp_msg_free?.(ptr); } catch (_) {}
     });
-    cpp.#slotFinalizer = new FinalizationRegistry((handle) => {
-      // GC-time release. handle was registered with itself as the held
-      // value so this callback receives the same { slotIdx, ptr } pair
-      // we set up in _acquireSlot. _releaseSlot is idempotent so an
-      // explicit dispose() before GC is safe.
+    cpp.#slotFinalizer = new FinalizationRegistry((holdings) => {
+      // GC-time release. The holdings object captures slotIdx + ptr +
+      // isArena (set in _acquireSlot). _releaseSlot is idempotent
+      // so an explicit dispose() before GC is safe; this path runs
+      // only when the JS reader was unreachable without dispose().
       try {
-        if (handle && handle.slotIdx) {
-          cpp.#exports.cpp_any_release_slot?.(handle.slotIdx);
+        if (holdings && holdings.slotIdx) {
+          cpp.#exports.cpp_any_release_slot?.(holdings.slotIdx);
         }
-        if (handle && handle.ptr) {
-          cpp.#exports.cpp_msg_free?.(handle.ptr);
+        if (holdings && holdings.ptr) {
+          // M2: arena allocations don't free; the arena waits for
+          // _arenaInFlight to drain. The arena counter still ticks
+          // down here so a leaked-then-GC'd arena slot doesn't keep
+          // the arena pinned forever.
+          if (holdings.isArena) {
+            cpp.#arenaInFlight--;
+            if (cpp.#arenaInFlight <= 0) {
+              cpp.#arenaInFlight = 0;
+              cpp.#exports.cpp_msg_arena_reset?.();
+            }
+          } else {
+            cpp.#exports.cpp_msg_free?.(holdings.ptr);
+          }
         }
       } catch (_) {}
     });
@@ -316,17 +333,30 @@ export class CapnCpp {
       throw new Error("cpp_any_acquire_slot not exported; rebuild capnwasm wasm runtime");
     }
     validateSingleSegment(bytes);
-    // We allocate the message bytes via cpp_msg_alloc so they live
-    // outside the scratch region for the slot's lifetime, then hand
-    // the (ptr, len) pair to acquire_slot which copies them into the
-    // FlatArrayMessageReader. The acquire path keeps ownership of the
-    // bytes until release.
-    const ptr = this.#exports.cpp_msg_alloc(bytes.length) >>> 0;
-    if (!ptr) throw new Error("cpp_msg_alloc failed");
+    // M2: Allocate slot message bytes from the bump arena when the
+    // wasm runtime exposes it; otherwise (older wasm or block too big)
+    // fall back to malloc. Arena allocations are O(1) (just a cursor
+    // bump) and free is a no-op; the arena is reset when the JS-tracked
+    // count of in-flight arena slots returns to 0. malloc-backed
+    // allocations work as before via _releaseSlot's cpp_msg_free path.
+    let ptr = 0;
+    let isArena = false;
+    if (this.#exports.cpp_msg_arena_alloc) {
+      ptr = this.#exports.cpp_msg_arena_alloc(bytes.length) >>> 0;
+      if (ptr) isArena = true;
+    }
+    if (!ptr) {
+      ptr = this.#exports.cpp_msg_alloc(bytes.length) >>> 0;
+      if (!ptr) throw new Error("cpp_msg_alloc failed");
+    }
     this.#u8().set(bytes, ptr);
     const slotIdx = this.#exports.cpp_any_acquire_slot(ptr, bytes.length) >>> 0;
     if (slotIdx === 0xFFFFFFFF) {
-      this.#exports.cpp_msg_free?.(ptr);
+      // Acquire failed; reclaim the bytes we just allocated. Arena
+      // allocations cannot be reclaimed individually (bump-only), so
+      // they leak into the arena until the next reset. malloc
+      // allocations free immediately.
+      if (!isArena) this.#exports.cpp_msg_free?.(ptr);
       return null;
     }
     // The slot now owns the message bytes. Switch the wasm's active
@@ -338,12 +368,16 @@ export class CapnCpp {
     // with the wasm's active_slot_idx.
     this._useSlot(slotIdx);
     this._bumpGeneration();
+    // M2: track in-flight arena slots so we know when it's safe to
+    // reset the arena cursor.
+    if (isArena) this.#arenaInFlight++;
     // FinalizationRegistry forbids target === holdings. Use a separate
     // holdings object that captures slotIdx + ptr so the cleanup
     // callback can release both. The handle stays the registered
-    // target so explicit dispose() can unregister.
-    const handle = { slotIdx, ptr };
-    const holdings = { slotIdx, ptr };
+    // target so explicit dispose() can unregister. The handle records
+    // isArena so _releaseSlot knows whether to free or no-op.
+    const handle = { slotIdx, ptr, isArena };
+    const holdings = { slotIdx, ptr, isArena };
     this.#slotFinalizer?.register(handle, holdings, handle);
     // M5: Bounds for the pure-JS pointer decoder. The framed message
     // header is 8 bytes (M1 single-segment), payload starts at ptr+8.
@@ -374,7 +408,18 @@ export class CapnCpp {
       }
     }
     if (handle.ptr) {
-      this.#exports.cpp_msg_free?.(handle.ptr);
+      // M2: arena allocations don't go through cpp_msg_free; they sit
+      // in the arena until the cursor is reset. Track in-flight count
+      // so we can reset when no live readers remain.
+      if (handle.isArena) {
+        this.#arenaInFlight--;
+        if (this.#arenaInFlight <= 0) {
+          this.#arenaInFlight = 0;
+          this.#exports.cpp_msg_arena_reset?.();
+        }
+      } else {
+        this.#exports.cpp_msg_free?.(handle.ptr);
+      }
       handle.ptr = 0;
     }
     handle.slotIdx = 0;
