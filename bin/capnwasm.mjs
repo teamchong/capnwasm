@@ -810,6 +810,62 @@ function generateJs(structs, schemaName) {
   lines.push(`  return SHARED_TEXT_DECODER.decode(bytes);`);
   lines.push(`}`);
   lines.push("");
+  // M5: Pure-JS Cap'n Proto pointer decoder (Text + Data path).
+  //
+  // Returns string for Text on success, null for null pointer, undefined
+  // when the wire shape requires the C++ fallback (FAR pointer, multi-
+  // segment, OTHER kind, out-of-bounds offset, or anything we don't yet
+  // implement). Pointer encoding reference: cpp/vendor/capnp/layout.c++
+  // (the upstream FlatArrayMessageReader we stay byte-for-byte
+  // compatible with) and js/pointer_decoder.mjs (the standalone
+  // implementation with full comments). Inlined here so the generated
+  // module has zero relative imports.
+  //
+  // Args:
+  //   u8        Uint8Array view of WebAssembly.Memory.
+  //   dv        DataView over the same buffer.
+  //   dataPtr   Byte address of the struct's data section.
+  //   dataWords Number of 8-byte words in the struct's data section
+  //             (struct's static _DATA_WORDS). Pointer section starts
+  //             at dataPtr + dataWords*8.
+  //   ptrIndex  Pointer slot index (0-based).
+  //   msgStart  First byte address of the message payload (after the
+  //             8-byte framed header). msgEnd is one past the last byte.
+  lines.push(`function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {`);
+  lines.push(`  if (!msgEnd) return undefined;`);
+  lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
+  lines.push(`  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;`);
+  lines.push(`  const word0 = dv.getUint32(ptrAddr, true);`);
+  lines.push(`  const word1 = dv.getUint32(ptrAddr + 4, true);`);
+  lines.push(`  if (word0 === 0 && word1 === 0) return null;`);
+  lines.push(`  if ((word0 & 3) !== 1) return undefined;`);
+  lines.push(`  const offset = dv.getInt32(ptrAddr, true) >> 2;`);
+  lines.push(`  if ((word1 & 7) !== 2) return undefined;`);
+  lines.push(`  const count = word1 >>> 3;`);
+  lines.push(`  if (count === 0) return undefined;`);
+  lines.push(`  const target = ptrAddr + 8 + offset * 8;`);
+  lines.push(`  if (target < msgStart || target + count > msgEnd) return undefined;`);
+  lines.push(`  const len = count - 1;`);
+  lines.push(`  if (len === 0) return "";`);
+  lines.push(`  return SHARED_TEXT_DECODER.decode(u8.subarray(target, target + len));`);
+  lines.push(`}`);
+  lines.push("");
+  lines.push(`function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {`);
+  lines.push(`  if (!msgEnd) return undefined;`);
+  lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
+  lines.push(`  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;`);
+  lines.push(`  const word0 = dv.getUint32(ptrAddr, true);`);
+  lines.push(`  const word1 = dv.getUint32(ptrAddr + 4, true);`);
+  lines.push(`  if (word0 === 0 && word1 === 0) return null;`);
+  lines.push(`  if ((word0 & 3) !== 1) return undefined;`);
+  lines.push(`  const offset = dv.getInt32(ptrAddr, true) >> 2;`);
+  lines.push(`  if ((word1 & 7) !== 2) return undefined;`);
+  lines.push(`  const count = word1 >>> 3;`);
+  lines.push(`  const target = ptrAddr + 8 + offset * 8;`);
+  lines.push(`  if (target < msgStart || target + count > msgEnd) return undefined;`);
+  lines.push(`  return u8.slice(target, target + count);`);
+  lines.push(`}`);
+  lines.push("");
   // Pick helper: takes the FIELDS table + caller-requested names, packs a
   // batch request into cpp_lazy_aux, makes ONE wasm call, materializes the
   // result. Cost: 1 boundary crossing + 1 packed memcpy regardless of N.
@@ -1222,10 +1278,12 @@ function _capnwasmPick(cpp, fields, names) {`);
   // readers prefer slotIdx > 0 when set.
   // _acquireSlot returns null on pool exhaustion; fall through to the
   // managed-message path which still works (just rebinds on stale).
+  // M5: forward msgStart/msgEnd so the pure-JS pointer decoder can
+  // bounds-check pointer targets without crossing into wasm.
   lines.push(`  if (!unsafe && typeof cpp._acquireSlot === "function" && cpp._supportsReaderSlotPool && cpp._supportsReaderSlotPool()) {`);
   lines.push(`    const acquired = cpp._acquireSlot(bytes);`);
   lines.push(`    if (acquired) {`);
-  lines.push(`      return { dataPtr: acquired.dataPtr, slotIdx: acquired.slotIdx, slotHandle: acquired.handle, msg: null, gen: cpp._generation };`);
+  lines.push(`      return { dataPtr: acquired.dataPtr, slotIdx: acquired.slotIdx, slotHandle: acquired.handle, msgStart: acquired.msgStart, msgEnd: acquired.msgEnd, msg: null, gen: cpp._generation };`);
   lines.push(`    }`);
   lines.push(`  }`);
   // M1 fallback path: managed-message via _allocMessage. Used when the
@@ -1290,6 +1348,13 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`        cpp._bumpGeneration();`);
   lines.push(`      }`);
   lines.push(`      reader._gen = cpp._generation ?? 0;`);
+  lines.push(`      reader._u8 = cpp._u8;`);
+  lines.push(`      reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+  lines.push(`    } else if (reader._dv && reader._dv.buffer !== cpp.memory.buffer) {`);
+  // M5: wasm memory may have grown via other activity even when our
+  // generation matches (any builder write, any other reader's text
+  // decode). Refresh the cached views so the pure-JS pointer decoder
+  // does not read from a detached buffer.
   lines.push(`      reader._u8 = cpp._u8;`);
   lines.push(`      reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
   lines.push(`    }`);
@@ -1610,6 +1675,12 @@ function _capnwasmPick(cpp, fields, names) {`);
 
   for (const s of structs) {
     lines.push(`export class ${s.name}Reader {`);
+    // M5: Static struct shape. _DATA_WORDS is the number of 8-byte
+    // words in the data section, used by the pure-JS pointer decoder
+    // to compute the pointer-section base. Mirrors the same constant
+    // already on Builders for the RPC zero-copy path.
+    lines.push(`  static _DATA_WORDS = ${s.dataWords};`);
+    lines.push(`  static _PTR_WORDS = ${s.ptrWords};`);
     // Cache cpp._exports so per-field getters do `this._exp.cpp_*()`
     //. One hidden-class lookup instead of walking two property chains.
     // Don't cache a Uint8Array view here: text/data getters fetch a
@@ -1629,6 +1700,13 @@ function _capnwasmPick(cpp, fields, names) {`);
     // pass _rebind to position the cursor inside it.
     lines.push(`    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;`);
     lines.push(`    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;`);
+    // M5: Pure-JS pointer decoder bounds. msgStart/msgEnd come from the
+    // slot acquisition path; nested struct readers and element readers
+    // inherit them from the parent so the same bounds apply across the
+    // whole message. When undefined, the decoder is skipped and reads
+    // fall back to the C++ path.
+    lines.push(`    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;`);
+    lines.push(`    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;`);
     // dataPtr is supplied by openX(cpp, bytes) and by the RPC layer's
     // open_call_params / open_return_results paths. When present,
     // primitive getters can read straight from wasm memory at
@@ -1703,6 +1781,11 @@ function _capnwasmPick(cpp, fields, names) {`);
       }
     }
     for (const f of s.fields) {
+      // M5: pass parent struct's data-word count down to the getter
+      // so the JS pointer decoder knows where the pointer section
+      // starts. Mutating the field object in place is fine; codegen
+      // emits each struct once.
+      f.parentDataWords = s.dataWords;
       const getter = generateGetter(f);
       lines.push(`  get ${f.name}() {`);
       lines.push(`    _ensureCapnwasmReader(this);`);
@@ -2406,10 +2489,21 @@ function generateGetter(field) {
   }
   if (field.kind === "pointer") {
     if (field.type === "Text") {
-      // Re-fetch the view via cpp._u8. Cpp_any_text_at may have grown
-      // wasm memory while copying the text into cpp_out, detaching the
-      // constructor-cached _u8.
+      // M5: Pure-JS pointer decode. Slot-pool readers carry msgStart /
+      // msgEnd from _acquireSlot; we use them to decode the Text
+      // pointer directly from WebAssembly.Memory. Falls back to the
+      // C++ path on undefined (FAR pointer, OTHER kind, out-of-bounds,
+      // or unsafe-path readers without bounds info).
+      //
+      // Re-fetch the view via cpp._u8 in the fallback branch because
+      // cpp_any_text_at may grow wasm memory while copying the text
+      // into cpp_out, detaching the constructor-cached _u8.
       return [
+        `const _msgEnd = this._msgEnd;`,
+        `if (_msgEnd) {`,
+        `  const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, ${field.parentDataWords ?? 0}, ${field.ptrIndex}, this._msgStart, _msgEnd);`,
+        `  if (v !== undefined) return v ?? "";`,
+        `}`,
         `const len = this._exp.cpp_any_text_at(${field.ptrIndex});`,
         `if (len === 0) return "";`,
         `const u8 = this._cpp._u8;`,
@@ -2419,6 +2513,11 @@ function generateGetter(field) {
     }
     if (field.type === "Data") {
       return [
+        `const _msgEnd = this._msgEnd;`,
+        `if (_msgEnd) {`,
+        `  const v = _jsReadDataPtr(this._u8, this._dv, this._dataPtr, ${field.parentDataWords ?? 0}, ${field.ptrIndex}, this._msgStart, _msgEnd);`,
+        `  if (v !== undefined) return v ?? new Uint8Array(0);`,
+        `}`,
         `const len = this._exp.cpp_any_data_at(${field.ptrIndex});`,
         `const u8 = this._cpp._u8;`,
         `const out = this._cpp._outPtr;`,

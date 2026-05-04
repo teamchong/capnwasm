@@ -345,7 +345,14 @@ export class CapnCpp {
     const handle = { slotIdx, ptr };
     const holdings = { slotIdx, ptr };
     this.#slotFinalizer?.register(handle, holdings, handle);
-    return { slotIdx, dataPtr, handle };
+    // M5: Bounds for the pure-JS pointer decoder. The framed message
+    // header is 8 bytes (M1 single-segment), payload starts at ptr+8.
+    // msgEnd is the byte immediately past the last word of the
+    // message. Decoder bounds-checks every pointer target against
+    // [msgStart, msgEnd).
+    const msgStart = ptr + 8;
+    const msgEnd = ptr + bytes.length;
+    return { slotIdx, dataPtr, handle, msgStart, msgEnd };
   }
 
   // M3: Release a slot back to the wasm pool. Idempotent. After

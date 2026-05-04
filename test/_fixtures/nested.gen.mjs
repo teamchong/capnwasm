@@ -6,6 +6,41 @@ function decodeAscii(bytes) {
   return SHARED_TEXT_DECODER.decode(bytes);
 }
 
+function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return null;
+  if ((word0 & 3) !== 1) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  if ((word1 & 7) !== 2) return undefined;
+  const count = word1 >>> 3;
+  if (count === 0) return undefined;
+  const target = ptrAddr + 8 + offset * 8;
+  if (target < msgStart || target + count > msgEnd) return undefined;
+  const len = count - 1;
+  if (len === 0) return "";
+  return SHARED_TEXT_DECODER.decode(u8.subarray(target, target + len));
+}
+
+function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return null;
+  if ((word0 & 3) !== 1) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  if ((word1 & 7) !== 2) return undefined;
+  const count = word1 >>> 3;
+  const target = ptrAddr + 8 + offset * 8;
+  if (target < msgStart || target + count > msgEnd) return undefined;
+  return u8.slice(target, target + count);
+}
+
 const _F32_VIEW_BUF = new ArrayBuffer(4);
 const _F32_VIEW_U32 = new Uint32Array(_F32_VIEW_BUF);
 const _F32_VIEW_F32 = new Float32Array(_F32_VIEW_BUF);
@@ -385,7 +420,7 @@ function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
   if (!unsafe && typeof cpp._acquireSlot === "function" && cpp._supportsReaderSlotPool && cpp._supportsReaderSlotPool()) {
     const acquired = cpp._acquireSlot(bytes);
     if (acquired) {
-      return { dataPtr: acquired.dataPtr, slotIdx: acquired.slotIdx, slotHandle: acquired.handle, msg: null, gen: cpp._generation };
+      return { dataPtr: acquired.dataPtr, slotIdx: acquired.slotIdx, slotHandle: acquired.handle, msgStart: acquired.msgStart, msgEnd: acquired.msgEnd, msg: null, gen: cpp._generation };
     }
   }
   if (!unsafe && typeof cpp._allocMessage === "function") {
@@ -415,6 +450,9 @@ function _ensureCapnwasmReader(reader) {
         cpp._bumpGeneration();
       }
       reader._gen = cpp._generation ?? 0;
+      reader._u8 = cpp._u8;
+      reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    } else if (reader._dv && reader._dv.buffer !== cpp.memory.buffer) {
       reader._u8 = cpp._u8;
       reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
     }
@@ -640,6 +678,8 @@ function _runDraft(cpp, fields, fn) {
 }
 
 export class TagReader {
+  static _DATA_WORDS = 1;
+  static _PTR_WORDS = 1;
   constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
@@ -648,6 +688,8 @@ export class TagReader {
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -671,6 +713,11 @@ export class TagReader {
 
   get name() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 1, 0, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -702,6 +749,8 @@ if (typeof Symbol.dispose === "symbol") {
 }
 
 export class CommentReader {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 3;
   constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
@@ -710,6 +759,8 @@ export class CommentReader {
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -733,6 +784,11 @@ export class CommentReader {
 
   get author() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 0, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -741,6 +797,11 @@ export class CommentReader {
   }
   get body() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 1, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(1);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -791,6 +852,8 @@ if (typeof Symbol.dispose === "symbol") {
 }
 
 export class PostMetaReader {
+  static _DATA_WORDS = 1;
+  static _PTR_WORDS = 2;
   constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
@@ -799,6 +862,8 @@ export class PostMetaReader {
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -826,6 +891,11 @@ export class PostMetaReader {
   }
   get category() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 1, 0, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -858,6 +928,8 @@ if (typeof Symbol.dispose === "symbol") {
 }
 
 export class PostReader {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 5;
   constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
@@ -866,6 +938,8 @@ export class PostReader {
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -889,6 +963,11 @@ export class PostReader {
 
   get title() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 0, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -897,6 +976,11 @@ export class PostReader {
   }
   get author() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 1, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(1);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -975,6 +1059,8 @@ if (typeof Symbol.dispose === "symbol") {
 }
 
 export class PostMetaParentReader {
+  static _DATA_WORDS = 1;
+  static _PTR_WORDS = 1;
   constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
@@ -983,6 +1069,8 @@ export class PostMetaParentReader {
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -1010,6 +1098,11 @@ export class PostMetaParentReader {
   }
   get label() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 1, 0, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
     const u8 = this._cpp._u8;

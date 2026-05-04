@@ -6,6 +6,41 @@ function decodeAscii(bytes) {
   return SHARED_TEXT_DECODER.decode(bytes);
 }
 
+function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return null;
+  if ((word0 & 3) !== 1) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  if ((word1 & 7) !== 2) return undefined;
+  const count = word1 >>> 3;
+  if (count === 0) return undefined;
+  const target = ptrAddr + 8 + offset * 8;
+  if (target < msgStart || target + count > msgEnd) return undefined;
+  const len = count - 1;
+  if (len === 0) return "";
+  return SHARED_TEXT_DECODER.decode(u8.subarray(target, target + len));
+}
+
+function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return null;
+  if ((word0 & 3) !== 1) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  if ((word1 & 7) !== 2) return undefined;
+  const count = word1 >>> 3;
+  const target = ptrAddr + 8 + offset * 8;
+  if (target < msgStart || target + count > msgEnd) return undefined;
+  return u8.slice(target, target + count);
+}
+
 const _F32_VIEW_BUF = new ArrayBuffer(4);
 const _F32_VIEW_U32 = new Uint32Array(_F32_VIEW_BUF);
 const _F32_VIEW_F32 = new Float32Array(_F32_VIEW_BUF);
@@ -385,7 +420,7 @@ function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
   if (!unsafe && typeof cpp._acquireSlot === "function" && cpp._supportsReaderSlotPool && cpp._supportsReaderSlotPool()) {
     const acquired = cpp._acquireSlot(bytes);
     if (acquired) {
-      return { dataPtr: acquired.dataPtr, slotIdx: acquired.slotIdx, slotHandle: acquired.handle, msg: null, gen: cpp._generation };
+      return { dataPtr: acquired.dataPtr, slotIdx: acquired.slotIdx, slotHandle: acquired.handle, msgStart: acquired.msgStart, msgEnd: acquired.msgEnd, msg: null, gen: cpp._generation };
     }
   }
   if (!unsafe && typeof cpp._allocMessage === "function") {
@@ -415,6 +450,9 @@ function _ensureCapnwasmReader(reader) {
         cpp._bumpGeneration();
       }
       reader._gen = cpp._generation ?? 0;
+      reader._u8 = cpp._u8;
+      reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    } else if (reader._dv && reader._dv.buffer !== cpp.memory.buffer) {
       reader._u8 = cpp._u8;
       reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
     }
@@ -640,6 +678,8 @@ function _runDraft(cpp, fields, fn) {
 }
 
 export class BigUserReader {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 256;
   constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
@@ -648,6 +688,8 @@ export class BigUserReader {
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -671,6 +713,11 @@ export class BigUserReader {
 
   get field0() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 0, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -679,6 +726,11 @@ export class BigUserReader {
   }
   get field1() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 1, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(1);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -687,6 +739,11 @@ export class BigUserReader {
   }
   get field2() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 2, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(2);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -695,6 +752,11 @@ export class BigUserReader {
   }
   get field3() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 3, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(3);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -703,6 +765,11 @@ export class BigUserReader {
   }
   get field4() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 4, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(4);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -711,6 +778,11 @@ export class BigUserReader {
   }
   get field5() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 5, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(5);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -719,6 +791,11 @@ export class BigUserReader {
   }
   get field6() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 6, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(6);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -727,6 +804,11 @@ export class BigUserReader {
   }
   get field7() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 7, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(7);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -735,6 +817,11 @@ export class BigUserReader {
   }
   get field8() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 8, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(8);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -743,6 +830,11 @@ export class BigUserReader {
   }
   get field9() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 9, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(9);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -751,6 +843,11 @@ export class BigUserReader {
   }
   get field10() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 10, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(10);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -759,6 +856,11 @@ export class BigUserReader {
   }
   get field11() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 11, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(11);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -767,6 +869,11 @@ export class BigUserReader {
   }
   get field12() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 12, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(12);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -775,6 +882,11 @@ export class BigUserReader {
   }
   get field13() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 13, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(13);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -783,6 +895,11 @@ export class BigUserReader {
   }
   get field14() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 14, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(14);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -791,6 +908,11 @@ export class BigUserReader {
   }
   get field15() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 15, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(15);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -799,6 +921,11 @@ export class BigUserReader {
   }
   get field16() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 16, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(16);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -807,6 +934,11 @@ export class BigUserReader {
   }
   get field17() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 17, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(17);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -815,6 +947,11 @@ export class BigUserReader {
   }
   get field18() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 18, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(18);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -823,6 +960,11 @@ export class BigUserReader {
   }
   get field19() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 19, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(19);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -831,6 +973,11 @@ export class BigUserReader {
   }
   get field20() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 20, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(20);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -839,6 +986,11 @@ export class BigUserReader {
   }
   get field21() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 21, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(21);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -847,6 +999,11 @@ export class BigUserReader {
   }
   get field22() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 22, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(22);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -855,6 +1012,11 @@ export class BigUserReader {
   }
   get field23() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 23, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(23);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -863,6 +1025,11 @@ export class BigUserReader {
   }
   get field24() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 24, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(24);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -871,6 +1038,11 @@ export class BigUserReader {
   }
   get field25() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 25, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(25);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -879,6 +1051,11 @@ export class BigUserReader {
   }
   get field26() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 26, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(26);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -887,6 +1064,11 @@ export class BigUserReader {
   }
   get field27() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 27, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(27);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -895,6 +1077,11 @@ export class BigUserReader {
   }
   get field28() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 28, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(28);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -903,6 +1090,11 @@ export class BigUserReader {
   }
   get field29() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 29, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(29);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -911,6 +1103,11 @@ export class BigUserReader {
   }
   get field30() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 30, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(30);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -919,6 +1116,11 @@ export class BigUserReader {
   }
   get field31() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 31, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(31);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -927,6 +1129,11 @@ export class BigUserReader {
   }
   get field32() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 32, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(32);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -935,6 +1142,11 @@ export class BigUserReader {
   }
   get field33() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 33, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(33);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -943,6 +1155,11 @@ export class BigUserReader {
   }
   get field34() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 34, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(34);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -951,6 +1168,11 @@ export class BigUserReader {
   }
   get field35() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 35, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(35);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -959,6 +1181,11 @@ export class BigUserReader {
   }
   get field36() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 36, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(36);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -967,6 +1194,11 @@ export class BigUserReader {
   }
   get field37() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 37, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(37);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -975,6 +1207,11 @@ export class BigUserReader {
   }
   get field38() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 38, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(38);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -983,6 +1220,11 @@ export class BigUserReader {
   }
   get field39() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 39, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(39);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -991,6 +1233,11 @@ export class BigUserReader {
   }
   get field40() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 40, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(40);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -999,6 +1246,11 @@ export class BigUserReader {
   }
   get field41() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 41, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(41);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1007,6 +1259,11 @@ export class BigUserReader {
   }
   get field42() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 42, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(42);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1015,6 +1272,11 @@ export class BigUserReader {
   }
   get field43() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 43, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(43);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1023,6 +1285,11 @@ export class BigUserReader {
   }
   get field44() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 44, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(44);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1031,6 +1298,11 @@ export class BigUserReader {
   }
   get field45() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 45, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(45);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1039,6 +1311,11 @@ export class BigUserReader {
   }
   get field46() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 46, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(46);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1047,6 +1324,11 @@ export class BigUserReader {
   }
   get field47() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 47, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(47);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1055,6 +1337,11 @@ export class BigUserReader {
   }
   get field48() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 48, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(48);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1063,6 +1350,11 @@ export class BigUserReader {
   }
   get field49() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 49, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(49);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1071,6 +1363,11 @@ export class BigUserReader {
   }
   get field50() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 50, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(50);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1079,6 +1376,11 @@ export class BigUserReader {
   }
   get field51() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 51, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(51);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1087,6 +1389,11 @@ export class BigUserReader {
   }
   get field52() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 52, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(52);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1095,6 +1402,11 @@ export class BigUserReader {
   }
   get field53() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 53, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(53);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1103,6 +1415,11 @@ export class BigUserReader {
   }
   get field54() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 54, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(54);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1111,6 +1428,11 @@ export class BigUserReader {
   }
   get field55() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 55, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(55);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1119,6 +1441,11 @@ export class BigUserReader {
   }
   get field56() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 56, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(56);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1127,6 +1454,11 @@ export class BigUserReader {
   }
   get field57() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 57, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(57);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1135,6 +1467,11 @@ export class BigUserReader {
   }
   get field58() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 58, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(58);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1143,6 +1480,11 @@ export class BigUserReader {
   }
   get field59() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 59, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(59);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1151,6 +1493,11 @@ export class BigUserReader {
   }
   get field60() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 60, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(60);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1159,6 +1506,11 @@ export class BigUserReader {
   }
   get field61() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 61, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(61);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1167,6 +1519,11 @@ export class BigUserReader {
   }
   get field62() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 62, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(62);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1175,6 +1532,11 @@ export class BigUserReader {
   }
   get field63() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 63, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(63);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1183,6 +1545,11 @@ export class BigUserReader {
   }
   get field64() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 64, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(64);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1191,6 +1558,11 @@ export class BigUserReader {
   }
   get field65() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 65, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(65);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1199,6 +1571,11 @@ export class BigUserReader {
   }
   get field66() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 66, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(66);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1207,6 +1584,11 @@ export class BigUserReader {
   }
   get field67() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 67, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(67);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1215,6 +1597,11 @@ export class BigUserReader {
   }
   get field68() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 68, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(68);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1223,6 +1610,11 @@ export class BigUserReader {
   }
   get field69() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 69, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(69);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1231,6 +1623,11 @@ export class BigUserReader {
   }
   get field70() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 70, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(70);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1239,6 +1636,11 @@ export class BigUserReader {
   }
   get field71() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 71, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(71);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1247,6 +1649,11 @@ export class BigUserReader {
   }
   get field72() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 72, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(72);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1255,6 +1662,11 @@ export class BigUserReader {
   }
   get field73() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 73, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(73);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1263,6 +1675,11 @@ export class BigUserReader {
   }
   get field74() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 74, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(74);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1271,6 +1688,11 @@ export class BigUserReader {
   }
   get field75() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 75, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(75);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1279,6 +1701,11 @@ export class BigUserReader {
   }
   get field76() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 76, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(76);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1287,6 +1714,11 @@ export class BigUserReader {
   }
   get field77() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 77, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(77);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1295,6 +1727,11 @@ export class BigUserReader {
   }
   get field78() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 78, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(78);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1303,6 +1740,11 @@ export class BigUserReader {
   }
   get field79() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 79, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(79);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1311,6 +1753,11 @@ export class BigUserReader {
   }
   get field80() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 80, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(80);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1319,6 +1766,11 @@ export class BigUserReader {
   }
   get field81() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 81, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(81);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1327,6 +1779,11 @@ export class BigUserReader {
   }
   get field82() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 82, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(82);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1335,6 +1792,11 @@ export class BigUserReader {
   }
   get field83() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 83, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(83);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1343,6 +1805,11 @@ export class BigUserReader {
   }
   get field84() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 84, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(84);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1351,6 +1818,11 @@ export class BigUserReader {
   }
   get field85() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 85, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(85);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1359,6 +1831,11 @@ export class BigUserReader {
   }
   get field86() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 86, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(86);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1367,6 +1844,11 @@ export class BigUserReader {
   }
   get field87() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 87, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(87);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1375,6 +1857,11 @@ export class BigUserReader {
   }
   get field88() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 88, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(88);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1383,6 +1870,11 @@ export class BigUserReader {
   }
   get field89() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 89, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(89);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1391,6 +1883,11 @@ export class BigUserReader {
   }
   get field90() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 90, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(90);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1399,6 +1896,11 @@ export class BigUserReader {
   }
   get field91() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 91, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(91);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1407,6 +1909,11 @@ export class BigUserReader {
   }
   get field92() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 92, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(92);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1415,6 +1922,11 @@ export class BigUserReader {
   }
   get field93() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 93, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(93);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1423,6 +1935,11 @@ export class BigUserReader {
   }
   get field94() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 94, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(94);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1431,6 +1948,11 @@ export class BigUserReader {
   }
   get field95() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 95, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(95);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1439,6 +1961,11 @@ export class BigUserReader {
   }
   get field96() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 96, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(96);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1447,6 +1974,11 @@ export class BigUserReader {
   }
   get field97() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 97, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(97);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1455,6 +1987,11 @@ export class BigUserReader {
   }
   get field98() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 98, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(98);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1463,6 +2000,11 @@ export class BigUserReader {
   }
   get field99() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 99, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(99);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1471,6 +2013,11 @@ export class BigUserReader {
   }
   get field100() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 100, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(100);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1479,6 +2026,11 @@ export class BigUserReader {
   }
   get field101() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 101, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(101);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1487,6 +2039,11 @@ export class BigUserReader {
   }
   get field102() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 102, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(102);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1495,6 +2052,11 @@ export class BigUserReader {
   }
   get field103() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 103, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(103);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1503,6 +2065,11 @@ export class BigUserReader {
   }
   get field104() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 104, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(104);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1511,6 +2078,11 @@ export class BigUserReader {
   }
   get field105() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 105, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(105);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1519,6 +2091,11 @@ export class BigUserReader {
   }
   get field106() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 106, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(106);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1527,6 +2104,11 @@ export class BigUserReader {
   }
   get field107() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 107, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(107);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1535,6 +2117,11 @@ export class BigUserReader {
   }
   get field108() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 108, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(108);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1543,6 +2130,11 @@ export class BigUserReader {
   }
   get field109() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 109, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(109);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1551,6 +2143,11 @@ export class BigUserReader {
   }
   get field110() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 110, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(110);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1559,6 +2156,11 @@ export class BigUserReader {
   }
   get field111() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 111, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(111);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1567,6 +2169,11 @@ export class BigUserReader {
   }
   get field112() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 112, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(112);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1575,6 +2182,11 @@ export class BigUserReader {
   }
   get field113() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 113, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(113);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1583,6 +2195,11 @@ export class BigUserReader {
   }
   get field114() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 114, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(114);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1591,6 +2208,11 @@ export class BigUserReader {
   }
   get field115() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 115, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(115);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1599,6 +2221,11 @@ export class BigUserReader {
   }
   get field116() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 116, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(116);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1607,6 +2234,11 @@ export class BigUserReader {
   }
   get field117() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 117, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(117);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1615,6 +2247,11 @@ export class BigUserReader {
   }
   get field118() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 118, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(118);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1623,6 +2260,11 @@ export class BigUserReader {
   }
   get field119() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 119, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(119);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1631,6 +2273,11 @@ export class BigUserReader {
   }
   get field120() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 120, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(120);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1639,6 +2286,11 @@ export class BigUserReader {
   }
   get field121() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 121, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(121);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1647,6 +2299,11 @@ export class BigUserReader {
   }
   get field122() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 122, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(122);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1655,6 +2312,11 @@ export class BigUserReader {
   }
   get field123() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 123, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(123);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1663,6 +2325,11 @@ export class BigUserReader {
   }
   get field124() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 124, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(124);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1671,6 +2338,11 @@ export class BigUserReader {
   }
   get field125() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 125, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(125);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1679,6 +2351,11 @@ export class BigUserReader {
   }
   get field126() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 126, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(126);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1687,6 +2364,11 @@ export class BigUserReader {
   }
   get field127() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 127, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(127);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1695,6 +2377,11 @@ export class BigUserReader {
   }
   get field128() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 128, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(128);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1703,6 +2390,11 @@ export class BigUserReader {
   }
   get field129() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 129, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(129);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1711,6 +2403,11 @@ export class BigUserReader {
   }
   get field130() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 130, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(130);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1719,6 +2416,11 @@ export class BigUserReader {
   }
   get field131() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 131, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(131);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1727,6 +2429,11 @@ export class BigUserReader {
   }
   get field132() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 132, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(132);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1735,6 +2442,11 @@ export class BigUserReader {
   }
   get field133() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 133, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(133);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1743,6 +2455,11 @@ export class BigUserReader {
   }
   get field134() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 134, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(134);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1751,6 +2468,11 @@ export class BigUserReader {
   }
   get field135() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 135, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(135);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1759,6 +2481,11 @@ export class BigUserReader {
   }
   get field136() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 136, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(136);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1767,6 +2494,11 @@ export class BigUserReader {
   }
   get field137() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 137, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(137);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1775,6 +2507,11 @@ export class BigUserReader {
   }
   get field138() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 138, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(138);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1783,6 +2520,11 @@ export class BigUserReader {
   }
   get field139() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 139, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(139);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1791,6 +2533,11 @@ export class BigUserReader {
   }
   get field140() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 140, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(140);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1799,6 +2546,11 @@ export class BigUserReader {
   }
   get field141() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 141, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(141);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1807,6 +2559,11 @@ export class BigUserReader {
   }
   get field142() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 142, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(142);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1815,6 +2572,11 @@ export class BigUserReader {
   }
   get field143() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 143, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(143);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1823,6 +2585,11 @@ export class BigUserReader {
   }
   get field144() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 144, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(144);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1831,6 +2598,11 @@ export class BigUserReader {
   }
   get field145() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 145, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(145);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1839,6 +2611,11 @@ export class BigUserReader {
   }
   get field146() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 146, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(146);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1847,6 +2624,11 @@ export class BigUserReader {
   }
   get field147() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 147, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(147);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1855,6 +2637,11 @@ export class BigUserReader {
   }
   get field148() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 148, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(148);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1863,6 +2650,11 @@ export class BigUserReader {
   }
   get field149() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 149, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(149);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1871,6 +2663,11 @@ export class BigUserReader {
   }
   get field150() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 150, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(150);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1879,6 +2676,11 @@ export class BigUserReader {
   }
   get field151() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 151, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(151);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1887,6 +2689,11 @@ export class BigUserReader {
   }
   get field152() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 152, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(152);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1895,6 +2702,11 @@ export class BigUserReader {
   }
   get field153() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 153, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(153);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1903,6 +2715,11 @@ export class BigUserReader {
   }
   get field154() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 154, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(154);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1911,6 +2728,11 @@ export class BigUserReader {
   }
   get field155() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 155, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(155);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1919,6 +2741,11 @@ export class BigUserReader {
   }
   get field156() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 156, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(156);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1927,6 +2754,11 @@ export class BigUserReader {
   }
   get field157() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 157, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(157);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1935,6 +2767,11 @@ export class BigUserReader {
   }
   get field158() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 158, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(158);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1943,6 +2780,11 @@ export class BigUserReader {
   }
   get field159() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 159, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(159);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1951,6 +2793,11 @@ export class BigUserReader {
   }
   get field160() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 160, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(160);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1959,6 +2806,11 @@ export class BigUserReader {
   }
   get field161() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 161, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(161);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1967,6 +2819,11 @@ export class BigUserReader {
   }
   get field162() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 162, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(162);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1975,6 +2832,11 @@ export class BigUserReader {
   }
   get field163() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 163, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(163);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1983,6 +2845,11 @@ export class BigUserReader {
   }
   get field164() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 164, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(164);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1991,6 +2858,11 @@ export class BigUserReader {
   }
   get field165() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 165, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(165);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -1999,6 +2871,11 @@ export class BigUserReader {
   }
   get field166() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 166, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(166);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2007,6 +2884,11 @@ export class BigUserReader {
   }
   get field167() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 167, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(167);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2015,6 +2897,11 @@ export class BigUserReader {
   }
   get field168() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 168, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(168);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2023,6 +2910,11 @@ export class BigUserReader {
   }
   get field169() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 169, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(169);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2031,6 +2923,11 @@ export class BigUserReader {
   }
   get field170() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 170, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(170);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2039,6 +2936,11 @@ export class BigUserReader {
   }
   get field171() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 171, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(171);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2047,6 +2949,11 @@ export class BigUserReader {
   }
   get field172() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 172, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(172);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2055,6 +2962,11 @@ export class BigUserReader {
   }
   get field173() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 173, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(173);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2063,6 +2975,11 @@ export class BigUserReader {
   }
   get field174() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 174, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(174);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2071,6 +2988,11 @@ export class BigUserReader {
   }
   get field175() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 175, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(175);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2079,6 +3001,11 @@ export class BigUserReader {
   }
   get field176() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 176, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(176);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2087,6 +3014,11 @@ export class BigUserReader {
   }
   get field177() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 177, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(177);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2095,6 +3027,11 @@ export class BigUserReader {
   }
   get field178() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 178, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(178);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2103,6 +3040,11 @@ export class BigUserReader {
   }
   get field179() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 179, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(179);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2111,6 +3053,11 @@ export class BigUserReader {
   }
   get field180() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 180, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(180);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2119,6 +3066,11 @@ export class BigUserReader {
   }
   get field181() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 181, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(181);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2127,6 +3079,11 @@ export class BigUserReader {
   }
   get field182() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 182, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(182);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2135,6 +3092,11 @@ export class BigUserReader {
   }
   get field183() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 183, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(183);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2143,6 +3105,11 @@ export class BigUserReader {
   }
   get field184() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 184, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(184);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2151,6 +3118,11 @@ export class BigUserReader {
   }
   get field185() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 185, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(185);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2159,6 +3131,11 @@ export class BigUserReader {
   }
   get field186() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 186, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(186);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2167,6 +3144,11 @@ export class BigUserReader {
   }
   get field187() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 187, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(187);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2175,6 +3157,11 @@ export class BigUserReader {
   }
   get field188() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 188, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(188);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2183,6 +3170,11 @@ export class BigUserReader {
   }
   get field189() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 189, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(189);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2191,6 +3183,11 @@ export class BigUserReader {
   }
   get field190() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 190, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(190);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2199,6 +3196,11 @@ export class BigUserReader {
   }
   get field191() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 191, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(191);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2207,6 +3209,11 @@ export class BigUserReader {
   }
   get field192() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 192, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(192);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2215,6 +3222,11 @@ export class BigUserReader {
   }
   get field193() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 193, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(193);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2223,6 +3235,11 @@ export class BigUserReader {
   }
   get field194() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 194, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(194);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2231,6 +3248,11 @@ export class BigUserReader {
   }
   get field195() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 195, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(195);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2239,6 +3261,11 @@ export class BigUserReader {
   }
   get field196() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 196, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(196);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2247,6 +3274,11 @@ export class BigUserReader {
   }
   get field197() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 197, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(197);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2255,6 +3287,11 @@ export class BigUserReader {
   }
   get field198() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 198, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(198);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2263,6 +3300,11 @@ export class BigUserReader {
   }
   get field199() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 199, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(199);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2271,6 +3313,11 @@ export class BigUserReader {
   }
   get field200() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 200, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(200);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2279,6 +3326,11 @@ export class BigUserReader {
   }
   get field201() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 201, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(201);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2287,6 +3339,11 @@ export class BigUserReader {
   }
   get field202() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 202, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(202);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2295,6 +3352,11 @@ export class BigUserReader {
   }
   get field203() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 203, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(203);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2303,6 +3365,11 @@ export class BigUserReader {
   }
   get field204() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 204, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(204);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2311,6 +3378,11 @@ export class BigUserReader {
   }
   get field205() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 205, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(205);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2319,6 +3391,11 @@ export class BigUserReader {
   }
   get field206() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 206, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(206);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2327,6 +3404,11 @@ export class BigUserReader {
   }
   get field207() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 207, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(207);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2335,6 +3417,11 @@ export class BigUserReader {
   }
   get field208() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 208, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(208);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2343,6 +3430,11 @@ export class BigUserReader {
   }
   get field209() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 209, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(209);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2351,6 +3443,11 @@ export class BigUserReader {
   }
   get field210() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 210, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(210);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2359,6 +3456,11 @@ export class BigUserReader {
   }
   get field211() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 211, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(211);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2367,6 +3469,11 @@ export class BigUserReader {
   }
   get field212() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 212, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(212);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2375,6 +3482,11 @@ export class BigUserReader {
   }
   get field213() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 213, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(213);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2383,6 +3495,11 @@ export class BigUserReader {
   }
   get field214() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 214, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(214);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2391,6 +3508,11 @@ export class BigUserReader {
   }
   get field215() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 215, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(215);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2399,6 +3521,11 @@ export class BigUserReader {
   }
   get field216() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 216, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(216);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2407,6 +3534,11 @@ export class BigUserReader {
   }
   get field217() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 217, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(217);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2415,6 +3547,11 @@ export class BigUserReader {
   }
   get field218() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 218, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(218);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2423,6 +3560,11 @@ export class BigUserReader {
   }
   get field219() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 219, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(219);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2431,6 +3573,11 @@ export class BigUserReader {
   }
   get field220() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 220, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(220);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2439,6 +3586,11 @@ export class BigUserReader {
   }
   get field221() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 221, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(221);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2447,6 +3599,11 @@ export class BigUserReader {
   }
   get field222() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 222, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(222);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2455,6 +3612,11 @@ export class BigUserReader {
   }
   get field223() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 223, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(223);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2463,6 +3625,11 @@ export class BigUserReader {
   }
   get field224() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 224, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(224);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2471,6 +3638,11 @@ export class BigUserReader {
   }
   get field225() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 225, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(225);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2479,6 +3651,11 @@ export class BigUserReader {
   }
   get field226() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 226, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(226);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2487,6 +3664,11 @@ export class BigUserReader {
   }
   get field227() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 227, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(227);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2495,6 +3677,11 @@ export class BigUserReader {
   }
   get field228() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 228, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(228);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2503,6 +3690,11 @@ export class BigUserReader {
   }
   get field229() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 229, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(229);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2511,6 +3703,11 @@ export class BigUserReader {
   }
   get field230() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 230, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(230);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2519,6 +3716,11 @@ export class BigUserReader {
   }
   get field231() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 231, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(231);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2527,6 +3729,11 @@ export class BigUserReader {
   }
   get field232() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 232, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(232);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2535,6 +3742,11 @@ export class BigUserReader {
   }
   get field233() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 233, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(233);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2543,6 +3755,11 @@ export class BigUserReader {
   }
   get field234() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 234, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(234);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2551,6 +3768,11 @@ export class BigUserReader {
   }
   get field235() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 235, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(235);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2559,6 +3781,11 @@ export class BigUserReader {
   }
   get field236() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 236, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(236);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2567,6 +3794,11 @@ export class BigUserReader {
   }
   get field237() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 237, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(237);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2575,6 +3807,11 @@ export class BigUserReader {
   }
   get field238() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 238, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(238);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2583,6 +3820,11 @@ export class BigUserReader {
   }
   get field239() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 239, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(239);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2591,6 +3833,11 @@ export class BigUserReader {
   }
   get field240() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 240, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(240);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2599,6 +3846,11 @@ export class BigUserReader {
   }
   get field241() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 241, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(241);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2607,6 +3859,11 @@ export class BigUserReader {
   }
   get field242() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 242, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(242);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2615,6 +3872,11 @@ export class BigUserReader {
   }
   get field243() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 243, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(243);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2623,6 +3885,11 @@ export class BigUserReader {
   }
   get field244() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 244, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(244);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2631,6 +3898,11 @@ export class BigUserReader {
   }
   get field245() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 245, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(245);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2639,6 +3911,11 @@ export class BigUserReader {
   }
   get field246() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 246, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(246);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2647,6 +3924,11 @@ export class BigUserReader {
   }
   get field247() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 247, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(247);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2655,6 +3937,11 @@ export class BigUserReader {
   }
   get field248() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 248, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(248);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2663,6 +3950,11 @@ export class BigUserReader {
   }
   get field249() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 249, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(249);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2671,6 +3963,11 @@ export class BigUserReader {
   }
   get field250() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 250, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(250);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2679,6 +3976,11 @@ export class BigUserReader {
   }
   get field251() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 251, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(251);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2687,6 +3989,11 @@ export class BigUserReader {
   }
   get field252() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 252, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(252);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2695,6 +4002,11 @@ export class BigUserReader {
   }
   get field253() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 253, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(253);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2703,6 +4015,11 @@ export class BigUserReader {
   }
   get field254() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 254, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(254);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -2711,6 +4028,11 @@ export class BigUserReader {
   }
   get field255() {
     _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 255, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
     const len = this._exp.cpp_any_text_at(255);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
