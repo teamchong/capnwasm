@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>capnwasm — chat: capnwasm vs capnweb</title>
+  <meta name="description" content="Side-by-side WebSocket-RPC chat demo. Same Durable Object chat room, two RPC framings: capnwasm (Cap'n Proto wire) on the left, capnweb (JSON wire) on the right. WebSocket and REST polling transports both supported." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 32px 24px; max-width: 1100px; margin: 0 auto; color: #e0e0e0; background: #0a0a0a; }
+    h1 { font-size: 1.4em; margin: 0 0 0.4em; }
+    h3 { font-size: 1em; margin: 0 0 0.5em; }
+    .sub { color: #888; margin: 0 0 1.5em; font-size: 0.9em; line-height: 1.6; }
+    a { color: #4fc3f7; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header { text-align: center; margin-bottom: 24px; }
+    header h1 .dim { color: #4fc3f7; font-weight: 400; }
+    nav { margin-top: 12px; color: #666; font-size: 0.82em; }
+    nav a { color: #4fc3f7; }
+    .network-tip { position: fixed; right: 18px; top: 50%; transform: translateY(-50%); z-index: 20; max-width: 190px; padding: 10px 12px; border: 1px solid #2d3c47; border-radius: 10px; background: rgba(13, 20, 24, 0.94); color: #b7c4ce; font-size: 12px; line-height: 1.45; box-shadow: 0 10px 28px rgba(0,0,0,0.24); }
+
+    .controls { display: flex; flex-direction: column; gap: 0.6em; margin-bottom: 1em; padding: 0.7em 0.9em; background: #141414; border: 1px solid #222; border-radius: 10px; }
+    .controls .row { display: flex; align-items: center; gap: 0.6em; flex-wrap: wrap; }
+    .controls label { font-size: 0.9em; color: #aaa; }
+    .controls input[type=text] { padding: 0.45em 0.65em; border: 1px solid #333; border-radius: 6px; font-size: 14px; font-family: inherit; background: #0d0d0d; color: #e0e0e0; }
+    #author { flex: 0 0 12em; }
+    #text { flex: 1; min-width: 16em; }
+    button { padding: 0.45em 1em; border: 1px solid #4fc3f7; background: #4fc3f7; color: #0a0a0a; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 14px; }
+    button:disabled { background: #555; border-color: #555; color: #aaa; cursor: not-allowed; }
+    .transport { display: flex; gap: 0.5em; align-items: center; font-size: 0.85em; color: #aaa; }
+    .transport label { cursor: pointer; padding: 0.2em 0.5em; border-radius: 3px; }
+    .transport input[type=radio] { margin-right: 0.3em; vertical-align: middle; }
+    #send-status { font-size: 0.8em; color: #0a7a3a; flex: 1 1 100%; }
+    #send-status.error { color: #b00020; }
+
+    .panes { display: grid; grid-template-columns: 1fr; gap: 1em; }
+    @media (min-width: 880px) { .panes { grid-template-columns: 1fr 1fr; } }
+
+    .pane { border: 1px solid #222; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; background: #101010; }
+    .pane-header { padding: 0.5em 0.8em; background: #141414; border-bottom: 1px solid #222; display: flex; justify-content: space-between; align-items: baseline; gap: 0.5em; }
+    .pane-header h3 { margin: 0; }
+    .pane-header .framing { font-size: 0.78em; color: #777; text-align: right; }
+    .pane .status { padding: 0.35em 0.8em; font-size: 12px; color: #888; background: #0d0d0d; border-bottom: 1px solid #1b1b1b; }
+    .pane .status.connected { color: #66bb6a; }
+    .pane .status.error { color: #ff7043; }
+    .pane .log { height: 420px; overflow-y: auto; padding: 0.8em; background: #0d0d0d; }
+    .msg { margin-bottom: 1.1em; line-height: 1.4; display: flex; flex-direction: column; gap: 0.45em; }
+    .user-message { align-self: flex-start; max-width: 78%; padding: 0.55em 0.7em; border: 1px solid #2a2a2a; border-radius: 10px 10px 10px 2px; background: #161616; color: #e0e0e0; }
+    .msg .who { display: block; font-weight: 600; color: #4fc3f7; font-size: 0.82em; margin-bottom: 0.15em; }
+    .msg .text { color: #e0e0e0; overflow-wrap: anywhere; }
+    .server-response { align-self: flex-end; display: flex; flex-direction: column; align-items: flex-end; max-width: 100%; }
+    .server-label { font-size: 0.72em; color: #999; margin-bottom: 0.25em; font-variant-numeric: tabular-nums; }
+    .msg .size { color: #999; padding-left: 0.25em; }
+    .server-image { display: block; width: 384px; height: 144px; max-width: 100%; border: 1px solid #333; border-radius: 6px; image-rendering: pixelated; background: #f8f8f8; }
+    .missing-image { display: inline-block; color: #ff7043; font-size: 0.8em; padding: 0.4em 0.6em; border: 1px solid #663333; border-radius: 4px; background: #1d0f0f; }
+
+    .notes { margin-top: 1.5em; }
+    pre.code { background: #141414; color: #ddd; padding: 0.7em 0.9em; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.4; margin: 0.4em 0; border: 1px solid #222; }
+    .compare { display: grid; grid-template-columns: 1fr; gap: 1em; margin-top: 1em; }
+    @media (min-width: 880px) { .compare { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 760px) { .network-tip { display: none; } }
+  </style>
+  <script type="module" crossorigin src="/assets/chat-Cj6W5aZg.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/main-D1o9XKOZ.js">
+  <link rel="modulepreload" crossorigin href="/assets/browser-Cvhjzqnm.js">
+  <link rel="modulepreload" crossorigin href="/assets/rpc-DpSplyTE.js">
+  <link rel="modulepreload" crossorigin href="/assets/http_batch-B03rN2o4.js">
+  <link rel="modulepreload" crossorigin href="/assets/index-q38vqkxF.js">
+</head>
+<body>
+  <aside class="network-tip" aria-label="Network throttle tip">
+    Try DevTools &rarr; Network &rarr; Fast/Slow 3G. The PNG byte cost is easier to see under throttling.
+  </aside>
+  <header>
+    <h1>capnwasm <span class="dim">chat</span></h1>
+    <p class="sub">
+    Two independent chats, one per library, sharing only the input box and the send
+    button. Every click fires <code>capnwasm.post(...)</code> AND <code>capnweb.post(...)</code>
+    in parallel (<code>Promise.all</code>); each call lands in its own pane via its own
+    endpoint. The capnwasm pane talks to <code>/chat-ws</code> or <code>/chat-http</code>;
+    the capnweb pane talks to <code>/capnweb-chat-ws</code> or <code>/capnweb-chat-http</code>.
+    A single
+    <a href="https://developers.cloudflare.com/durable-objects/">Durable Object</a> hosts both
+    sides of state independently, which is what makes broadcast actually work on workerd.
+    Toggle transport: WebSocket (push) or REST (poll).
+    Source:
+    <a href="https://github.com/teamchong/capnwasm/blob/main/web/src/chat/capnwasm-pane.ts">capnwasm-pane.ts</a>,
+    <a href="https://github.com/teamchong/capnwasm/blob/main/web/src/chat/capnweb-pane.ts">capnweb-pane.ts</a>,
+    <a href="https://github.com/teamchong/capnwasm/blob/main/src/chat_room.mjs">chat_room.mjs</a>.
+    </p>
+    <nav>
+      <a href="./">&larr; Landing</a> &middot;
+      <a href="./rpc.html">RPC bench</a> &middot;
+      <a href="./vs-capnweb.html">vs capnweb</a> &middot;
+      <a href="./render-bench.html">Render bench</a>
+    </nav>
+  </header>
+
+  <form id="form" class="controls">
+    <div class="row">
+      <label for="author">Display name</label>
+      <input type="text" id="author" autocomplete="off" maxlength="32" />
+      <span class="transport">
+        Transport:
+        <label><input type="radio" name="transport" value="ws" checked />WebSocket</label>
+        <label><input type="radio" name="transport" value="rest" />REST polling</label>
+      </span>
+    </div>
+    <div class="row">
+      <input type="text" id="text" autocomplete="off" maxlength="240" required placeholder="Type a message…" />
+      <button type="submit" id="send" disabled>Send via both</button>
+    </div>
+    <div class="row" id="send-status"></div>
+  </form>
+
+  <div class="panes">
+    <section class="pane">
+      <div class="pane-header">
+        <h3>capnwasm</h3>
+        <span class="framing">Cap'n Proto wire · <code>PostParams</code> in, <code>ChatMessage</code>(s) out</span>
+      </div>
+      <div id="status-capnwasm" class="status">Connecting…</div>
+      <div id="log-capnwasm" class="log" aria-live="polite"></div>
+    </section>
+
+    <section class="pane">
+      <div class="pane-header">
+        <h3>capnweb</h3>
+        <span class="framing">JSON wire · <code>cap.post(author, text)</code> + callback stub or <code>getMessagesSince</code></span>
+      </div>
+      <div id="status-capnweb" class="status">Connecting…</div>
+      <div id="log-capnweb" class="log" aria-live="polite"></div>
+    </section>
+  </div>
+
+  <div class="notes">
+    <h3>What's the same / what's different</h3>
+    <div class="compare">
+      <div>
+        <strong>capnwasm</strong>
+        <pre class="code">// Browser
+const r = cap.callBuilder(IFC, M_POST, PostParamsBuilder);
+r.params.author = author;
+r.params.text   = text;
+await r.send().promise;
+
+// WebSocket subscribe
+for await (const chunk of sub.updates) {
+  const m = openChatMessage(cpp, chunk);
+  render({ id: Number(m.id), author: m.author, text: m.text });
+}
+
+// REST poll
+await r.send({
+  resultsReader: ChatMessageListReader,
+  extract: (rdr) =&gt; { for (let i = 0; i &lt; rdr.items.length; i++) ... },
+}).promise;</pre>
+        Schema-driven binary frames, fields read from wasm linear memory by precomputed offset, no JSON in the chat path.
+      </div>
+      <div>
+        <strong>capnweb</strong>
+        <pre class="code">// Browser
+const main = newWebSocketRpcSession("/capnweb-chat-ws");
+//        OR newHttpBatchRpcSession("/capnweb-chat-http");
+await main.post(author, text);
+
+// WebSocket subscribe (callback stub)
+class Sub extends RpcTarget {
+  onMessage(m) { render(m); }
+}
+await main.subscribe(new Sub());
+
+// REST poll
+const items = await main.getMessagesSince(cursor);</pre>
+        JSON-shaped messages, server holds <code>callback.dup()</code> and invokes <code>onMessage</code> per broadcast — the cap-passing pattern.
+      </div>
+    </div>
+    <p style="margin-top: 1em; font-size: 0.9em; color: #555">
+      Both panes are served by one <code>ChatRoom</code> Durable Object
+      (<a href="https://github.com/teamchong/capnwasm/blob/main/src/chat_room.mjs">src/chat_room.mjs</a>),
+      with two independent state buckets (history, id sequence, subscribers) — one per library.
+      The DO is also what makes broadcast work on Cloudflare: every WebSocket event runs in the
+      same I/O context, so a POST on socket A can wake the subscribe stream on socket B without
+      crossing workerd's per-event request boundary.
+    </p>
+    <p><a href="./">&larr; back to landing</a></p>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>capnwasm &mdash; notes from the trenches</title>
+  <meta name="description" content="A field report on rebuilding capnweb's wire format with real Cap'n Proto in wasm — the surprises, the negative results, and the workloads where each protocol wins." />
+  <meta property="og:title" content="capnwasm — notes from the trenches" />
+  <meta property="og:description" content="Field report: 5 perf traps, 1 negative SIMD result, 5 wins. Why hand-rolled fast paths were 30× slower, why calloc was 70% of CPU, why SIMD didn't help RPC." />
+  <meta property="og:image" content="/og-image.svg" />
+  <meta property="og:type" content="article" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="capnwasm — notes from the trenches" />
+  <meta name="twitter:description" content="Field report: 5 perf traps, 1 negative SIMD result, 5 wins." />
+  <meta name="twitter:image" content="/og-image.svg" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <script type="module" crossorigin src="/assets/main-D1o9XKOZ.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/style-BhgZW8HM.css">
+  <link rel="stylesheet" crossorigin href="/assets/style-CwTc6JpS.css">
+</head>
+<body>
+  <article id="app">
+    <header>
+      <h1><a href="./">capnwasm</a> <span class="dim">notes from the trenches</span></h1>
+      <p class="subtitle">
+        A field report on rebuilding capnweb&apos;s wire format with real
+        Cap&apos;n Proto in wasm. The hypothesis was &ldquo;the binary wire is doing
+        real work that JSON can&apos;t.&rdquo; The actual surprises were elsewhere.
+      </p>
+      <nav>
+        <a href="./">&larr; Landing</a> &middot;
+        <a href="./playground.html">Fetch playground</a> &middot;
+        <a href="./rpc.html">RPC bench</a> &middot;
+        <a href="./vs-capnweb.html">vs capnweb</a>
+      </nav>
+    </header>
+
+    <section>
+      <h2>Setup</h2>
+      <ul>
+        <li>Real upstream Cap&apos;n Proto C++ (not a JS reimplementation).</li>
+        <li>Compiled with <code>zig cc</code> targeting <code>wasm32-wasi-musl</code>. No emscripten.</li>
+        <li><code>-Oz -flto -fdata-sections -ffunction-sections -Wl,--gc-sections -fmerge-all-constants -Wl,--strip-all</code>. Then <code>wasm-opt -Oz --converge</code> on top.</li>
+        <li>Pre-allocated arenas instead of malloc/free per RPC frame.</li>
+        <li>JS-side codegen with V8-friendly hidden-class shapes, ES2024 <code>Promise.withResolvers</code>, etc.</li>
+      </ul>
+      <p>Result: <strong>44 KB gz</strong> total bundle (JS shim + separately-fetched wasm) for the browser path.</p>
+    </section>
+
+    <section>
+      <h2>Trap 1: a &ldquo;fast-path&rdquo; that was 30&times; slower than the safe path</h2>
+      <p>The original codegen for text fields had this:</p>
+<pre><code>// "Fast" ASCII path — avoid TextDecoder allocation overhead
+let asciiOk = true;
+for (let i = 0; i &lt; bytes.length; i++) if (bytes[i] &gt;= 0x80) { asciiOk = false; break; }
+if (asciiOk) {
+  let s = "";
+  for (let i = 0; i &lt; bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return s;
+}
+return new TextDecoder().decode(bytes);</code></pre>
+      <p>The intent was to dodge TextDecoder&apos;s per-call setup cost. The reality:</p>
+      <table class="cmp small">
+        <thead><tr><th>length</th><th>hand-rolled loop</th><th>shared <code>TextDecoder.decode</code></th></tr></thead>
+        <tbody>
+          <tr><td>4 B</td>   <td>23 ns</td>  <td>46 ns</td></tr>
+          <tr><td>16 B</td>  <td>98 ns</td>  <td class="win">50 ns</td></tr>
+          <tr><td>256 B</td> <td>968 ns</td> <td class="win">65 ns</td></tr>
+          <tr><td>4 KB</td>  <td>13.0 &mu;s</td><td class="win">0.41 &mu;s</td></tr>
+          <tr><td>64 KB</td> <td>305.2 &mu;s</td><td class="win">4.1 &mu;s</td></tr>
+        </tbody>
+      </table>
+      <p>V8&apos;s <code>TextDecoder.decode</code> is internal C++ that crushes any JS string-concat loop above ~12 bytes. The crossover is so far below typical message sizes that the &ldquo;fast path&rdquo; was the slow path for almost every real string. Removing it dropped 64 KB text echo from <strong>1076 &mu;s &rarr; 110 &mu;s</strong> per round-trip (~10&times; faster).</p>
+      <p><strong>Lesson</strong>: V8 ships internal C++ for <code>TextDecoder</code>, <code>TextEncoder</code>, <code>JSON.parse</code>, <code>Uint8Array.set</code>, <code>memcpy</code> (via wasm <code>memory.copy</code>), regex, etc. Hand-rolled JS loops don&apos;t beat them above trivial sizes. Always benchmark before introducing a &ldquo;fast path.&rdquo;</p>
+    </section>
+
+    <section>
+      <h2>Trap 2: 70% of CPU was in <code>calloc</code></h2>
+      <p>CPU-profiling a tight u8-echo RPC loop showed 70% of time in a single wasm function. Disassembling it: it was <code>calloc</code> &mdash; allocating a fresh segment for every <code>MallocMessageBuilder</code> we built, then zeroing it. The destructor freed it. We did this 4&times; per RPC round-trip (Bootstrap, Call, Return, Finish). Most messages were &lt;100 bytes; we were allocating a fresh KB+ segment for every one.</p>
+      <p>Fix: placement-new the <code>MallocMessageBuilder</code> into a static <code>char[]</code> buffer with a pre-allocated <code>word[]</code> first segment passed in via the constructor&apos;s borrowed-segment overload. The destructor zeroes a borrowed segment but doesn&apos;t free it, so re-initialization sees a fresh zeroed buffer with no allocator round-trip.</p>
+      <p>Per-call wasm cost dropped:</p>
+      <ul>
+        <li>tiny u8 echo: 17.7 &mu;s &rarr; <strong>8.5 &mu;s</strong> (~2&times; faster)</li>
+        <li>64 KB text: 110 &mu;s &rarr; <strong>96 &mu;s</strong> (~14% faster on top of the TextDecoder fix)</li>
+        <li>burst 1000: 7.85 &mu;s &rarr; <strong>2.5 &mu;s</strong> per call (~3&times; faster aggregated)</li>
+      </ul>
+      <p><strong>Lesson</strong>: object pooling is one of the oldest perf tricks in the book and Cap&apos;n Proto&apos;s <code>MallocMessageBuilder</code> API supports it cleanly via the borrowed-firstSegment constructor. Same pattern as Linux&apos;s slab allocator, Netty&apos;s <code>ByteBufPool</code>, Go&apos;s <code>sync.Pool</code>. If you&apos;re allocating the same shape repeatedly in a hot loop, stop allocating.</p>
+    </section>
+
+    <section>
+      <h2>Trap 3: V8 hidden classes are unforgiving</h2>
+      <p>The session&apos;s &ldquo;question record&rdquo; was created in two different shapes depending on call type:</p>
+<pre><code>// Bootstrap call
+{ deferred, kind: "bootstrap", bootstrapCap }
+
+// Regular call
+{ deferred, kind: "call" }
+// or sometimes
+{ deferred, kind: "call", resultsReader, extract }</code></pre>
+      <p>V8 transitions hidden classes when properties are added. Three different shapes meant <code>#handleReturn</code>&apos;s <code>q.extract</code> access site was polymorphic &mdash; couldn&apos;t be inlined into the fast path. The deopt cost ~1 &mu;s on every Return.</p>
+      <p>Fix: factory function that always emits the same shape with <code>undefined</code> in unused slots:</p>
+<pre><code>function makeQ(deferred, kind, bootstrapCap, resultsReader, extract) {
+  return { deferred, kind, bootstrapCap, resultsReader, extract };
+}</code></pre>
+      <p>Cap-passing case flipped from 0.95&times; of capnweb to <strong>1.02&times;</strong> (we beat it now).</p>
+      <p><strong>Lesson</strong>: in V8, &ldquo;always create with the same fields in the same order&rdquo; is a perf-relevant invariant, not just a style nit. Same shape every time &rarr; monomorphic inline cache &rarr; JIT inlines aggressively. This is true for SpiderMonkey and HotSpot too &mdash; uniformity at object creation pays off at every read site.</p>
+    </section>
+
+    <section>
+      <h2>Trap 4: GC was 16% of CPU during burst workloads</h2>
+      <p>After all the above, profile a 1000-call burst: 2.5 &mu;s per call, but 16% of total CPU was in the GC. The hottest allocator was the per-call question record (referenced from a <code>Map</code> until <code>#handleReturn</code> deletes it, then garbage).</p>
+      <p>Fix: simple freelist, capped at 256 entries.</p>
+<pre><code>const Q_POOL = [];
+function makeQ(...) {
+  const q = Q_POOL.pop();
+  if (q) { /* reset fields */ return q; }
+  return { /* fresh */ };
+}
+function recycleQ(q) {
+  if (Q_POOL.length &gt;= 256) return;
+  /* null out fields */
+  Q_POOL.push(q);
+}</code></pre>
+      <p>Burst 1000 dropped from <strong>2.76 &mu;s &rarr; 2.48 &mu;s</strong> per call. The young-gen GC stopped firing in the bench loop entirely.</p>
+      <p><strong>Lesson</strong>: Promise/object/buffer pools are still relevant in 2026 if your workload allocates the same shape thousands of times per second. V8&apos;s GC is fast but it&apos;s not free.</p>
+    </section>
+
+    <section>
+      <h2>Trap 5: skip the wasm boundary when you already know the bytes</h2>
+      <p>A <code>Finish</code> frame is a fixed-shape Cap&apos;n Proto message &mdash; 44 bytes, identical for every question except for the questionId at byte 36 (LE u32). We were calling <code>cpp_rpc_build_finish(id)</code> for every reply: a wasm boundary crossing, a <code>MallocMessageBuilder</code> placement-new, a serialize, a memcpy. ~300 ns of work to produce an output we could have hand-coded.</p>
+      <p>Fix:</p>
+<pre><code>const FINISH_TEMPLATE = new Uint8Array([
+  0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // length prefix
+  0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,  // segment table
+  0x00, 0x00, 0x00, 0x00,                          // padding
+  0x01, 0x00, 0x01, 0x00, 0x04, 0x00, 0x00, 0x00,  // root pointer
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // rpc.Message which=4 (finish)
+  0x01, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,                          // questionId @ byte 36
+  0x00, 0x00, 0x00, 0x00,                          // releaseResultCaps
+]);
+function buildFinishFrame(questionId) {
+  const out = new Uint8Array(FINISH_TEMPLATE);
+  out[36] = questionId &amp; 0xff;
+  out[37] = (questionId &gt;&gt;&gt; 8) &amp; 0xff;
+  out[38] = (questionId &gt;&gt;&gt; 16) &amp; 0xff;
+  out[39] = (questionId &gt;&gt;&gt; 24) &amp; 0xff;
+  return out;
+}</code></pre>
+      <p>This is the same shape as DNS replies (mostly canned), TCP ACK packets (mostly canned), HTTP/2 SETTINGS frames (mostly canned). When most of your bytes are already known, don&apos;t run code to produce them.</p>
+    </section>
+
+    <section>
+      <h2>The SIMD experiment, with a negative result</h2>
+      <p>The natural next thing to try after all of the above: enable wasm SIMD and let the compiler auto-vectorize what it can.</p>
+      <p>Tried two configurations:</p>
+      <table class="cmp small">
+        <thead><tr><th>build</th><th>wasm gz</th><th>tiny u8</th><th>256B text</th><th>4KB text</th><th>64KB text</th></tr></thead>
+        <tbody>
+          <tr><td>baseline (<code>-Oz</code>, no SIMD)</td><td>41.0 KB</td><td>8.96 &mu;s</td><td>5.0 &mu;s</td><td>16.9 &mu;s</td><td>96.0 &mu;s</td></tr>
+          <tr><td><code>-Oz -msimd128</code></td>           <td>41.2 KB</td><td>8.85 &mu;s</td><td>4.67 &mu;s</td><td>16.84 &mu;s</td><td>98.65 &mu;s</td></tr>
+          <tr><td><code>-O3 -msimd128 -mrelaxed-simd</code></td><td>49.7 KB</td><td>8.25 &mu;s</td><td>5.26 &mu;s</td><td>15.07 &mu;s</td><td>96.15 &mu;s</td></tr>
+        </tbody>
+      </table>
+      <p>Numbers are all within run-to-run noise (&plusmn;5%) except for <code>-O3</code> showing modest 8-10% wins on tiny u8 and 4KB text &mdash; but those came with a 22% bundle-size increase, and they&apos;re pure CPU savings under 2 &mu;s per call that disappear behind any real network.</p>
+      <p><strong>Why SIMD doesn&apos;t help here</strong>: the work breakdown of an RPC round-trip after the optimizations above is now:</p>
+      <ul>
+        <li>JS&harr;wasm boundary crossings (~17 calls &times; 6 ns)</li>
+        <li>Microtask scheduling (3 boundaries &times; ~250 ns)</li>
+        <li><code>Map.set</code> / <code>Map.delete</code> for question tracking</li>
+        <li>C++ pointer-following (Cap&apos;n Proto wire navigation &mdash; branchy, sequential)</li>
+        <li>Per-field integer load/store (single instruction each)</li>
+        <li><code>memcpy</code> of frame bytes (already vectorized via wasm <code>memory.copy</code>)</li>
+        <li><code>TextDecoder.decode</code> / <code>TextEncoder.encodeInto</code> (already SIMD inside V8)</li>
+        <li>GC pressure</li>
+      </ul>
+      <p>Everything that <em>would</em> benefit from SIMD is <strong>already SIMD-accelerated by V8 internals</strong>. The remaining hot work is sequential integer ops where SIMD has nothing to parallelize. Cap&apos;n Proto&apos;s wire format intentionally has no compression, no checksum, no math &mdash; it&apos;s &ldquo;random-access reads on raw bytes.&rdquo; That&apos;s the source of its perf, but it&apos;s also why SIMD has nothing to chew on.</p>
+      <p><strong>Lesson</strong>: SIMD wins on workloads that look like ML or graphics &mdash; vector dot products, image filters, audio mixing, hash functions, video frame transforms. It doesn&apos;t win on RPC-shaped work, where the bottlenecks are call-graph latency (boundary, microtask, GC) rather than parallel arithmetic. Reverted the change. The negative result is more useful than a slightly-faster build with a 22% size penalty.</p>
+    </section>
+
+    <section>
+      <h2>Final scoreboard vs. capnweb</h2>
+      <p>In-process bench, both peers in the same Node process via a memory transport pair:</p>
+      <table class="cmp small">
+        <thead><tr><th>workload</th><th>capnweb</th><th>capnwasm</th><th>speedup</th></tr></thead>
+        <tbody>
+          <tr><td>tiny u8 echo</td>      <td>14.0 &mu;s</td><td class="win">8.5 &mu;s</td>  <td class="note">1.7&times;</td></tr>
+          <tr><td>16 B text echo</td>    <td>8.0 &mu;s</td> <td class="win">6.4 &mu;s</td>  <td class="note">1.3&times;</td></tr>
+          <tr><td>256 B text echo</td>   <td>8.5 &mu;s</td> <td class="win">4.6 &mu;s</td>  <td class="note">1.9&times;</td></tr>
+          <tr><td>4 KB text echo</td>    <td>27.0 &mu;s</td><td class="win">16.9 &mu;s</td> <td class="note">1.6&times;</td></tr>
+          <tr><td>64 KB text echo</td>   <td>365 &mu;s</td> <td class="win">96 &mu;s</td>   <td class="note">3.8&times;</td></tr>
+          <tr><td>burst 1000 / call</td> <td>7.9 &mu;s</td> <td class="win">2.5 &mu;s</td>  <td class="note">3.2&times;</td></tr>
+          <tr><td>5 MB binary asset</td> <td>6.6 MB on wire</td><td class="win">5.0 MB on wire</td><td class="note">no base64</td></tr>
+        </tbody>
+      </table>
+      <table class="cmp small">
+        <thead><tr><th></th><th>capnwasm</th><th>capnweb</th></tr></thead>
+        <tbody>
+          <tr><td>Bundle (gz)</td>   <td>44 KB</td>   <td class="win">21 KB</td></tr>
+          <tr><td>Cold start</td>    <td>~3 ms</td>   <td class="win">~0.2 ms</td></tr>
+          <tr><td>Multi-language wire interop</td><td class="win">yes</td><td>no</td></tr>
+          <tr><td>OpenAPI client codegen</td>     <td class="win">yes</td><td>structurally no</td></tr>
+          <tr><td>Schema requirement</td><td>yes</td><td class="win">no</td></tr>
+        </tbody>
+      </table>
+      <p>The frame: <strong>capnweb keeps Cap&apos;n Proto-style RPC semantics in a compact JS-only package with a JSON-shaped wire. capnwasm keeps the Cap&apos;n Proto binary wire too, by paying for a wasm runtime.</strong> For workloads where the wire matters &mdash; binary data, cross-language interop, sustained throughput &mdash; the binary wire can win by a lot. For workloads where the wire doesn&apos;t matter &mdash; small JSON-shaped payloads in a JS-only stack &mdash; capnweb&apos;s small bundle and fast cold start are the better tradeoff.</p>
+      <p>Neither one is wrong. They&apos;re optimized for different things. capnweb intentionally favors a small JS-only bundle and a JSON-shaped wire that feels natural in JavaScript apps. capnwasm explores the opposite choice: keep the binary Cap&apos;n Proto wire and pay the wasm/runtime cost. The useful result is the boundary between those choices: capnweb is better for tiny JS-shaped traffic and bundle budgets; capnwasm becomes interesting when the workload is binary-heavy, large, sparse, or cross-language.</p>
+    </section>
+
+    <section>
+      <h2>What exists now</h2>
+      <p>The repo has grown beyond the original perf experiment. The useful pieces today are:</p>
+      <table class="cmp small">
+        <thead><tr><th>piece</th><th>what it is for</th><th>tradeoff</th></tr></thead>
+        <tbody>
+          <tr><td>generated readers/builders</td><td>schema known at build time; fastest typed path</td><td>requires codegen</td></tr>
+          <tr><td><code>capnwasm/dynamic</code></td><td>schema known only at runtime; admin tools, tenant schemas, schema explorers</td><td>string-keyed API (<code>get</code> / <code>pick</code>) is less ergonomic and slower than generated readers</td></tr>
+          <tr><td>RPC over WebSocket / HTTP-batch</td><td>Cap&apos;n Proto RPC frames in browser/Worker/Node</td><td>wasm/runtime cost vs JS-only RPC</td></tr>
+          <tr><td>streaming</td><td>server can push chunks; optional flow-control window</td><td>custom stream extension on top of <code>rpc.capnp</code></td></tr>
+          <tr><td>batching / pipelining</td><td>same-tick call batching, small optional <code>batchWindowMs</code>, promised-cap pipelining</td><td>cannot batch calls that user code has not constructed yet</td></tr>
+          <tr><td>binary <code>Data</code> fields</td><td>raw bytes, no base64 tax</td><td>best payoff on binary-heavy payloads, not tiny control-plane calls</td></tr>
+          <tr><td>interop + schema evolution tests</td><td>verify upstream <code>capnp</code> wire compatibility and version-skew behavior</td><td>still only covers the shapes tested in this repo</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>OpenAPI &harr; Cap&apos;n Proto work</h2>
+      <p>This became a second major thread: use one manifest pipeline to move between OpenAPI, TypeScript REST interfaces, and Cap&apos;n Proto schemas.</p>
+      <p>What is built:</p>
+      <ul>
+        <li><strong><code>capnwasm manifest</code></strong>: converts <code>.capnp</code>, TypeScript <code>@rest</code> interfaces, or OpenAPI into one manifest shape.</li>
+        <li><strong><code>emit-capnp</code></strong>: manifest/OpenAPI &rarr; canonical <code>.capnp</code>, including components, REST methods, annotations, and deterministic file IDs.</li>
+        <li><strong><code>emit-openapi</code></strong>: manifest &rarr; canonical OpenAPI, so the flow can round-trip back to REST tooling.</li>
+        <li><strong><code>lock</code></strong>: pins Cap&apos;n Proto field ordinals and operation IDs across schema edits; supports rename detection.</li>
+        <li><strong><code>compat</code> / <code>diff</code></strong>: flags breaking vs non-breaking contract changes across manifest/OpenAPI versions.</li>
+        <li><strong><code>probe</code></strong>: hits a real REST or Cap&apos;n Proto target and compares observed response shape with declared schema shape.</li>
+        <li><strong><code>emit-codec</code>, <code>emit-agents</code>, <code>mcp</code></strong>: JSON &harr; capnp converters and LLM/tool schemas from the same contract.</li>
+      </ul>
+      <table class="cmp small">
+        <thead><tr><th>path</th><th>good for</th><th>tradeoff</th></tr></thead>
+        <tbody>
+          <tr><td>OpenAPI / JSON</td><td>public REST docs, partner APIs, tiny text payloads, DevTools-friendly debugging</td><td class="win">smallest adoption cost</td></tr>
+          <tr><td>Cap&apos;n Proto / capnwasm</td><td>binary payloads, sparse reads, cross-language RPC, explicit schema evolution</td><td>pays wasm/runtime cost</td></tr>
+          <tr><td>Manifest pipeline</td><td>keeping both worlds in sync, detecting breaking changes, emitting docs/tools/codec</td><td>extra contract discipline up front</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Reproducing</h2>
+<pre><code>git clone https://github.com/teamchong/capnwasm
+cd capnwasm
+pnpm install
+bash cpp/build.sh       # builds wasm + inlined.mjs
+pnpm test               # 400+ tests; installs Playwright Chromium on first run if missing
+node bench/rpc_bench.mjs # in-process RPC bench
+node bench/realistic.mjs # burst throughput, wire bytes, sparse access</code></pre>
+      <p>For the SIMD experiment specifically, edit <code>cpp/build.sh</code> to add <code>-msimd128 -mrelaxed-simd</code> and switch <code>-Oz</code> to <code>-O3</code>, then re-run <code>bash cpp/build.sh &amp;&amp; node bench/rpc_bench.mjs</code>. Numbers come out within 10% of baseline &mdash; confirm or refute on your hardware.</p>
+    </section>
+
+    <footer>
+      <a href="https://github.com/teamchong/capnwasm">GitHub</a> &middot;
+      <a href="https://www.npmjs.com/package/capnwasm">npm</a> &middot;
+      <a href="./">capnwasm</a>
+    </footer>
+  </article>
+</body>
+</html>

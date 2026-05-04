@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>capnwasm &mdash; dynamic schema demo</title>
+  <meta name="description" content="Runtime schema demo: build and read Cap'n Proto bytes without codegen, then round-trip through a Worker." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <style>
+    .demo-panel { background:#141414; border:1px solid #222; border-radius:12px; padding:18px 20px; margin:24px 0; }
+    .demo-panel h2 { margin-top:0; }
+    .status-line { font-family: ui-monospace, SFMono-Regular, monospace; color:#888; font-size:0.85rem; }
+    .status-line.ok { color:#66bb6a; }
+    .status-line.error { color:#ff7043; }
+    .kv { display:grid; grid-template-columns: 180px 1fr; gap:8px 14px; margin-top:14px; font-size:0.86rem; }
+    .kv dt { color:#888; }
+    .kv dd { margin:0; font-family: ui-monospace, SFMono-Regular, monospace; color:#e0e0e0; overflow-wrap:anywhere; }
+    .note { color:#aaa; font-size:0.88rem; line-height:1.6; }
+  </style>
+  <script type="module" crossorigin src="/assets/dynamic-BFtWOsvV.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/main-D1o9XKOZ.js">
+  <link rel="modulepreload" crossorigin href="/assets/browser-Cvhjzqnm.js">
+  <link rel="stylesheet" crossorigin href="/assets/style-BhgZW8HM.css">
+  <link rel="stylesheet" crossorigin href="/assets/style-CwTc6JpS.css">
+</head>
+<body>
+  <article id="app">
+    <header>
+      <h1><a href="./">capnwasm</a> <span class="dim">dynamic schema demo</span></h1>
+      <p class="subtitle">
+        Runtime schema, no generated reader/builder. This is the path for tenant-uploaded schemas,
+        admin tools, schema explorers, or anything where the shape arrives after the app ships.
+      </p>
+      <nav>
+        <a href="./">&larr; Landing</a> &middot;
+        <a href="./inspect.html">Wire inspector</a> &middot;
+        <a href="./vs-capnweb.html">vs capnweb</a>
+      </nav>
+    </header>
+
+    <section class="demo-panel">
+      <h2>Live result</h2>
+      <p class="note">
+        The browser defines a <code>User</code> schema as plain JS data, builds Cap&apos;n Proto bytes,
+        decodes only selected fields with <code>pick(["id", "name", "active"])</code>, then POSTs
+        the bytes to <code>/api/echo</code>. The Worker decodes and re-encodes the same wire shape.
+      </p>
+      <p id="status" class="status-line">Loading wasm runtime…</p>
+      <dl class="kv" id="result"></dl>
+    </section>
+
+    <section>
+      <h2>The whole demo</h2>
+      <pre><code>import { load } from "capnwasm/browser";
+import { defineSchema, buildDynamic, openDynamic } from "capnwasm/dynamic";
+
+const User = defineSchema({
+  id:         { kind: "uint64", offset: 0 },
+  name:       { kind: "text",   slot: 0 },
+  email:      { kind: "text",   slot: 1 },
+  joinedAtMs: { kind: "uint64", offset: 8 },
+  active:     { kind: "bool",   bitOffset: 128 },
+  avatar:     { kind: "data",   slot: 2 },
+}, { dataWords: 3, ptrWords: 3 });
+
+const cpp = await load();
+const bytes = buildDynamic(cpp, User)
+  .fromObject({ id: 42n, name: "Dynamic Ada", active: true, avatar })
+  .finalize();
+
+const picked = openDynamic(cpp, User, bytes).pick(["id", "name", "active"]);
+const echoed = await fetch("/api/echo", { method: "POST", body: bytes }).then(r =&gt; r.arrayBuffer());
+const roundTrip = openDynamic(cpp, User, new Uint8Array(echoed)).toObject();</code></pre>
+    </section>
+
+    <section>
+      <h2>When to use dynamic vs codegen</h2>
+      <table class="cmp small">
+        <thead><tr><th></th><th>dynamic</th><th>codegen</th></tr></thead>
+        <tbody>
+          <tr><td>Schema known at build time</td><td>works</td><td class="win">preferred</td></tr>
+          <tr><td>Schema arrives at runtime</td><td class="win">only option</td><td>not applicable</td></tr>
+          <tr><td>Read arbitrary field subset</td><td class="win"><code>pick(names)</code></td><td>works</td></tr>
+          <tr><td>Hot typed path</td><td>slower per field</td><td class="win">faster</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer>
+      <a href="https://github.com/teamchong/capnwasm">GitHub</a> &middot;
+      <a href="https://www.npmjs.com/package/capnwasm">npm</a> &middot;
+      <a href="./">capnwasm</a>
+    </footer>
+  </article>
+
+</body>
+</html>

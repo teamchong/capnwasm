@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>capnwasm &mdash; OpenAPI conversion demo</title>
+  <meta name="description" content="Live OpenAPI to manifest to Cap'n Proto conversion demo." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <style>
+    .grid { display:grid; grid-template-columns:1fr; gap:18px; align-items:stretch; }
+    @media (min-width: 980px) { .grid { grid-template-columns: 1fr 1fr; } }
+    .grid > .col { display:flex; flex-direction:column; min-width:0; }
+    .grid > .col > h3:first-child { margin-top:0; }
+    textarea { flex:1 1 auto; width:100%; min-height:420px; background:#0d1418; color:#e0e0e0; border:1px solid #1a2832; border-radius:8px; padding:12px 14px; font-family:ui-monospace,SFMono-Regular,monospace; font-size:12px; line-height:1.45; resize:none; overflow:auto; white-space:pre; }
+    .controls { display:flex; gap:12px; align-items:center; margin:14px 0; flex-wrap:wrap; }
+    button { background:#4fc3f7; color:#0a0a0a; border:0; padding:8px 14px; border-radius:6px; font-weight:700; cursor:pointer; }
+    button.secondary { background:transparent; color:#cfd8dc; border:1px solid #2d3c47; }
+    button:disabled { background:#2d3c47; color:#7a8995; cursor:not-allowed; }
+    .transport { display:flex; gap:0.4em; align-items:center; font-size:0.85em; color:#aaa; }
+    .transport label { cursor:pointer; padding:0.2em 0.5em; border-radius:3px; }
+    .transport input[type=radio] { margin-right:0.3em; vertical-align:middle; }
+    .status { color:#888; font-family:ui-monospace,SFMono-Regular,monospace; font-size:0.82rem; }
+    .status.ok { color:#66bb6a; }
+    .status.error { color:#ff7043; }
+    .summary { background:#0d1418; border:1px solid #1a2832; border-radius:8px; padding:12px 14px; color:#aaa; font-size:0.86rem; line-height:1.6; }
+    .summary strong { color:#e0e0e0; }
+    .dropzone { display:block; border:2px dashed #2d3c47; border-radius:10px; padding:14px 16px; color:#aaa; font-size:0.86rem; text-align:center; cursor:pointer; margin-bottom:10px; transition:border-color .15s, color .15s, background .15s; }
+    .dropzone strong { color:#cfd8dc; }
+    .dropzone:hover, .dropzone.drag { border-color:#4fc3f7; color:#cfd8dc; background:#0d1418; }
+    .dropzone input[type="file"] { display:none; }
+    .download-bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  </style>
+  <script type="module" crossorigin src="/assets/openapi-DmLySsJO.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/main-D1o9XKOZ.js">
+  <link rel="stylesheet" crossorigin href="/assets/style-BhgZW8HM.css">
+  <link rel="stylesheet" crossorigin href="/assets/style-CwTc6JpS.css">
+</head>
+<body>
+  <article id="app">
+    <header>
+      <h1><a href="./">capnwasm</a> <span class="dim">OpenAPI conversion</span></h1>
+      <p class="subtitle">
+        Paste OpenAPI JSON. The browser converts it to capnwasm&apos;s manifest IR,
+        emits canonical <code>.capnp</code>, and emits canonical OpenAPI again.
+      </p>
+      <nav>
+        <a href="./">&larr; Landing</a> &middot;
+        <a href="./dynamic.html">Dynamic demo</a> &middot;
+        <a href="./vs-capnweb.html">vs capnweb</a>
+      </nav>
+    </header>
+
+    <section>
+      <h2>Live converter</h2>
+      <p>
+        OpenAPI &harr; Cap&apos;n Proto bridge. For pure <em>OpenAPI &rarr; typed JS client</em> work, mature
+        generators (<code>openapi-typescript</code>, <code>kiota</code>, <code>openapi-generator</code>)
+        cover more edge cases. This page&apos;s niche is the rare OpenAPI &harr; <code>.capnp</code> pairing,
+        and it runs the same parser/emitter modules as the CLI: <code>parseOpenApi</code>,
+        <code>buildManifest</code>, <code>buildCapnp</code>, <code>buildOpenApiJson</code>.
+      </p>
+      <div class="controls">
+        <span class="transport">
+          Direction:
+          <label><input type="radio" name="direction" value="openapi-to-capnp" checked />OpenAPI &rarr; .capnp</label>
+          <label><input type="radio" name="direction" value="capnp-to-openapi" />.capnp &rarr; OpenAPI</label>
+        </span>
+        <button id="convert">Convert</button>
+        <span id="status" class="status">Ready.</span>
+      </div>
+      <div class="grid">
+        <div class="col">
+          <h3 id="input-title">Input</h3>
+          <label class="dropzone" id="dropzone">
+            <strong id="dropzone-text">Drop a file here, or click to upload.</strong>
+            <input id="file-input" type="file" />
+          </label>
+          <textarea id="input" spellcheck="false"></textarea>
+        </div>
+        <div class="col">
+          <div class="download-bar">
+            <button id="download-capnp" class="secondary" disabled>Download .capnp</button>
+            <button id="download-manifest" class="secondary" disabled>Download manifest.json</button>
+            <button id="download-openapi" class="secondary" disabled>Download canonical OpenAPI</button>
+          </div>
+          <h3>Manifest summary</h3>
+          <div id="summary" class="summary">Run conversion.</div>
+          <h3 id="primary-out-title">Result</h3>
+          <pre><code id="primary-out">—</code></pre>
+          <div id="secondary-block">
+            <h3 id="secondary-out-title">Round-trip back to OpenAPI</h3>
+            <p style="color:#777;font-size:0.78rem;margin:-6px 0 6px 0">Sanity check: input &rarr; manifest &rarr; canonical OpenAPI. Should match your input.</p>
+            <pre><code id="secondary-out">—</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Pros / cons</h2>
+      <table class="cmp small">
+        <thead><tr><th>path</th><th>good for</th><th>tradeoff</th></tr></thead>
+        <tbody>
+          <tr><td>OpenAPI / JSON</td><td>public REST docs, partner APIs, DevTools-friendly debugging</td><td class="win">lowest adoption cost</td></tr>
+          <tr><td>Cap&apos;n Proto</td><td>binary payloads, sparse reads, cross-language RPC, explicit schema evolution</td><td>requires schema/runtime discipline</td></tr>
+          <tr><td>Manifest pipeline</td><td>keeping OpenAPI, capnp, tests, probes, codecs, and tools in sync</td><td>extra contract step up front</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+  </article>
+
+</body>
+</html>

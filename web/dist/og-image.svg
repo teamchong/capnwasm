@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0a0a"/>
+      <stop offset="1" stop-color="#0d1418"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect x="40" y="40" width="1120" height="550" rx="20" fill="none" stroke="#1a2832" stroke-width="2"/>
+
+  <!-- Brand mark -->
+  <text x="80" y="140" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        font-weight="700" font-size="72" fill="#e0e0e0">capn<tspan fill="#4fc3f7" font-weight="400">wasm</tspan></text>
+
+  <!-- Tagline -->
+  <text x="80" y="200" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        font-size="28" fill="#888">Real Cap'n Proto C++ in the browser. 44 KB gzip.</text>
+
+  <!-- Three big numbers -->
+  <g font-family="ui-monospace, SFMono-Regular, monospace" font-weight="700">
+    <g>
+      <text x="80"  y="340" font-size="100" fill="#66bb6a">5×</text>
+      <text x="80"  y="395" font-size="22"  fill="#bbb">faster</text>
+      <text x="80"  y="425" font-size="22"  fill="#888">RPC burst</text>
+    </g>
+    <g>
+      <text x="430" y="340" font-size="100" fill="#66bb6a">2.4×</text>
+      <text x="430" y="395" font-size="22"  fill="#bbb">smaller</text>
+      <text x="430" y="425" font-size="22"  fill="#888">wire bytes (gz)</text>
+    </g>
+    <g>
+      <text x="820" y="340" font-size="100" fill="#66bb6a">3.8×</text>
+      <text x="820" y="395" font-size="22"  fill="#bbb">faster</text>
+      <text x="820" y="425" font-size="22"  fill="#888">64 KB echo</text>
+    </g>
+  </g>
+
+  <!-- Honest about the loss -->
+  <text x="80" y="500" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        font-size="22" fill="#ffa726">…and 2.1× larger bundle than capnweb (we say so on the site).</text>
+
+  <!-- Footer -->
+  <text x="80" y="555" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        font-size="20" fill="#666">vs capnweb &amp; REST/JSON · live in-browser bench at the link</text>
+</svg>

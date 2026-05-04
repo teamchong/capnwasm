@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>capnwasm — Cap'n Proto for the browser</title>
+  <meta name="description" content="Real Cap'n Proto C++ compiled to wasm. Type-safe binary RPC for browser workloads that need binary wire interop." />
+  <meta property="og:title" content="capnwasm — Cap'n Proto for the browser" />
+  <meta property="og:description" content="Type-safe binary RPC, real Cap'n Proto wasm runtime. Smaller binary payloads and live browser benchmarks vs capnweb." />
+  <meta property="og:image" content="/og-image.svg" />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="capnwasm — Cap'n Proto for the browser" />
+  <meta name="twitter:description" content="Real Cap'n Proto C++ in the browser. Live RPC bench in the playground." />
+  <meta name="twitter:image" content="/og-image.svg" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <script type="module" crossorigin src="/assets/index-CGb5hTNb.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/main-D1o9XKOZ.js">
+  <link rel="modulepreload" crossorigin href="/assets/browser-Cvhjzqnm.js">
+  <link rel="modulepreload" crossorigin href="/assets/conformance_schema.gen-JtUl27TK.js">
+  <link rel="modulepreload" crossorigin href="/assets/rpc-DpSplyTE.js">
+  <link rel="modulepreload" crossorigin href="/assets/index-q38vqkxF.js">
+  <link rel="stylesheet" crossorigin href="/assets/index-DaGc8WPk.css">
+</head>
+<body>
+  <aside class="network-tip" aria-label="Network throttle tip">
+    Try DevTools &rarr; Network &rarr; Fast/Slow 3G. Latency changes which rows win.
+  </aside>
+  <div id="app">
+    <h1>capn<span class="dim">wasm</span></h1>
+    <p class="tagline">Real Cap'n Proto C++ in the browser. Typed RPC, binary wire.</p>
+    <p class="description">
+      One typed-client toolchain for any backend &mdash; write a <code>.capnp</code> schema, get
+      a fast typed JS client back. <code>npx capnwasm gen user.capnp</code> emits a reader/builder
+      that runs against real upstream Cap'n Proto C++ statically compiled to wasm.
+    </p>
+
+    <section class="framing-card" aria-labelledby="framing-title">
+      <h2 id="framing-title">What this project is</h2>
+      <p>
+        capnwasm is me trying to learn Cap'n Proto and capnweb by building the opposite
+        experiment: keep the real Cap'n Proto binary wire in the browser, compile the upstream
+        C++ runtime to wasm, and measure what changes.
+      </p>
+      <p>
+        This is not a scoreboard where Cap'n Proto always wins. The useful question is the
+        tradeoff boundary: <strong>when does zero-copy / sparse access / raw binary pay off, and
+        when is JSON or capnweb the better choice?</strong>
+      </p>
+      <div class="tradeoff-grid">
+        <div>
+          <strong>JSON / capnweb is usually better for</strong>
+          <ul>
+            <li>tiny JS-to-JS objects</li>
+            <li>control-plane calls where payload is a few bytes</li>
+            <li>smallest bundle / no wasm runtime</li>
+          </ul>
+        </div>
+        <div>
+          <strong>Cap'n Proto / capnwasm is interesting for</strong>
+          <ul>
+            <li>raw binary data without base64</li>
+            <li>large payloads where you read only a few fields</li>
+            <li>wire interop with non-JS Cap'n Proto services</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <div class="headline">
+      <h2>vs capnweb &amp; REST/JSON</h2>
+      <p class="headline-note">Every number below is measured either in this browser against the current Worker server, or generated at build time from the current assets. No hardcoded benchmark values.</p>
+      <div class="headline-row">
+        <span class="label">RPC burst, 200 concurrent calls (browser&rarr;Worker WS)</span>
+        <span id="metric-rpc-burst" class="value measuring">measuring…</span>
+        <span class="metric-source">live</span>
+      </div>
+      <div class="headline-row">
+        <span class="label">RPC 64 KB binary echo (browser&rarr;Worker WS)</span>
+        <span id="metric-rpc-blob" class="value measuring">measuring…</span>
+        <span class="metric-source">live</span>
+      </div>
+      <div class="headline-row">
+        <span class="label">Wire bytes for 4 KB binary blob (gzip)</span>
+        <span id="metric-fixture-wire" class="value measuring">loading…</span>
+        <span class="metric-source">build</span>
+      </div>
+      <div class="headline-row">
+        <span class="label">Bundle &mdash; full RPC client (JS + wasm, gzip)</span>
+        <span id="metric-bundle" class="value measuring">loading…</span>
+        <span class="metric-source">build</span>
+      </div>
+      <div class="headline-row">
+        <span class="label">Wasm runtime asset (gzip)</span>
+        <span id="metric-browser-load" class="value measuring">loading…</span>
+        <span class="metric-source">build</span>
+      </div>
+    </div>
+
+    <div class="demos">
+      <a href="./playground.html" class="demo-card">
+        <div class="demo-icon">&#x26A1;</div>
+        <div class="demo-title">Fetch playground</div>
+        <div class="demo-desc">
+          REST/JSON vs capnweb vs capnwasm side-by-side, fetching static fixtures.
+          Wire bytes, decode time, and render-to-DOM time for each. Localhost numbers
+          come out tied; the wire savings show in the egress row.
+        </div>
+        <span class="demo-tag">HTTP</span>
+      </a>
+
+      <a href="./rpc.html" class="demo-card">
+        <div class="demo-icon">&#x1F501;</div>
+        <div class="demo-title">RPC bench</div>
+        <div class="demo-desc">
+          Live WebSocket RPC against a Node server. Three workloads:
+          200-call burst, promise pipelining, 64 KB binary echo. Runs live
+          in your browser so you can compare the current numbers.
+        </div>
+        <span class="demo-tag">Interactive</span>
+      </a>
+
+      <a href="./chat.html" class="demo-card">
+        <div class="demo-icon">&#x1F4AC;</div>
+        <div class="demo-title">Live chat demo</div>
+        <div class="demo-desc">
+          <code>createClient</code> + <code>subscribeQuery</code> + <code>optimistic</code>
+          in a working chat. Open in two tabs to watch messages stream live across.
+        </div>
+        <span class="demo-tag">Interactive</span>
+      </a>
+
+      <a href="./dynamic.html" class="demo-card">
+        <div class="demo-icon">&#x1F9E9;</div>
+        <div class="demo-title">Dynamic schema demo</div>
+        <div class="demo-desc">
+          No codegen: define the schema as JS data, build Cap&apos;n Proto bytes,
+          pick selected fields, and round-trip through the Worker.
+        </div>
+        <span class="demo-tag">No codegen</span>
+      </a>
+
+      <a href="./openapi.html" class="demo-card">
+        <div class="demo-icon">&#x1F501;</div>
+        <div class="demo-title">OpenAPI conversion</div>
+        <div class="demo-desc">
+          Paste OpenAPI JSON, convert to manifest, emit canonical <code>.capnp</code>,
+          and round-trip back to canonical OpenAPI in the browser.
+        </div>
+        <span class="demo-tag">Contract</span>
+      </a>
+
+      <a href="./vs-capnweb.html" class="demo-card">
+        <div class="demo-icon">&#x2696;&#xFE0F;</div>
+        <div class="demo-title">vs capnweb</div>
+        <div class="demo-desc">
+          Where capnwasm wins, where it loses, where it&rsquo;s tied. Reproducible
+          numbers. Bundle size and cold start go to capnweb.
+        </div>
+        <span class="demo-tag tradeoffs">Tradeoffs</span>
+      </a>
+
+      <a href="./render-bench.html" class="demo-card">
+        <div class="demo-icon">&#x1F4CA;</div>
+        <div class="demo-title">Render bench</div>
+        <div class="demo-desc">
+          End-to-end full pipeline: capnweb &times; capnwasm crossed with
+          WebSocket &times; HTTP-batch, three sizes, cold &amp; warm.
+          Both libraries win some, lose some &mdash; the whole picture.
+        </div>
+        <span class="demo-tag tradeoffs">Tradeoffs</span>
+      </a>
+
+      <a href="./inspect.html" class="demo-card">
+        <div class="demo-icon">&#x1F50D;</div>
+        <div class="demo-title">Wire inspector</div>
+        <div class="demo-desc">
+          One line in DevTools, walks any Cap&apos;n Proto frame.
+          Schemaless or schema-aware. Hosted as a single <code>/inspect.js</code>
+          on this site &mdash; not in the npm package.
+        </div>
+        <span class="demo-tag">Debug tool</span>
+      </a>
+
+      <a href="./notes.html" class="demo-card">
+        <div class="demo-icon">&#x1F4DD;</div>
+        <div class="demo-title">Notes from the trenches</div>
+        <div class="demo-desc">
+          Field report on the perf work: allocation traps, GC churn, a fast-path
+          that wasn&apos;t, one negative SIMD result, and the tradeoff summary.
+        </div>
+        <span class="demo-tag">Write-up</span>
+      </a>
+
+    </div>
+
+    <div class="links">
+      <a href="https://www.npmjs.com/package/capnwasm">npm</a>
+      <a href="https://github.com/teamchong/capnwasm">GitHub</a>
+      <a href="./playground.html">Playground</a>
+      <a href="./vs-capnweb.html">vs capnweb</a>
+      <a href="./render-bench.html">Render bench</a>
+    </div>
+  </div>
+</body>
+</html>

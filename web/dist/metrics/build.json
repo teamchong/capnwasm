@@ -1,0 +1,64 @@
+{
+  "generatedAt": "2026-05-04T01:05:16.396Z",
+  "source": "web/scripts/generate-fixtures.mjs",
+  "fixtures": {
+    "small": {
+      "count": 200,
+      "avatarBytes": 32,
+      "raw": {
+        "json": 31651,
+        "capnweb": 33451,
+        "capnp": 27200
+      },
+      "gzip": {
+        "json": 32000,
+        "capnweb": 33335,
+        "capnp": 26588
+      },
+      "ratios": {
+        "jsonToCapnpGzip": 1.2035504738979992,
+        "capnwebToCapnpGzip": 1.2537610952309313
+      }
+    },
+    "blob": {
+      "count": 50,
+      "avatarBytes": 4096,
+      "raw": {
+        "json": 278849,
+        "capnweb": 279249,
+        "capnp": 210000
+      },
+      "gzip": {
+        "json": 48135,
+        "capnweb": 48476,
+        "capnp": 20311
+      },
+      "ratios": {
+        "jsonToCapnpGzip": 2.3698980847816453,
+        "capnwebToCapnpGzip": 2.386687016887401
+      }
+    }
+  },
+  "wasm": {
+    "raw": 85038,
+    "gzip": 33980,
+    "brotli": 28577
+  },
+  "bundles": {
+    "gzip": {
+      "capnwasmBrowser": 34140,
+      "capnwasmRpc": 40086,
+      "capnwasmTypical": 36217,
+      "capnweb": 21149
+    },
+    "brotli": {
+      "capnwasmBrowser": 28704,
+      "capnwasmRpc": 34096,
+      "capnwasmTypical": 30545,
+      "capnweb": 18132
+    },
+    "ratios": {
+      "capnwasmRpcToCapnwebGzip": 1.8954087663719326
+    }
+  }
+}
