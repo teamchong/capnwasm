@@ -248,8 +248,8 @@ export default {
         || url.pathname === "/capnweb-chat-ws"
         || url.pathname === "/chat-http"
         || url.pathname === "/capnweb-chat-http") {
-      // All chat traffic — both framings, both transports — fans into
-      // one shared ChatRoom DO so every connection sees every message.
+      // All chat traffic fans into one shared ChatRoom DO, but each
+      // library framing has its own side/history inside that DO.
       const id = env.CHAT_ROOM.idFromName("global");
       const stub = env.CHAT_ROOM.get(id);
       return stub.fetch(req);

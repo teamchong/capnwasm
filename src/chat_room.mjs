@@ -50,6 +50,7 @@ const CHAT_MESSAGE_LIST_SCHEMA = defineSchema({
 }, { dataWords: 0, ptrWords: 1 });
 
 const CHAT_HISTORY_LIMIT = 100;
+const PNG_CACHE_LIMIT = 200;
 
 const PNG_TEXT_ENCODER = new TextEncoder();
 
@@ -57,9 +58,8 @@ const PNG_TEXT_ENCODER = new TextEncoder();
  *  A library has one of these for its own endpoints; posting on the
  *  capnwasm side appends to the capnwasm Side and notifies only
  *  capnwasm subscribers, never the capnweb subscribers (and vice
- *  versa). The two sides only share the avatar cache via the parent
- *  DO so the same author renders the same identicon regardless of
- *  which side they posted from. */
+ *  versa). The two sides only share the PNG cache via the parent DO,
+ *  so the same rendered message bytes are reused across framings. */
 class Side {
   constructor(name) {
     this.name = name;
@@ -141,11 +141,15 @@ export class ChatRoom extends DurableObject {
     const out = exp.cpp_out_ptr();
     const png = cpp._u8.slice(out, out + len);
     this.pngCache.set(text, png);
+    if (this.pngCache.size > PNG_CACHE_LIMIT) {
+      const oldest = this.pngCache.keys().next().value;
+      this.pngCache.delete(oldest);
+    }
     return png;
   }
 
-  /** Post into one specific Side. The avatar is rendered (or
-   *  cache-hit) once per author; both sides share the cache. */
+  /** Post into one specific Side. The PNG is rendered (or cache-hit)
+   *  once per message text; both sides share the cache. */
   postTo(side, author, text) {
     const m = {
       id: side.nextId++,

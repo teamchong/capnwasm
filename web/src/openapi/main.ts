@@ -276,7 +276,18 @@ async function convertCapnpToOpenApi() {
 }
 
 function renderSummary({ label, rows }: { label: string; rows: [string, string][] }) {
-  return `<strong>${label}</strong><br>` + rows.map(([k, v]) => `${k}: ${v}`).join("<br>");
+  return `<strong>${escapeHtml(label)}</strong><br>` +
+    rows.map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`).join("<br>");
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[c]!));
 }
 
 async function loadFile(file: File) {

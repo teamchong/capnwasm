@@ -1,6 +1,10 @@
 name: release
 
 # Publishes capnwasm to npm via npm Trusted Publisher (GitHub Actions OIDC).
+# Normal release flow: bump package.json, commit, and push to main. If that
+# version is not already on npm, this workflow publishes it. A matching v* tag
+# can still be pushed for GitHub release bookkeeping; already-published versions
+# are skipped.
 # npm package settings must match:
 #   Publisher: GitHub Actions
 #   Repository: teamchong/capnwasm
@@ -8,6 +12,8 @@ name: release
 #   Environment: unset, unless this workflow is updated to use the same name
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
   workflow_dispatch:
@@ -49,7 +55,7 @@ jobs:
         run: pnpm test
 
       - name: Verify tag matches package.json version
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           TAG="${GITHUB_REF#refs/tags/v}"
           PKG=$(node -p "require('./package.json').version")
