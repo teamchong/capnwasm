@@ -1,0 +1,97 @@
+web/dynamic.html
+  a40863a2008f4bc3 46-51
+docs/vite-plugin.md
+  a40863a2008f4bc3 5-6
+docs/dynamic.md
+  a40863a2008f4bc3 5-6
+docs/inspect.md
+  a40863a2008f4bc3 5-6
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+web/dist/inspect.html
+  a40863a2008f4bc3 17-19,47-51
+web/dist/render-bench.html
+  a40863a2008f4bc3 9-10,16,45-49
+web/notes.html
+  a40863a2008f4bc3 44-49
+web/openapi.html
+  a40863a2008f4bc3 59-64
+docs/schema-truth-and-conformance.md
+  a40863a2008f4bc3 5-6
+docs/decode-model.md
+  a40863a2008f4bc3 5-6
+web/dist/openapi.html
+  a40863a2008f4bc3 33-35,61-65
+docs/workers.md
+  a40863a2008f4bc3 5-6
+web/dist/playground.html
+  a40863a2008f4bc3 17-18,23,51-55
+web/src/site-nav.css
+  a40863a2008f4bc3 73-91
+web/README.md
+  a40863a2008f4bc3 5-6
+docs/transports.md
+  a40863a2008f4bc3 5-6
+web/editor.html
+  a40863a2008f4bc3 35-40
+docs/zero-to-rpc.md
+  a40863a2008f4bc3 5-6
+docs/grpc-web-comparison.md
+  a40863a2008f4bc3 5-6
+docs/vs-capnweb.md
+  a40863a2008f4bc3 5-6
+package.json
+  a40863a2008f4bc3 3
+web/dist/chat.html
+  a40863a2008f4bc3 64-65,69,107-111
+web/inspect.html
+  a40863a2008f4bc3 45-50
+web/vs-capnweb.html
+  a40863a2008f4bc3 46-51
+web/dist/dynamic.html
+  a40863a2008f4bc3 20-21,24,51-55
+web/dist/index.html
+  a40863a2008f4bc3 17-18,23,39-42
+web/dist/editor.html
+  a40863a2008f4bc3 9-10,14,41-45
+docs/notes-from-the-trenches.md
+  a40863a2008f4bc3 5-6
+web/chat.html
+  a40863a2008f4bc3 102-107
+docs/api-gateway-pattern.md
+  a40863a2008f4bc3 5-6
+docs/deployment.md
+  a40863a2008f4bc3 5-6,170
+web/playground.html
+  a40863a2008f4bc3 46-51
+web/dist/notes.html
+  a40863a2008f4bc3 17-18,45-49
+web/dist/vs-capnweb.html
+  a40863a2008f4bc3 17-18,24,53-57
+web/index.html
+  a40863a2008f4bc3 33-38
+README.md
+  a40863a2008f4bc3 7-8,208
+web/render-bench.html
+  a40863a2008f4bc3 38-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "9a8cc906e68afb2ca9259d6c65b5bfd1cfa9c129",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "stevenchongcloudflare.com",
+      "messages": [],
+      "total_additions": 212,
+      "total_deletions": 43,
+      "accepted_lines": 212,
+      "overriden_lines": 0
+    }
+  }
+}
