@@ -4,6 +4,8 @@
 >
 > **When this matters:** you're moving binary data (no base64 tax), doing sparse reads on large payloads, or talking to non-JS services over the Cap'n Proto wire. If your traffic is tiny JS-to-JS objects, pure text, or you want the smallest possible bundle, JSON/[capnweb](https://github.com/cloudflare/capnweb) is often the right call.
 
+> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time, but the current 0.0.x runtime still uses fixed scratch buffers, rejects messages larger than scratch capacity, keeps reader objects tied to mutable wasm linear memory, and does not zero scratch memory after use. Today it is best treated as a controlled demo, experiment, and small/medium payload prototype while production hardening continues.
+
 capnwasm sits at: ~17 KB more brotli than capnweb, but a real Cap'n Proto runtime in the browser, raw bytes for binary data, sparse-access reads on large payloads, and wire interop with C++/Rust/Go services. The numbers below are findings from this exploration, not a scoreboard.
 
 Slim runtime: 33 KB gz / 28 KB brotli for the wasm-only path; 41 KB gz / 35 KB brotli for the typical typed-proxy + HTTP-batch shape.
@@ -203,7 +205,7 @@ const cw = await import("https://capnwasm.teamchong.net/inspect.js");
 cw.inspect(fetch("/api/users/42"));     // expandable tree in the console
 ```
 
-**Live three-way playground** at [capnwasm.teamchong.net](https://capnwasm.teamchong.net/). REST/JSON vs capnweb vs capnwasm side-by-side, fetching the same fixtures and rendering to DOM in your browser. Plus a [WebSocket RPC bench](https://capnwasm.teamchong.net/rpc) that runs burst, pipelining, and 64 KB binary-echo workloads against the same Worker endpoints used after deploy. Source in [`web/`](web/). `pnpm dev` runs the Wrangler-backed local server.
+**Live three-way playground** at [capnwasm.teamchong.net](https://capnwasm.teamchong.net/). REST/JSON vs capnweb vs capnwasm side-by-side, fetching the same fixtures and rendering to DOM in your browser. The same page also runs WebSocket RPC burst, pipelining, and 64 KB binary-echo workloads against the Worker endpoints used after deploy. Source in [`web/`](web/). `pnpm dev` runs the Wrangler-backed local server.
 
 **End-to-end render bench** at [capnwasm.teamchong.net/render-bench](https://capnwasm.teamchong.net/render-bench). Capnweb × capnwasm × WS × HTTP-batch × small/medium/large × cold/warm, all in one page. Measures the full pipeline (request → wire → decode → field reads → DOM mutation → forced layout). **Both libraries win some, lose some**: capnwasm leads on binary blobs and sparse reads, capnweb leads on re-read storms and large-list rendering. The page shows every cell. No averages, no cherry-picking. See [`docs/vs-capnweb.md`](docs/vs-capnweb.md) for the writeup or click through to the live page to run it yourself.
 

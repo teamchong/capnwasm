@@ -6,14 +6,14 @@
   <title>capnwasm &mdash; render bench (full pipeline, no cherry-picking)</title>
   <meta name="description" content="End-to-end RPC bench across capnweb vs capnwasm × WS vs HTTP × small/medium/large × cold/warm. Measures the full pipeline from cap.method() to forced DOM layout. Wins, losses, ties — all in one place." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <script type="module" crossorigin src="/assets/renderBench-CHW_W6Cf.js"></script>
-  <link rel="modulepreload" crossorigin href="/assets/main-iIenSymA.js">
+  <script type="module" crossorigin src="/assets/renderBench-B0RnUdgn.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/main-Cu9W4HMG.js">
   <link rel="modulepreload" crossorigin href="/assets/browser-Cvhjzqnm.js">
   <link rel="modulepreload" crossorigin href="/assets/users.capnp.gen-J4R985v5.js">
   <link rel="modulepreload" crossorigin href="/assets/typed_schema.gen-50JvfEds.js">
   <link rel="modulepreload" crossorigin href="/assets/index-CJEMSB8I.js">
   <link rel="modulepreload" crossorigin href="/assets/http_batch-Cl8JkqSG.js">
-  <link rel="stylesheet" crossorigin href="/assets/main-DGtLEXHE.css">
+  <link rel="stylesheet" crossorigin href="/assets/main-DrXRrRXI.css">
   <link rel="stylesheet" crossorigin href="/assets/renderBench-BIJMd1Xl.css">
 </head>
 <body>
@@ -41,6 +41,12 @@
         <a href="./vs-capnweb">vs capnweb</a>
       </nav>
     </header>
+
+    <p class="maturity-notice">
+      <strong>Not production-ready yet.</strong> This benchmark explores the tradeoff boundary, not
+      a hardened deployment claim. The current <code>0.0.x</code> runtime uses fixed scratch buffers and
+      mutable wasm linear memory while production hardening continues.
+    </p>
 
     <section class="banner">
       <div id="server-status">

@@ -14,13 +14,13 @@
   <meta name="twitter:description" content="Real Cap'n Proto C++ in the browser. Live RPC bench in the playground." />
   <meta name="twitter:image" content="/og-image.svg" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <script type="module" crossorigin src="/assets/index-JljvY0nd.js"></script>
-  <link rel="modulepreload" crossorigin href="/assets/main-iIenSymA.js">
+  <script type="module" crossorigin src="/assets/index-BbFNynOk.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/main-Cu9W4HMG.js">
   <link rel="modulepreload" crossorigin href="/assets/browser-Cvhjzqnm.js">
   <link rel="modulepreload" crossorigin href="/assets/conformance_schema.gen-JtUl27TK.js">
   <link rel="modulepreload" crossorigin href="/assets/users.capnp.gen-J4R985v5.js">
   <link rel="modulepreload" crossorigin href="/assets/index-CJEMSB8I.js">
-  <link rel="stylesheet" crossorigin href="/assets/main-DGtLEXHE.css">
+  <link rel="stylesheet" crossorigin href="/assets/main-DrXRrRXI.css">
   <link rel="stylesheet" crossorigin href="/assets/index-B_dEDG6e.css">
 </head>
 <body>
@@ -34,6 +34,12 @@
       One typed-client toolchain for any backend &mdash; write a <code>.capnp</code> schema, get
       a fast typed JS client back. <code>npx capnwasm gen user.capnp</code> emits a reader/builder
       that runs against real upstream Cap'n Proto C++ statically compiled to wasm.
+    </p>
+
+    <p class="maturity-notice">
+      <strong>Not production-ready yet.</strong> capnwasm is intended to become production-capable,
+      but the current <code>0.0.x</code> runtime still uses fixed scratch buffers and mutable wasm
+      linear memory. Treat these pages as controlled demos and benchmarks while hardening continues.
     </p>
 
     <section class="framing-card" aria-labelledby="framing-title">

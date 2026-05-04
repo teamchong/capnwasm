@@ -2,6 +2,8 @@
 
 > Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
 
+> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time, but the current 0.0.x runtime still uses fixed scratch buffers, rejects messages larger than scratch capacity, ties readers to mutable wasm linear memory, and does not zero scratch memory after use. Treat it as a controlled demo, experiment, and small/medium payload prototype while production hardening continues.
+
 What changes between `node server.mjs` on your laptop and a real production server. Patterns that have come up in actual use.
 
 ## Pick a transport
@@ -165,7 +167,7 @@ For wire-level inspection. *what bytes are flowing*. Load `https://capnwasm.team
 | symptom | likely cause |
 |---|---|
 | Calls hang forever after a peer crash | Transport doesn't have `onClose` wired up. `wsTransport` does; custom transports must implement it. |
-| `Error: input larger than scratch buffer` | Default scratch is 1 MB. For larger payloads, size up via the wasm build (`cpp/wrapper.cpp`'s `SCRATCH_CAP`) and rebuild, or split the payload across calls. |
+| `Error: input larger than scratch buffer` | Default scratch is fixed by the wasm build. For larger payloads, size up via `cpp/wrapper.cpp`'s `SCRATCH_CAP` and rebuild, or split the payload across calls. |
 | `unknown method` rejection | Client and server are on different schemas. Don't change interface IDs or method ordinals once shipped. |
 | Memory grows over a long-lived session | Likely an unbounded stream chunk queue (see Backpressure, above), or an import table that the FinalizationRegistry hasn't gotten to yet. The session's `close()` purges both. |
 

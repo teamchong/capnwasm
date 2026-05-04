@@ -2,6 +2,8 @@
 
 > Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
 
+> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time, but the current 0.0.x runtime still uses fixed scratch buffers, rejects messages larger than scratch capacity, ties readers to mutable wasm linear memory, and does not zero scratch memory after use. Treat it as a controlled demo, experiment, and small/medium payload prototype while production hardening continues.
+
 A user-facing explanation of what happens between `await cap.method()` and
 `reader.fieldFoo`. Useful when you're trying to reason about cost or
 benchmark against capnweb / gRPC-Web / raw JSON.

@@ -70,6 +70,25 @@ h1 .dim { color: #4fc3f7; font-weight: 400; }
   white-space: nowrap;
 }
 
+.maturity-notice {
+  margin: 0 0 20px;
+  padding: 12px 14px;
+  border: 1px solid #4a3516;
+  border-radius: 12px;
+  background: #1d150b;
+  color: #d8c4a3;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.maturity-notice strong {
+  color: #ffa726;
+}
+
+.maturity-notice code {
+  color: #f3d19b;
+}
+
 @media (max-width: 600px) {
   .site-nav { font-size: 0.74rem; gap: 4px 10px; }
   .site-nav .sep { display: none; }

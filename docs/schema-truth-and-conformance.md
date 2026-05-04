@@ -2,6 +2,8 @@
 
 > Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
 
+> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time, but the current 0.0.x runtime still uses fixed scratch buffers, rejects messages larger than scratch capacity, ties readers to mutable wasm linear memory, and does not zero scratch memory after use. Treat it as a controlled demo, experiment, and small/medium payload prototype while production hardening continues.
+
 > Learning notes from building capnwasm and studying schema-driven API
 > tooling. This is not a platform proposal: it names the pieces this repo
 > experiments with, the pieces it does not cover, and the gaps that still

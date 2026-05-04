@@ -2,6 +2,8 @@
 
 > Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
 
+> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time, but the current 0.0.x runtime still uses fixed scratch buffers, rejects messages larger than scratch capacity, ties readers to mutable wasm linear memory, and does not zero scratch memory after use. Treat it as a controlled demo, experiment, and small/medium payload prototype while production hardening continues.
+
 I built capnwasm to learn how capnweb works under the hood and to understand the tradeoffs it made by dropping the Cap'n Proto binary wire format. This page is the side-by-side that exploration produced. It's not a scoreboard; both libraries are valid points on the curve. Where capnweb wins is called out as plainly as where capnwasm wins.
 
 Numbers from in-process Node bench (Apple Silicon, M-series, Node 22). Run `node bench/rpc_bench.mjs`, `node bench/realistic.mjs`, and `node bench/http_batch_bench.mjs` to reproduce. Last refreshed 2026-05-02 against capnweb HEAD checked out at `../capnweb`. Numbers vary by machine and Node version; the qualitative picture (capnwasm faster on burst / large payloads / HTTP-batch sequential, tied or close on tiny payloads) is what holds across runs.

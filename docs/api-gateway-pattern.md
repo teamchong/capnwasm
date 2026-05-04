@@ -2,6 +2,8 @@
 
 > Context: capnwasm explores where Cap'n Proto's binary wire beats JSON, and where it does not.
 
+> **Production-readiness notice:** capnwasm is not production-ready yet. The goal is to make it production-capable over time, but the current 0.0.x runtime still uses fixed scratch buffers, rejects messages larger than scratch capacity, ties readers to mutable wasm linear memory, and does not zero scratch memory after use. Treat it as a controlled demo, experiment, and small/medium payload prototype while production hardening continues.
+
 This is the problem capnweb doesn't solve and was never built to solve. capnweb is a JSON-RPC transport with a 1:1 client/server pairing. Both sides are JS, both sides import the same module, and the wire format is JSON. If you have five internal services in three languages with mixed contracts (gRPC, OpenAPI, REST without a spec), capnweb gives you exactly one option: stand up a sixth service that re-implements all of it in JS, and then call that from the browser.
 
 capnwasm gives you the three pieces that compose into a gateway:
