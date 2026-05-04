@@ -373,6 +373,9 @@ export class StaleReaderError extends Error {
   }
 }
 function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
+  if (typeof cpp._validateSingleSegment === "function") {
+    cpp._validateSingleSegment(bytes);
+  }
   if (!unsafe && typeof cpp._allocMessage === "function") {
     const msg = cpp._allocMessage(bytes);
     const dataPtr = cpp._openAnyMessage(msg);

@@ -10,9 +10,8 @@ export declare class ProfileReader {
     id: number | bigint;
     name: string;
   };
-  pick<K extends "id" | "name">(names: K[]): { [P in K]: this[P] };
-  readonly access: { readonly [P in "id" | "name"]: undefined };
-  apply(): Partial<{ [P in "id" | "name"]: this[P] }>;
+  draft<T>(fn: (draft: any) => T): T;
 }
 
 export declare function openProfile(cpp: CapnCpp, bytes: Uint8Array): ProfileReader;
+export declare function openProfileUnsafe(cpp: CapnCpp, bytes: Uint8Array): ProfileReader;

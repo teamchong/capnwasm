@@ -517,6 +517,13 @@ export function encodeDynamic(cpp, schema, obj) {
  * `defineSchema`. `bytes` is a serialized Cap'n Proto message.
  */
 export function openDynamic(cpp, schema, bytes) {
+  // M1: Single-segment ABI surface. The managed-message path's
+  // _allocMessage already validates, but call it explicitly here so the
+  // _allocMessage-unavailable fallback (older runtime, unsafe path) also
+  // rejects multi-segment input.
+  if (typeof cpp._validateSingleSegment === "function") {
+    cpp._validateSingleSegment(bytes);
+  }
   if (typeof cpp._allocMessage === "function") {
     const msg = cpp._allocMessage(bytes);
     cpp._openAnyMessage(msg);
@@ -526,6 +533,12 @@ export function openDynamic(cpp, schema, bytes) {
 }
 
 export function openDynamicUnsafe(cpp, schema, bytes) {
+  // M1: Single-segment ABI surface. Validate even on the unsafe path —
+  // "unsafe" only refers to reader lifetime, not to relaxed input
+  // contracts. Multi-segment input would still crash JS pointer reads.
+  if (typeof cpp._validateSingleSegment === "function") {
+    cpp._validateSingleSegment(bytes);
+  }
   if (bytes.length > cpp._cap) throw new Error("input larger than scratch buffer");
   cpp._u8.set(bytes, cpp._inPtr);
   // cpp_any_open returns the data section pointer (or 0 for an empty

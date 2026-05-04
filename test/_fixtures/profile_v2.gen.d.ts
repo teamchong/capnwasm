@@ -12,9 +12,8 @@ export declare class ProfileReader {
     name: string;
     email: string;
   };
-  pick<K extends "id" | "name" | "email">(names: K[]): { [P in K]: this[P] };
-  readonly access: { readonly [P in "id" | "name" | "email"]: undefined };
-  apply(): Partial<{ [P in "id" | "name" | "email"]: this[P] }>;
+  draft<T>(fn: (draft: any) => T): T;
 }
 
 export declare function openProfile(cpp: CapnCpp, bytes: Uint8Array): ProfileReader;
+export declare function openProfileUnsafe(cpp: CapnCpp, bytes: Uint8Array): ProfileReader;

@@ -1,1 +1,1 @@
-import{CapnCpp as a}from"./cpp_loader.mjs";async function p(p=function(){return new URL("../dist/capnp.slim.wasm",import.meta.url)}()){return await a.load(p)}export{a as CapnCpp,p as load};
+import{CapnCpp as a,MultiSegmentMessageError as e,validateSingleSegment as t}from"./cpp_loader.mjs";async function n(e=function(){return new URL("../dist/capnp.slim.wasm",import.meta.url)}()){return await a.load(e)}export{a as CapnCpp,e as MultiSegmentMessageError,n as load,t as validateSingleSegment};

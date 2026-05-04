@@ -5,6 +5,99 @@
 // and provides a managed-message allocator (cpp_msg_alloc/free + open_at)
 // so safe Readers can survive other decodes on the same instance.
 
+// M1: Single-segment ABI surface.
+//
+// The capnwasm public reader ABI accepts only single-segment Cap'n Proto
+// framed messages. The framed format starts with an 8-byte header:
+//   word[0]:
+//     bytes 0..3 (LE u32) = segmentCount - 1
+//     bytes 4..7 (LE u32) = first segment size in words
+//   then segment payload(s).
+// Single-segment means the first u32 is 0 and the payload occupies
+// exactly (bytes_len - 8) bytes, which must be a positive multiple of 8.
+//
+// Pure-JS validation is sufficient because the segment-count check only
+// touches the first 4 bytes; no wasm round-trip required. Foreign wasm
+// modules (Rust, Go) can call the equivalent cpp_msg_validate_single_segment
+// export for the same check from their own host.
+export class MultiSegmentMessageError extends Error {
+  constructor(message = "capnwasm ABI requires single-segment Cap'n Proto messages") {
+    super(message);
+    this.name = "MultiSegmentMessageError";
+  }
+}
+
+/**
+ * Validate that `bytes` is a single-segment framed Cap'n Proto message.
+ * Returns nothing on success; throws MultiSegmentMessageError otherwise.
+ *
+ * Hot path: this runs on every public reader open (openFoo, openDynamic,
+ * RPC params extraction in some flows). The fast path is structured to
+ * be branch-light and allocation-free:
+ *   - The Cap'n Proto framed header's first u32 is segmentCount-1 (LE).
+ *     For the single-segment case it is 0, which means all four header
+ *     bytes are zero. We can compare `bytes[0] | bytes[1] | bytes[2] |
+ *     bytes[3]` against 0 to detect "is single segment" without going
+ *     through DataView. That is two L1 loads + three ORs + a branch,
+ *     plus one length-aligned check we already do.
+ *   - On the rejection path we do reconstruct the actual count for the
+ *     error message; that path is cold so the cost there does not matter.
+ *   - We skip the size-mismatch check on the hot path because the only
+ *     way bytes can lie about their first-segment word count without
+ *     also being multi-segment is if a malicious or corrupt sender
+ *     hand-crafted them. That is hostile-input territory (M7) and
+ *     downstream pointer reads will already trap. We still validate
+ *     length-aligned and minimum size, which are the cheap checks
+ *     that catch unaligned/truncated buffers.
+ *
+ * Foreign wasm modules (Rust, Go) can call cpp_msg_validate_single_segment
+ * for the equivalent structural check from their own host.
+ */
+export function validateSingleSegment(bytes) {
+  // Length checks. These are unavoidable and cheap.
+  const len = bytes.length;
+  if (len < 8 || (len & 7) !== 0) {
+    if (!bytes || typeof len !== "number") {
+      throw new MultiSegmentMessageError("expected Uint8Array-like input");
+    }
+    if (len < 8) {
+      throw new MultiSegmentMessageError(
+        `framed message too small: got ${len} bytes, need at least 8`,
+      );
+    }
+    throw new MultiSegmentMessageError(
+      `framed message length must be a multiple of 8, got ${len}`,
+    );
+  }
+  // Segment-count fast path: four u8 loads + ORs, no DataView, no
+  // function call into capnwasm internals. Hot loops opening thousands
+  // of small messages pay only this.
+  if ((bytes[0] | bytes[1] | bytes[2] | bytes[3]) !== 0) {
+    // Cold path: reconstruct the count for the error message.
+    const segMinusOne =
+      (bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24)) >>> 0;
+    throw new MultiSegmentMessageError(
+      `multi-segment message rejected (${segMinusOne + 1} segments); ` +
+      `capnwasm ABI requires single-segment messages`,
+    );
+  }
+  // Single-segment confirmed. Now verify the first-segment word count
+  // matches the rest of the buffer. Same byte-load shape; one branch.
+  // This guards against a hand-crafted header that lies about size,
+  // which would let downstream pointer reads address slop bytes past
+  // the declared segment but still inside the input length. Cheap
+  // enough to keep on the hot path.
+  const firstSegWords =
+    (bytes[4] | (bytes[5] << 8) | (bytes[6] << 16) | (bytes[7] << 24)) >>> 0;
+  const payloadWords = (len - 8) >>> 3;
+  if (firstSegWords !== payloadWords) {
+    throw new MultiSegmentMessageError(
+      `framed header declares ${firstSegWords} segment words but ` +
+      `payload contains ${payloadWords} words`,
+    );
+  }
+}
+
 export class CapnCpp {
   /** @type {WebAssembly.Instance} */
   #instance;
@@ -126,6 +219,9 @@ export class CapnCpp {
 
   _allocMessage(bytes) {
     if (!this._supportsManagedMessages()) return null;
+    // M1: Single-segment ABI. Validate before reserving wasm memory so a
+    // bad input does not consume the allocator's bump pointer / arena.
+    validateSingleSegment(bytes);
     const ptr = this.#exports.cpp_msg_alloc(bytes.length) >>> 0;
     if (!ptr) throw new Error("cpp_msg_alloc failed");
     this.#u8().set(bytes, ptr);
@@ -159,6 +255,12 @@ export class CapnCpp {
   get _auxPtr()  { return this.#auxPtr; }
   get _auxCap()  { return this.#auxCap; }
   get _u8()      { return this.#u8(); }
+
+  // M1: Single-segment ABI surface. Exposed as an instance method so
+  // codegen + dynamic readers can call `cpp._validateSingleSegment(bytes)`
+  // without importing the helper directly. Throws MultiSegmentMessageError
+  // on rejection.
+  _validateSingleSegment(bytes) { validateSingleSegment(bytes); }
 }
 
 function zero() { return 0; }

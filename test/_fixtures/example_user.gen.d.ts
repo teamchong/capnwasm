@@ -18,9 +18,7 @@ export declare class UserReader {
     email: string;
     bio: string;
   };
-  pick<K extends "id" | "age" | "active" | "name" | "email" | "bio">(names: K[]): { [P in K]: this[P] };
-  readonly access: { readonly [P in "id" | "age" | "active" | "name" | "email" | "bio"]: undefined };
-  apply(): Partial<{ [P in "id" | "age" | "active" | "name" | "email" | "bio"]: this[P] }>;
+  draft<T>(fn: (draft: any) => T): T;
 }
 
 export declare class GreetingReader {
@@ -31,9 +29,8 @@ export declare class GreetingReader {
     message: string;
     timestamp: number | bigint;
   };
-  pick<K extends "message" | "timestamp">(names: K[]): { [P in K]: this[P] };
-  readonly access: { readonly [P in "message" | "timestamp"]: undefined };
-  apply(): Partial<{ [P in "message" | "timestamp"]: this[P] }>;
+  draft<T>(fn: (draft: any) => T): T;
 }
 
 export declare function openUser(cpp: CapnCpp, bytes: Uint8Array): UserReader;
+export declare function openUserUnsafe(cpp: CapnCpp, bytes: Uint8Array): UserReader;

@@ -187,6 +187,7 @@ FLAGS=(
   -Wl,--export=cpp_abi_version
   -Wl,--export=cpp_msg_alloc
   -Wl,--export=cpp_msg_free
+  -Wl,--export=cpp_msg_validate_single_segment
   # Auxiliary scratch buffer used by cpp_any_batch_read for the field
   # descriptor list. Production codegen reads cpp._auxPtr/_auxCap from
   # cpp_loader.mjs which caches these once at load time.

@@ -3,7 +3,12 @@
 //
 // All paths now resolve through dist/inlined.mjs (see package.json exports).
 
-export { load, CapnCpp } from "../dist/inlined.mjs";
+export {
+  load,
+  CapnCpp,
+  MultiSegmentMessageError,
+  validateSingleSegment,
+} from "../dist/inlined.mjs";
 export {
   RpcSession,
   RpcCap,

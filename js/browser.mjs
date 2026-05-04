@@ -19,9 +19,13 @@
 // `new URL(..., import.meta.url)` form and copy the .wasm into your asset
 // pipeline so it's hashed/cached alongside the rest of your build.
 
-import { CapnCpp } from "./cpp_loader.mjs";
+import {
+  CapnCpp,
+  MultiSegmentMessageError,
+  validateSingleSegment,
+} from "./cpp_loader.mjs";
 
-export { CapnCpp };
+export { CapnCpp, MultiSegmentMessageError, validateSingleSegment };
 
 // Default URL. Used when load() is called with no argument. Keep this lazy:
 // Workers/workerd can import this module only to access `CapnCpp.load(module)`,

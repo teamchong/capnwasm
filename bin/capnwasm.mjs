@@ -1198,6 +1198,13 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`  }`);
   lines.push(`}`);
   lines.push(`function _openCapnwasmMessage(cpp, bytes, unsafe = false) {`);
+  // M1: Single-segment ABI surface. Validate before either path so the
+  // unsafe scratch path also rejects multi-segment input. The check is
+  // pure-JS and only touches the first 8 bytes; cost is negligible vs
+  // the wasm boundary call that follows.
+  lines.push(`  if (typeof cpp._validateSingleSegment === "function") {`);
+  lines.push(`    cpp._validateSingleSegment(bytes);`);
+  lines.push(`  }`);
   lines.push(`  if (!unsafe && typeof cpp._allocMessage === "function") {`);
   lines.push(`    const msg = cpp._allocMessage(bytes);`);
   lines.push(`    const dataPtr = cpp._openAnyMessage(msg);`);

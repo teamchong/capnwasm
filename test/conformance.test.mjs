@@ -142,11 +142,21 @@ test("Text. Empty, ASCII, UTF-8", () => {
   }
 });
 
-test("Text. Long string (multi-segment territory)", () => {
+test("Text. Long string forces multi-segment, rejected by M1 ABI", () => {
+  // Pre-M1 this round-tripped because the openPrimitives reader silently
+  // accepted multi-segment input. M1 makes single-segment the ABI
+  // contract: an 8192-char string overflows the conformance serializer's
+  // small first segment and produces a multi-segment frame, which the
+  // safe reader now rejects with MultiSegmentMessageError. Applications
+  // that need to ship payloads this large should size their builder's
+  // first segment accordingly. See docs/capnp-in-wasm-memory.md.
   const s = "x".repeat(8192);
-  const r = roundTrip({ ...baseline, text: s });
-  assert.equal(r.text.length, s.length);
-  assert.equal(r.text, s);
+  assert.throws(
+    () => roundTrip({ ...baseline, text: s }),
+    (err) =>
+      err && err.name === "MultiSegmentMessageError",
+    "expected MultiSegmentMessageError when input is multi-segment",
+  );
 });
 
 test("Data. Empty + binary", () => {

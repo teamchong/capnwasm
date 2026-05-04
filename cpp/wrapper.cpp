@@ -61,6 +61,38 @@ void cpp_msg_free(uint8_t* ptr) {
   std::free(ptr);
 }
 
+// M1: Single-segment ABI surface validation.
+//
+// The Cap'n Proto framed format starts with a segment-count header:
+//   word[0]:
+//     bytes 0..3 (LE u32) = segmentCount - 1
+//     bytes 4..7 (LE u32) = first segment size in words
+//   then optional more 4-byte segment sizes (for multi-segment messages),
+//   padded to a word boundary, then the segment payloads.
+//
+// The capnwasm public reader ABI requires single-segment messages so the
+// JS side can read pointer-target offsets without consulting a segment
+// table. cpp_msg_validate_single_segment runs the structural check
+// without decoding pointers. Returns:
+//   0 = ok (single segment, length matches header)
+//   1 = too small for the 8-byte header
+//   2 = unaligned (bytes_len not a multiple of 8)
+//   3 = multi-segment (segmentCount != 1)
+//   4 = declared segment size does not equal the rest of the buffer
+uint32_t cpp_msg_validate_single_segment(const uint8_t* bytes, uint32_t bytes_len) {
+  if (bytes_len < 8) return 1;
+  if (bytes_len & 7u) return 2;
+  uint32_t seg_minus_one;
+  uint32_t first_seg_words;
+  std::memcpy(&seg_minus_one, bytes, 4);
+  std::memcpy(&first_seg_words, bytes + 4, 4);
+  if (seg_minus_one != 0) return 3;
+  // Single-segment payload must consume exactly bytes_len - 8 bytes.
+  uint32_t payload_words = (bytes_len - 8u) / 8u;
+  if (first_seg_words != payload_words) return 4;
+  return 0;
+}
+
 // Serialize a tape (in cpp_in[0..tape_len], same byte format as src/tape.zig)
 // to a Cap'n Proto framed message in cpp_out. Returns bytes written, or 0
 // on failure.

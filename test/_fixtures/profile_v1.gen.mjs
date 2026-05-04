@@ -13,40 +13,273 @@ const _F64_VIEW_BUF = new ArrayBuffer(8);
 const _F64_VIEW_U32 = new Uint32Array(_F64_VIEW_BUF);
 const _F64_VIEW_F64 = new Float64Array(_F64_VIEW_BUF);
 
+const _LIST_HELPERS = {
+  TD: SHARED_TEXT_DECODER,
+  F32U: _F32_VIEW_U32, F32F: _F32_VIEW_F32,
+  F64U: _F64_VIEW_U32, F64F: _F64_VIEW_F64,
+};
+
 // Per-(class, field-list) cache of pre-encoded request bytes. Compiling the
 // request is a tight loop but it's still wasted work in a hot pick loop.
 // We key on a frozen Uint8Array of the descriptor bytes so identical field
 // sets (the common case in batch processing) hit the cache.
 const _PICK_REQ_CACHE = new WeakMap();  // fields -> Map<namesKey, Uint8Array>
+const _DRAFT_PLAN_CACHE = new WeakMap(); // fields -> WeakMap<fn, plan>
 
 function _getPickRequest(fields, names) {
   let perFields = _PICK_REQ_CACHE.get(fields);
   if (!perFields) { perFields = new Map(); _PICK_REQ_CACHE.set(fields, perFields); }
   const key = names.join("\0");
-  let req = perFields.get(key);
-  if (req) return req;
+  let entry = perFields.get(key);
+  if (entry) return entry;
   const buf = new Uint8Array(4 + names.length * 5);
   const dv = new DataView(buf.buffer);
   dv.setUint32(0, names.length, true);
+  // Precompute the field-descriptor array alongside the request bytes. Both
+  // are pure functions of (fields, names); caching them together means the
+  // hot pick path skips a names.length-iteration property-lookup loop on
+  // every call. The cached entry shape is { req, descs, listDecoder } where
+  // listDecoder is lazily compiled the first time a List(Struct) projection
+  // hits this field-set (most Pick callers never trigger it).
+  const descs = new Array(names.length);
   let pos = 4;
   for (let i = 0; i < names.length; i++) {
     const d = fields[names[i]];
     if (!d) throw new Error("unknown field: " + names[i]);
+    descs[i] = d;
     buf[pos] = d.kind; pos += 1;
     dv.setUint32(pos, d.off, true); pos += 4;
   }
-  perFields.set(key, buf);
-  return buf;
+  entry = { req: buf, descs, listDecoder: null };
+  perFields.set(key, entry);
+  return entry;
+}
+
+// Build a specialized JS function that decodes a row-tape produced by
+// cpp_any_list_project into an Array of plain row objects, with the
+// per-cell switch dispatch fully unrolled.
+//
+// The unrolled body lets V8 emit a single inline-cache chain per row, gives
+// the row a stable hidden class via an object literal with all fields named
+// in declaration order, and removes the per-cell descs[]/names[] indexing.
+//
+// Compiled once per (fields, names) pair, then cached on the same entry
+// the request bytes live on. Roughly halves JS materialization cost vs the
+// generic switch loop on the list-1000 user-row workload.
+function _compileListDecoder(descs, names, applyMapFn, filter) {
+  const cols = descs.length;
+  const rowStride = cols * 4;
+  // Validate filter: predicate field must be in projected names AND of a type
+  // we know how to fast-check from a single header. For now we only support
+  // boolean fields (cell is 0 or 1). If unsupported, drop filter — decoder
+  // becomes the no-filter variant and the caller's outer fn re-runs filter
+  // in JS. Correctness preserved.
+  let filterColIdx = -1;
+  if (filter) {
+    filterColIdx = names.indexOf(filter.field);
+    if (filterColIdx < 0 || (descs[filterColIdx] && descs[filterColIdx].type !== "bool")) {
+      filter = null;
+      filterColIdx = -1;
+    }
+  }
+  // Identify runs of consecutive text fields (>=2) that share a contiguous
+  // payload region — i.e. no payload-emitting field appears between them.
+  // For such runs we emit ONE TextDecoder.decode call per row covering the
+  // entire payload, then substring() per field. V8's substring on a freshly
+  // decoded string is cheap, while each TextDecoder.decode has setup cost.
+  // Measured on the 4-field user-row workload: this halves text-decode time
+  // and shaves ~30% off list-1000 materialization.
+  const PAYLOAD_BREAK = new Set(["uint64", "int64", "float64", "data"]);
+  const isTextRunMember = (i) => descs[i] && descs[i].type === "text";
+  const textBatch = new Array(cols).fill(null);
+  for (let i = 0; i < cols; i++) {
+    if (!isTextRunMember(i) || textBatch[i] !== null) continue;
+    let j = i + 1;
+    while (j < cols) {
+      if (isTextRunMember(j)) { j++; continue; }
+      if (PAYLOAD_BREAK.has(descs[j] && descs[j].type)) break;
+      j++;
+    }
+    // j is one past the last index that belongs to this run, considering
+    // non-payload-emitting fields between text fields (small scalars / bool).
+    // Filter run members back to actual text indices for emission.
+    const members = [];
+    for (let k = i; k < j; k++) if (isTextRunMember(k)) members.push(k);
+    if (members.length >= 2) {
+      // Tag each member with a shared run id and its position in the run.
+      const runId = i;
+      for (let p = 0; p < members.length; p++) {
+        textBatch[members[p]] = { runId, pos: p, total: members.length, members };
+      }
+    }
+  }
+  const out = [];
+  out.push(`const TD = H.TD;`);
+  out.push(`const F32U = H.F32U, F32F = H.F32F, F64U = H.F64U, F64F = H.F64F;`);
+  out.push(`if (start === undefined) start = 0;`);
+  out.push(`if (limit === undefined) limit = rows;`);
+  out.push(`if (limit > rows) limit = rows;`);
+  out.push(`if (start > limit) start = limit;`);
+  out.push(`const arr = new Array(limit - start);`);
+  if (filter) out.push(`let arrIdx = 0;`);
+  out.push(`let readPos = 8 + rows * ${rowStride};`);
+  // Skip phase: when start > 0 we walk rows [0, start) advancing readPos by
+  // the payload size of each row but never materializing. Each text/data
+  // field contributes its header value (or 0 for missing); each
+  // u64/i64/f64 contributes 8; smaller scalars and booleans contribute 0.
+  // Specialized at codegen time so V8 sees a straight-line skip body.
+  out.push(`for (let row = 0; row < start; row++) {`);
+  out.push(`  const cellBase = 8 + row * ${rowStride};`);
+  for (let col = 0; col < cols; col++) {
+    const d = descs[col];
+    const headerOff = `cellBase + ${col * 4}`;
+    if (d.type === "text" || d.type === "data") {
+      out.push(`  { const _h = dv.getUint32(${headerOff}, true); if (_h !== 0xFFFFFFFF) readPos += _h; }`);
+    } else if (d.type === "uint64" || d.type === "int64" || d.type === "float64") {
+      out.push(`  readPos += 8;`);
+    }
+  }
+  out.push(`}`);
+  out.push(`for (let row = start; row < limit; row++) {`);
+  out.push(`  const cellBase = 8 + row * ${rowStride};`);
+  if (filter) {
+    // Predicate check: a single u32 read at the predicate field's cell
+    // header. For boolean fields the C++ projector writes 0 or 1.
+    const predRead = `dv.getUint32(cellBase + ${filterColIdx * 4}, true)`;
+    const predCmp = filter.kind === "truthy" ? "=== 0" : "!== 0";
+    out.push(`  if (${predRead} ${predCmp}) {`);
+    // Same skip body as the slice-skip phase: walk every payload-emitting
+    // field and advance readPos by its byte size.
+    for (let col = 0; col < cols; col++) {
+      const d = descs[col];
+      if (d.type === "text" || d.type === "data") {
+        out.push(`    { const _h = dv.getUint32(cellBase + ${col * 4}, true); if (_h !== 0xFFFFFFFF) readPos += _h; }`);
+      } else if (d.type === "uint64" || d.type === "int64" || d.type === "float64") {
+        out.push(`    readPos += 8;`);
+      }
+    }
+    out.push(`    continue;`);
+    out.push(`  }`);
+  }
+  for (let col = 0; col < cols; col++) {
+    const d = descs[col];
+    const headerOff = `cellBase + ${col * 4}`;
+    const batch = textBatch[col];
+    if (batch && batch.pos === 0) {
+      // Emit the batched decode at the first member of the run. All
+      // member _v* locals are produced here, so subsequent text members
+      // skip individual emission below.
+      out.push(`  let ${batch.members.map((m) => `_v${m}`).join(", ")};`);
+      out.push(`  {`);
+      for (let p = 0; p < batch.total; p++) {
+        const m = batch.members[p];
+        out.push(`    const _h${m} = dv.getUint32(cellBase + ${m * 4}, true);`);
+        out.push(`    const _b${m} = _h${m} === 0xFFFFFFFF ? 0 : _h${m};`);
+      }
+      const totalExpr = batch.members.map((m) => `_b${m}`).join(" + ");
+      out.push(`    const _total = ${totalExpr};`);
+      out.push(`    const _blob = _total === 0 ? "" : TD.decode(u8.subarray(out + readPos, out + readPos + _total));`);
+      // Walk substrings.
+      let cumExpr = "0";
+      for (let p = 0; p < batch.total; p++) {
+        const m = batch.members[p];
+        const startExpr = cumExpr;
+        const endExpr = `${cumExpr} + _b${m}`;
+        out.push(
+          `    _v${m} = _h${m} === 0xFFFFFFFF ? undefined : _h${m} === 0 ? "" : _blob.substring(${startExpr}, ${endExpr});`,
+        );
+        cumExpr = endExpr;
+      }
+      out.push(`    readPos += _total;`);
+      out.push(`  }`);
+      continue;
+    }
+    if (batch) {
+      // Subsequent member of an already-emitted run; nothing to do here
+      // because the batch block produced its _v* local.
+      continue;
+    }
+    switch (d.type) {
+      case "text":
+        out.push(`  let _v${col};`);
+        out.push(`  { const _h = dv.getUint32(${headerOff}, true);`);
+        out.push(`    if (_h === 0xFFFFFFFF) _v${col} = undefined;`);
+        out.push(`    else if (_h === 0) _v${col} = "";`);
+        out.push(`    else { _v${col} = TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }`);
+        break;
+      case "data":
+        out.push(`  let _v${col};`);
+        out.push(`  { const _h = dv.getUint32(${headerOff}, true);`);
+        out.push(`    if (_h === 0xFFFFFFFF) _v${col} = undefined;`);
+        out.push(`    else { _v${col} = u8.slice(out + readPos, out + readPos + _h); readPos += _h; } }`);
+        break;
+      case "bool":
+        out.push(`  const _v${col} = dv.getUint32(${headerOff}, true) === 1;`);
+        break;
+      case "uint8":
+      case "uint16":
+        out.push(`  const _v${col} = dv.getUint32(${headerOff}, true);`);
+        break;
+      case "int8":
+        out.push(`  const _v${col} = (dv.getUint32(${headerOff}, true) << 24) >> 24;`);
+        break;
+      case "int16":
+        out.push(`  const _v${col} = (dv.getUint32(${headerOff}, true) << 16) >> 16;`);
+        break;
+      case "uint32":
+        out.push(`  const _v${col} = dv.getUint32(${headerOff}, true) >>> 0;`);
+        break;
+      case "int32":
+        out.push(`  const _v${col} = dv.getUint32(${headerOff}, true) | 0;`);
+        break;
+      case "float32":
+        out.push(`  F32U[0] = dv.getUint32(${headerOff}, true) >>> 0;`);
+        out.push(`  const _v${col} = F32F[0];`);
+        break;
+      case "uint64":
+      case "int64":
+        out.push(`  let _v${col};`);
+        out.push(`  { const _lo = dv.getUint32(readPos, true);`);
+        out.push(`    const _hi = dv.getInt32(readPos + 4, true);`);
+        out.push(`    _v${col} = (_hi >= -0x200000 && _hi <= 0x1FFFFF) ? _hi * 4294967296 + _lo : dv.getBigInt64(readPos, true);`);
+        out.push(`    readPos += 8; }`);
+        break;
+      case "float64":
+        out.push(`  F64U[0] = dv.getUint32(readPos, true);`);
+        out.push(`  F64U[1] = dv.getUint32(readPos + 4, true);`);
+        out.push(`  const _v${col} = F64F[0];`);
+        out.push(`  readPos += 8;`);
+        break;
+      default:
+        out.push(`  const _v${col} = undefined;`);
+    }
+  }
+  // Object literal with the projected names — V8 freezes one hidden class
+  // for the row shape. Stringified names are valid in literal-key form.
+  // When applyMapFn is set, the user's per-row callback consumes the
+  // literal in place; we never store the raw row object in arr.
+  const litParts = names.map((n, i) => `${JSON.stringify(n)}: _v${i}`);
+  const targetExpr = filter ? "arr[arrIdx++]" : "arr[row - start]";
+  if (applyMapFn) {
+    out.push(`  ${targetExpr} = mapFn({ ${litParts.join(", ")} });`);
+  } else {
+    out.push(`  ${targetExpr} = { ${litParts.join(", ")} };`);
+  }
+  out.push(`}`);
+  if (filter) out.push(`arr.length = arrIdx;`);
+  out.push(`return arr;`);
+  return new Function("u8", "dv", "out", "rows", "H", "mapFn", "start", "limit", out.join("\n"));
 }
 
 function _capnwasmPick(cpp, fields, names) {
-  // Cached request prep. Same names hit the WeakMap and skip the encode loop.
-  const req = _getPickRequest(fields, names);
+  // Cached request prep + descriptor array. Same names hit the WeakMap and
+  // skip both the encode loop and the per-call descs-rebuild.
+  const entry = _getPickRequest(fields, names);
+  const req = entry.req;
+  const descs = entry.descs;
   const u8 = cpp._u8;
   const aux = cpp._auxPtr;
   u8.set(req, aux);
-  const descs = new Array(names.length);
-  for (let i = 0; i < names.length; i++) descs[i] = fields[names[i]];
   const written = cpp._exports.cpp_any_batch_read(req.length);
   if (!written) return Object.fromEntries(names.map((n) => [n, undefined]));
   const out = cpp._outPtr;
@@ -100,19 +333,298 @@ function _capnwasmPick(cpp, fields, names) {
   return result;
 }
 
+function _capnwasmListProject(cpp, ptrIndex, fields, names, mapFn, bounds, filter) {
+  const exp = cpp._exports;
+  if (typeof exp.cpp_any_list_project !== "function") return null;
+  if (filter && names.indexOf(filter.field) < 0) return null;
+  const entry = _getPickRequest(fields, names);
+  cpp._u8.set(entry.req, cpp._auxPtr);
+  const written = exp.cpp_any_list_project(ptrIndex, entry.req.length);
+  if (!written) return null;
+  const out = cpp._outPtr;
+  const u8 = cpp._u8;
+  const dv = new DataView(u8.buffer, out, written);
+  const rows = dv.getUint32(0, true);
+  const cols = dv.getUint32(4, true);
+  if (cols !== names.length) return null;
+  let start = 0, limit = rows;
+  if (bounds) {
+    start = bounds[0] | 0;
+    if (start > rows) start = rows;
+    const requested = bounds[1];
+    if (requested !== Infinity) {
+      const max = (requested | 0);
+      if (max < limit - start) limit = start + max;
+    }
+  }
+  if (!entry.listDecoders) entry.listDecoders = new Map();
+  const filterKey = filter ? filter.kind + ":" + filter.field : "";
+  const decKey = (mapFn ? "m" : "p") + "|" + filterKey;
+  let dec = entry.listDecoders.get(decKey);
+  if (!dec) { dec = _compileListDecoder(entry.descs, names, !!mapFn, filter); entry.listDecoders.set(decKey, dec); }
+  return dec(u8, dv, out, rows, _LIST_HELPERS, mapFn, start, limit);
+}
+
+const _STRUCT_FIELDS = Object.create(null);
+export class StaleReaderError extends Error {
+  constructor(message = "Cap'n Proto reader is stale because the CapnCpp runtime opened another message") {
+    super(message);
+    this.name = "StaleReaderError";
+  }
+}
+function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
+  if (typeof cpp._validateSingleSegment === "function") {
+    cpp._validateSingleSegment(bytes);
+  }
+  if (!unsafe && typeof cpp._allocMessage === "function") {
+    const msg = cpp._allocMessage(bytes);
+    const dataPtr = cpp._openAnyMessage(msg);
+    return { dataPtr, msg, gen: cpp._generation };
+  }
+  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
+  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
+  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
+  if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();
+  return { dataPtr, msg: null, gen: cpp._generation ?? 0 };
+}
+function _ensureCapnwasmReader(reader) {
+  const gen = reader._cpp._generation ?? 0;
+  if (reader._gen === gen) return;
+  if (reader._rebind) {
+    reader._rebind();
+    reader._gen = reader._cpp._generation ?? 0;
+    reader._u8 = reader._cpp._u8;
+    reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    return;
+  }
+  if (reader._msg) {
+    reader._dataPtr = reader._cpp._openAnyMessage(reader._msg);
+    reader._gen = reader._cpp._generation ?? 0;
+    reader._u8 = reader._cpp._u8;
+    reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    return;
+  }
+  throw new StaleReaderError();
+}
+const _LIST_MAP_TAG = Symbol("_capnwasm_listMap");
+const _LIST_MAP_SLICE_TAG = Symbol("_capnwasm_listMapSlice");
+function _makeListMapTag(idx, slice) {
+  const tag = [];
+  tag[_LIST_MAP_TAG] = idx;
+  if (slice) tag[_LIST_MAP_SLICE_TAG] = slice;
+  Object.defineProperty(tag, "slice", { value: function(start, end) {
+    const s = (start === undefined) ? 0 : start;
+    if (!Number.isInteger(s) || s < 0) return Array.prototype.slice.call(this, start, end);
+    let limit = Infinity;
+    if (end !== undefined) {
+      if (!Number.isInteger(end) || end < s) return Array.prototype.slice.call(this, start, end);
+      limit = end - s;
+    }
+    const prevSlice = this[_LIST_MAP_SLICE_TAG];
+    const prevStart = prevSlice ? prevSlice[0] : 0;
+    const prevLimit = prevSlice ? prevSlice[1] : Infinity;
+    const newStart = prevStart + s;
+    const newLimit = Math.min(prevLimit - s, limit);
+    if (newLimit < 0) return [];
+    return _makeListMapTag(idx, [newStart, newLimit]);
+  }});
+  return tag;
+}
+function _parseSimplePredicate(fn) {
+  let src;
+  try { src = Function.prototype.toString.call(fn); } catch (_) { return null; }
+  const truthyRe = /^\s*(?:\(\s*([a-zA-Z_$][\w$]*)\s*\)|([a-zA-Z_$][\w$]*))\s*=>\s*(\1|\2)\.([a-zA-Z_$][\w$]*)\s*;?\s*$/;
+  const falsyRe = /^\s*(?:\(\s*([a-zA-Z_$][\w$]*)\s*\)|([a-zA-Z_$][\w$]*))\s*=>\s*!\s*(\1|\2)\.([a-zA-Z_$][\w$]*)\s*;?\s*$/;
+  let m = truthyRe.exec(src); if (m) return { kind: "truthy", field: m[4] };
+  m = falsyRe.exec(src); if (m) return { kind: "falsy", field: m[4] };
+  return null;
+}
+function _isShapePreservingMap(fn, leafFields) {
+  let src;
+  try { src = Function.prototype.toString.call(fn); } catch (_) { return false; }
+  const m = /^\s*(?:\(\s*([a-zA-Z_$][\w$]*)\s*\)|([a-zA-Z_$][\w$]*))\s*=>\s*\(\s*\{([\s\S]*)\}\s*\)\s*;?\s*$/.exec(src);
+  if (!m) return false;
+  const param = m[1] || m[2];
+  const body = m[3];
+  if (/[\/{\[\`'"]/.test(body)) return false;
+  const entries = body.split(",").map((s) => s.trim()).filter(Boolean);
+  if (entries.length !== leafFields.length) return false;
+  if (!/^[a-zA-Z_$][\w$]*$/.test(param)) return false;
+  const entryRe = new RegExp("^([a-zA-Z_$][\\w$]*)\\s*:\\s*" + param + "\\.([a-zA-Z_$][\\w$]*)$");
+  const set = new Set(leafFields);
+  const seen = new Set();
+  for (let i = 0; i < entries.length; i++) {
+    const em = entryRe.exec(entries[i]);
+    if (!em || em[1] !== em[2]) return false;
+    if (!set.has(em[1]) || seen.has(em[1])) return false;
+    seen.add(em[1]);
+  }
+  return true;
+}
+function _planRaw(fields, fn) {
+  const selected = [];
+  const seen = new Set();
+  const make = (schema, path) => new Proxy(Object.create(null), {
+    get(_, name) {
+      if (typeof name !== "string") return undefined;
+      const desc = schema[name];
+      if (!desc) return undefined;
+      const nextPath = path.concat(name);
+      const list = /^List\(([^)]+)\)$/.exec(desc.type);
+      if (list && _STRUCT_FIELDS[list[1]]) {
+        const recordMap = (childFn, filter) => {
+          const idx = selected.length;
+          const entry = { kind: "listMap", path: nextPath, inner: list[1], fn: childFn };
+          if (filter) entry.filter = filter;
+          selected.push(entry);
+          return idx;
+        };
+        const buildFusedProxy = (filter) => ({
+          map(childFn) {
+            const idx = recordMap(childFn, filter);
+            return _makeListMapTag(idx, null);
+          },
+          filter(predicateFn) {
+            const parsed = _parseSimplePredicate(predicateFn);
+            if (parsed) return buildFusedProxy(parsed);
+            return buildSafeProxy();
+          }
+        });
+        const buildSafeProxy = () => ({
+          map(childFn) { recordMap(childFn, null); return []; },
+          filter() { return buildSafeProxy(); }
+        });
+        return buildFusedProxy(null);
+      }
+      if (_STRUCT_FIELDS[desc.type]) return make(_STRUCT_FIELDS[desc.type], nextPath);
+      const key = nextPath.join(".");
+      if (!seen.has(key)) { seen.add(key); selected.push({ kind: "field", path: nextPath }); }
+      return undefined;
+    }
+  });
+  const result = fn(make(fields, []));
+  let outerListMapIdx = -1;
+  let outerSlice = null;
+  if (result && typeof result === "object" && _LIST_MAP_TAG in result) {
+    outerListMapIdx = result[_LIST_MAP_TAG];
+    if (_LIST_MAP_SLICE_TAG in result) outerSlice = result[_LIST_MAP_SLICE_TAG];
+  }
+  return { selected, outerListMapIdx, outerSlice };
+}
+function _compilePlan(selected, outerListMapIdx, outerSlice) {
+  const leaf = [];
+  const nestedRaw = new Map();
+  const listMapRaw = [];
+  let outerListMapPos = -1;
+  for (let i = 0; i < selected.length; i++) {
+    const item = selected[i];
+    const head = item.path[0];
+    if (!head) continue;
+    if (item.kind === "field" && item.path.length === 1) {
+      leaf.push(head);
+    } else if (item.kind === "listMap" && item.path.length === 1) {
+      if (i === outerListMapIdx) outerListMapPos = listMapRaw.length;
+      const lmEntry = { name: head, inner: item.inner, fn: item.fn };
+      if (item.filter) lmEntry.filter = item.filter;
+      listMapRaw.push(lmEntry);
+    } else {
+      let entry = nestedRaw.get(head);
+      if (!entry) { entry = []; nestedRaw.set(head, entry); }
+      const sliced = { kind: item.kind, path: item.path.slice(1) };
+      if (item.kind === "listMap") { sliced.inner = item.inner; sliced.fn = item.fn; }
+      entry.push(sliced);
+    }
+  }
+  const nested = [];
+  for (const [name, raw] of nestedRaw) nested.push({ name, plan: _compilePlan(raw, -1, null) });
+  const listMap = listMapRaw.map(({ name, inner, fn, filter }) => {
+    const innerPlan = _planDraft(_STRUCT_FIELDS[inner], fn).plan;
+    const shapePreserving = (innerPlan.nested.length === 0 && innerPlan.listMap.length === 0)
+      && _isShapePreservingMap(fn, innerPlan.leaf);
+    return { name, inner, fn, filter, plan: innerPlan, shapePreserving };
+  });
+  return { leaf, nested, listMap, outerListMapPos, outerSlice };
+}
+function _planDraft(fields, fn) {
+  const raw = _planRaw(fields, fn);
+  return { plan: _compilePlan(raw.selected, raw.outerListMapIdx, raw.outerSlice) };
+}
+function _getDraftPlan(fields, fn) {
+  let perFields = _DRAFT_PLAN_CACHE.get(fields);
+  if (!perFields) { perFields = new WeakMap(); _DRAFT_PLAN_CACHE.set(fields, perFields); }
+  let plan = perFields.get(fn);
+  if (!plan) { plan = _planDraft(fields, fn).plan; perFields.set(fn, plan); }
+  return plan;
+}
+function _materializeDraft(cpp, fields, plan) {
+  const out = {};
+  if (plan.leaf.length > 0) Object.assign(out, _capnwasmPick(cpp, fields, plan.leaf));
+  const exp = cpp._exports;
+  for (let i = 0; i < plan.nested.length; i++) {
+    const sub = plan.nested[i];
+    const desc = fields[sub.name];
+    if (!desc || !_STRUCT_FIELDS[desc.type]) { out[sub.name] = undefined; continue; }
+    if (exp.cpp_any_enter_struct(desc.off) !== 1) { out[sub.name] = null; continue; }
+    try { out[sub.name] = _materializeDraft(cpp, _STRUCT_FIELDS[desc.type], sub.plan); }
+    finally { exp.cpp_any_leave_struct(); }
+  }
+  for (let i = 0; i < plan.listMap.length; i++) {
+    const item = plan.listMap[i];
+    const desc = fields[item.name];
+    if (!desc || !_STRUCT_FIELDS[item.inner]) { out[item.name] = []; continue; }
+    const innerFields = _STRUCT_FIELDS[item.inner];
+    if (item.plan.nested.length === 0 && item.plan.listMap.length === 0) {
+      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf);
+      if (fast !== null) { out[item.name] = fast; continue; }
+    }
+    const size = exp.cpp_any_open_list(desc.off);
+    const arr = new Array(size);
+    for (let j = 0; j < size; j++) {
+      exp.cpp_any_open_list(desc.off);
+      if (exp.cpp_any_enter_list_at(j) !== 1) { arr[j] = null; continue; }
+      try { arr[j] = _materializeDraft(cpp, innerFields, item.plan); }
+      finally { exp.cpp_any_leave_struct(); }
+    }
+    out[item.name] = arr;
+  }
+  return out;
+}
+function _runDraft(cpp, fields, fn) {
+  const plan = _getDraftPlan(fields, fn);
+  if (plan.outerListMapPos >= 0 && plan.listMap.length > 0) {
+    const item = plan.listMap[plan.outerListMapPos];
+    const desc = fields[item.name];
+    if (desc && _STRUCT_FIELDS[item.inner] && item.plan.nested.length === 0 && item.plan.listMap.length === 0) {
+      const innerFields = _STRUCT_FIELDS[item.inner];
+      const fastFn = item.shapePreserving ? null : item.fn;
+      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf, fastFn, plan.outerSlice, item.filter);
+      if (fast !== null) return fast;
+    }
+  }
+  if (plan.nested.length === 0 && plan.listMap.length === 0) {
+    return fn(_capnwasmPick(cpp, fields, plan.leaf));
+  }
+  return fn(_materializeDraft(cpp, fields, plan));
+}
+
 export class ProfileReader {
-  constructor(cpp, dataPtr) {
+  constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
   get id() {
+    _ensureCapnwasmReader(this);
     return this._dataPtr ? this._dv.getBigUint64(this._dataPtr + 0, true) : this._exp.cpp_any_int64_at(0, 0n);
   }
   get name() {
+    _ensureCapnwasmReader(this);
     const len = this._exp.cpp_any_text_at(0);
     if (len === 0) return "";
     const u8 = this._cpp._u8;
@@ -125,41 +637,18 @@ export class ProfileReader {
     name: {"kind":0,"off":0,"type":"text"},
   };
 
-  pick(names) {
-    return ProfileReader._pickImpl(this._cpp, names);
-  }
-
-  static _pickImpl(cpp, names) {
-    return _capnwasmPick(cpp, ProfileReader._FIELDS, names);
-  }
-
-  get access() {
-    if (!this._plan) {
-      this._plan = [];
-      const recorded = this._plan;
-      const fields = ProfileReader._FIELDS;
-      this._access = new Proxy(Object.create(null), {
-        get(_, name) {
-          if (typeof name === "string" && (name in fields)) recorded.push(name);
-          return undefined;
-        }
-      });
-    }
-    return this._access;
-  }
-
-  apply() {
-    if (!this._plan || this._plan.length === 0) return {};
-    const result = ProfileReader._pickImpl(this._cpp, this._plan);
-    this._plan = null;
-    this._access = null;
-    return result;
+  draft(fn) {
+    _ensureCapnwasmReader(this);
+    return _runDraft(this._cpp, ProfileReader._FIELDS, fn);
   }
 
   toObject() {
-    return ProfileReader._pickImpl(this._cpp, Object.keys(ProfileReader._FIELDS));
+    _ensureCapnwasmReader(this);
+    return _capnwasmPick(this._cpp, ProfileReader._FIELDS, Object.keys(ProfileReader._FIELDS));
   }
 }
+
+_STRUCT_FIELDS["Profile"] = ProfileReader._FIELDS;
 
 export class ProfileBuilder {
   static _DATA_WORDS = 1;
@@ -235,10 +724,14 @@ export class ProfileBuilder {
  * Open framed Cap'n Proto bytes for typed access. Returns a ProfileReader.
  */
 export function openProfile(cpp, bytes) {
-  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
-  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
-  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
-  return new ProfileReader(cpp, dataPtr);
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new ProfileReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openProfileUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new ProfileReader(cpp, opened.dataPtr, opened);
 }
 
 /** Begin building a new Profile message. Returns a ProfileBuilder. */
