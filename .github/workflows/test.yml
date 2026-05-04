@@ -12,14 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-
-      - name: Install
-        run: npm ci
+          cache: pnpm
 
       # The wasm artifacts in dist/ are committed, so the test suite (which
       # imports dist/inlined.mjs) runs without a wasm rebuild. Reproducing
@@ -27,5 +29,8 @@ jobs:
       # purpose — those tools change less than the JS code, and a separate
       # workflow can run them on a schedule when we want to verify the
       # checked-in wasm matches a fresh build.
+      - name: Install (workspace)
+        run: pnpm install --frozen-lockfile
+
       - name: Run unit tests
-        run: npm test
+        run: pnpm test
