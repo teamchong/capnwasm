@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "codegen": "node ../bin/capnwasm.mjs gen users.capnp -o src/playground/users.capnp.gen.mjs && node ../bin/capnwasm.mjs gen chat.capnp -o src/chat/chat.capnp.gen.mjs",
-    "prepare": "cp ../dist/capnp.slim.wasm public/ && cp ../js/inspect.mjs public/inspect.js && pnpm run codegen && node scripts/generate-fixtures.mjs",
-    "dev": "pnpm run prepare && vite",
-    "build": "pnpm run prepare && vite build",
+    "prepare:assets": "cp ../dist/capnp.slim.wasm public/ && cp ../js/inspect.mjs public/inspect.js && pnpm run codegen && node scripts/generate-fixtures.mjs",
+    "dev": "pnpm run prepare:assets && vite",
+    "build": "pnpm run prepare:assets && vite build",
     "preview": "vite preview --port 4173",
     "server": "node server.mjs"
   },
