@@ -8,6 +8,9 @@
     "type": "git",
     "url": "git+https://github.com/teamchong/capnwasm.git"
   },
+  "bugs": {
+    "url": "https://github.com/teamchong/capnwasm/issues"
+  },
   "homepage": "https://github.com/teamchong/capnwasm",
   "type": "module",
   "main": "js/index.mjs",
