@@ -63,10 +63,10 @@ Numbers are minified-then-compressed. The `gzip` column is what Cloudflare Worke
 
 Honest read of where capnwasm wins, where it loses, where it ties:
 
-- **Sparse access (read 5 fields out of 256)**: capnwasm is ~50× faster than `JSON.parse` because Cap'n Proto reads only the fields you ask for; JSON.parse decodes the whole document either way.
+- **Sparse access (read 5 fields out of 256)**: capnwasm is ~49× faster than `JSON.parse` because Cap'n Proto reads only the fields you ask for; JSON.parse decodes the whole document either way.
 - **Binary blobs**: capnwasm is ~6× faster on a 32 KB blob round-trip. JSON.parse pays decode + base64-decode; capnwasm hands back a `Uint8Array.slice` of `WebAssembly.Memory`.
-- **Small flat structs and dense full-iteration**: `JSON.parse` wins by ~2×. V8's internal C++ JSON parser is heavily optimized for the parse-then-iterate-arrays workload, and capnwasm's per-row reader allocation adds ~46 ns/row.
-- **Wide list iteration**: at the breakeven point. Run-to-run variance dominates.
+- **List and dense full-iteration**: capnwasm runs at ~83-85% of `JSON.parse` speed. V8's internal C++ JSON parser is heavily optimized for parse-then-iterate-arrays; capnwasm pays a per-row reader allocation but offsets it with typed-array reads on primitive fields (~1 ns vs DataView's ~7 ns).
+- **Small flat structs**: `JSON.parse` wins by ~2×. On a single 80-byte payload, slot-pool open/dispose overhead exceeds the parse savings.
 - **Wire bytes**: capnwasm is ~25% smaller than JSON on text-heavy shapes and 33% smaller on binary blobs (no base64 inflation).
 
 Reproducible Node-side bench: `node bench/m8_attribution.mjs`. Numbers and analysis live in [`docs/vs-capnweb.md`](docs/vs-capnweb.md). The browser-side end-to-end bench is at [capnwasm.teamchong.net/render-bench](https://capnwasm.teamchong.net/render-bench).
@@ -80,7 +80,7 @@ Reproducible Node-side bench: `node bench/m8_attribution.mjs`. Numbers and analy
 ## When *not* to use capnwasm
 
 - Pure JS-to-JS, all-text payloads, smallest-bundle priority. [capnweb](https://github.com/cloudflare/capnweb) is the better fit at 18 KB brotli.
-- Your hot path re-reads the same payload many times. After the first decode, JSON.parse-then-iterate is V8-native and very fast; capnwasm pays a per-row reader allocation each pass unless you cache.
+- Your hot path is "parse once, iterate every field of every row." JSON.parse-then-iterate is V8-native and ~20% faster on that shape than capnwasm's lazy-decode model.
 - You want a battle-tested, production-ready library today. capnwasm isn't there yet.
 
 ## Build from source

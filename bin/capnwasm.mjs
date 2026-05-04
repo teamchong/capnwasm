@@ -1400,13 +1400,11 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`      reader._gen = cpp._generation ?? 0;`);
   lines.push(`      reader._u8 = cpp._u8;`);
   lines.push(`      reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+  lines.push(`      reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
   lines.push(`    } else if (reader._dv && reader._dv.buffer !== cpp.memory.buffer) {`);
-  // M5: wasm memory may have grown via other activity even when our
-  // generation matches (any builder write, any other reader's text
-  // decode). Refresh the cached views so the pure-JS pointer decoder
-  // does not read from a detached buffer.
   lines.push(`      reader._u8 = cpp._u8;`);
   lines.push(`      reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+  lines.push(`      reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
   lines.push(`    }`);
   lines.push(`    return;`);
   lines.push(`  }`);
@@ -1417,6 +1415,7 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`    reader._gen = reader._cpp._generation ?? 0;`);
   lines.push(`    reader._u8 = reader._cpp._u8;`);
   lines.push(`    reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);`);
+  lines.push(`    reader._u16 = reader._cpp._u16; reader._i16 = reader._cpp._i16; reader._u32 = reader._cpp._u32; reader._i32 = reader._cpp._i32; reader._f32 = reader._cpp._f32; reader._f64 = reader._cpp._f64;`);
   lines.push(`    return;`);
   lines.push(`  }`);
   lines.push(`  if (reader._msg) {`);
@@ -1424,6 +1423,7 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`    reader._gen = reader._cpp._generation ?? 0;`);
   lines.push(`    reader._u8 = reader._cpp._u8;`);
   lines.push(`    reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);`);
+  lines.push(`    reader._u16 = reader._cpp._u16; reader._i16 = reader._cpp._i16; reader._u32 = reader._cpp._u32; reader._i32 = reader._cpp._i32; reader._f32 = reader._cpp._f32; reader._f64 = reader._cpp._f64;`);
   lines.push(`    return;`);
   lines.push(`  }`);
   lines.push(`  throw new StaleReaderError();`);
@@ -1764,8 +1764,20 @@ function _capnwasmPick(cpp, fields, names) {`);
     // cached _u8 view stays valid for the Reader's lifetime since
     // primitive reads can't trigger memory growth.
     lines.push(`    this._dataPtr = dataPtr | 0;`);
-    lines.push(`    this._u8 = cpp._u8;`);
-    lines.push(`    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+    // Typed-array views over wasm memory. When opts.parent is present
+    // (parent reader for List<Struct> element allocation), copy its views
+    // directly. The parent already validated they match cpp.memory.buffer.
+    // Otherwise fetch from cpp (root reader path). The parent fast path
+    // saves ~6 typed-view getter calls per element on dense iteration.
+    lines.push(`    if (opts && opts.parent) {`);
+    lines.push(`      const _p = opts.parent;`);
+    lines.push(`      this._u8 = _p._u8; this._dv = _p._dv;`);
+    lines.push(`      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;`);
+    lines.push(`    } else {`);
+    lines.push(`      this._u8 = cpp._u8;`);
+    lines.push(`      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+    lines.push(`      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;`);
+    lines.push(`    }`);
     // M4: dispose flag. False until dispose() runs. After dispose,
     // _ensureCapnwasmReader throws DisposedReaderError on every getter.
     lines.push(`    this._disposed = false;`);
@@ -2533,11 +2545,17 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
   // (they read directly from _dataPtr) so there's no overhead in the
   // hot path; the rebind only fires when something calls into C++.
   lines.push(`      const elemDataPtr = _listDesc.elementsBase + i * (_listDesc.dataWords + _listDesc.ptrWords) * 8;`);
+  // Pass the parent reader directly. The element reader copies typed-array
+  // views off the parent (which already validated they match
+  // cpp.memory.buffer). Avoids 6 typed-view getter calls per element on
+  // dense iteration (parent has cached views; cpp's getters check
+  // buffer detachment on every access, which V8 doesn't fully inline).
   lines.push(`      return new ${innerType}Reader(cpp, elemDataPtr, {`);
   lines.push(`        slotIdx: reader._slotIdx,`);
   lines.push(`        msgStart: _msgStart,`);
   lines.push(`        msgEnd: _msgEnd,`);
   lines.push(`        gen: cpp._generation ?? 0,`);
+  lines.push(`        parent: reader,`);
   lines.push(`        rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(${ptrIndex}); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); },`);
   lines.push(`      });`);
   lines.push(`    },`);
@@ -2666,31 +2684,24 @@ function generateGetter(field) {
     case "Int8":
       return [`return this._dataPtr ? ((this._u8[this._dataPtr + ${off}] << 24) >> 24) : ((this._exp.cpp_any_uint8_at(${off}, 0) << 24) >> 24);`];
     case "UInt16":
-      return [`return this._dataPtr ? this._dv.getUint16(this._dataPtr + ${off}, true) : this._exp.cpp_any_uint16_at(${off}, 0);`];
+      return [`return this._dataPtr ? this._u16[(this._dataPtr + ${off}) >>> 1] : this._exp.cpp_any_uint16_at(${off}, 0);`];
     case "Int16":
-      return [`return this._dataPtr ? this._dv.getInt16(this._dataPtr + ${off}, true) : ((this._exp.cpp_any_uint16_at(${off}, 0) << 16) >> 16);`];
+      return [`return this._dataPtr ? this._i16[(this._dataPtr + ${off}) >>> 1] : ((this._exp.cpp_any_uint16_at(${off}, 0) << 16) >> 16);`];
     case "UInt32":
-      return [`return this._dataPtr ? this._dv.getUint32(this._dataPtr + ${off}, true) : this._exp.cpp_any_uint32_at(${off}, 0);`];
+      return [`return this._dataPtr ? this._u32[(this._dataPtr + ${off}) >>> 2] : this._exp.cpp_any_uint32_at(${off}, 0);`];
     case "Int32":
-      return [`return this._dataPtr ? this._dv.getInt32(this._dataPtr + ${off}, true) : (this._exp.cpp_any_uint32_at(${off}, 0) | 0);`];
+      return [`return this._dataPtr ? this._i32[(this._dataPtr + ${off}) >>> 2] : (this._exp.cpp_any_uint32_at(${off}, 0) | 0);`];
     case "UInt64":
+      // BigInt64Array is aligned-only too, but BigInt construction is the
+      // dominant cost (V8 BigInt allocates per call). DataView is no worse
+      // here and avoids one extra TypedArray view in the cache. Keep DV.
       return [`return this._dataPtr ? this._dv.getBigUint64(this._dataPtr + ${off}, true) : this._exp.cpp_any_int64_at(${off}, 0n);`];
     case "Int64":
       return [`return this._dataPtr ? this._dv.getBigInt64(this._dataPtr + ${off}, true) : this._exp.cpp_any_int64_at(${off}, 0n);`];
     case "Float32":
-      // Reinterpret u32 bits as f32 via the module-scoped shared view (one
-      // ArrayBuffer per module load, not per reader instance. The latter
-      // showed up in the bench at hundreds of nanoseconds per field access).
-      return [
-        `_F32_VIEW_U32[0] = this._exp.cpp_any_uint32_at(${off}, 0) >>> 0;`,
-        `return _F32_VIEW_F32[0];`,
-      ];
+      return [`return this._dataPtr ? this._f32[(this._dataPtr + ${off}) >>> 2] : (function(){ _F32_VIEW_U32[0] = (this._exp.cpp_any_uint32_at(${off}, 0) >>> 0); return _F32_VIEW_F32[0]; }).call(this);`];
     case "Float64":
-      return [
-        `_F64_VIEW_U32[0] = this._exp.cpp_any_uint32_at(${off}, 0) >>> 0;`,
-        `_F64_VIEW_U32[1] = this._exp.cpp_any_uint32_at(${off + 4}, 0) >>> 0;`,
-        `return _F64_VIEW_F64[0];`,
-      ];
+      return [`return this._dataPtr ? this._f64[(this._dataPtr + ${off}) >>> 3] : (function(){ _F64_VIEW_U32[0] = (this._exp.cpp_any_uint32_at(${off}, 0) >>> 0); _F64_VIEW_U32[1] = (this._exp.cpp_any_uint32_at(${off + 4}, 0) >>> 0); return _F64_VIEW_F64[0]; }).call(this);`];
     default:
       return [`throw new Error("unsupported field type: ${field.type}");`];
   }

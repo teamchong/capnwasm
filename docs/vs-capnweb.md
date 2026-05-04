@@ -208,21 +208,20 @@ Numbers from `bench/m8_attribution.mjs` running on Node 24 / Apple Silicon. Same
 
 | Shape                                  | capnwasm | JSON     | ratio    | bytes capnwasm | bytes JSON |
 |---|---|---|---|---|---|
-| small (5-field struct)                 | 557 ns   | 286 ns   | 0.51×    | 80             | 80         |
-| list (1000 rows, 2-field lazy read)    | 87.8 µs  | 87.8 µs  | 1.00×    | 24 080         | 31 773     |
-| sparse (256-field meta, read 5 fields) | 329 ns   | 16.7 µs  | 50.6×    | 1 040          | 2 925      |
-| dense (500 rows × every field)         | 67.6 µs  | 43.7 µs  | 0.65×    | 12 080         | 15 773     |
-| blob (32 KB binary)                    | 2.65 µs  | 15.9 µs  | 5.99×    | 32 792         | 43 703     |
+| small (5-field struct)                 | 530 ns   | 280 ns   | 0.53×    | 80             | 80         |
+| list (1000 rows, 2-field lazy read)    | 103 µs   | 88 µs    | 0.85×    | 24 080         | 31 773     |
+| sparse (256-field meta, read 5 fields) | 327 ns   | 16.1 µs  | 49×      | 1 040          | 2 925      |
+| dense (500 rows × every field)         | 53 µs    | 44 µs    | 0.83×    | 12 080         | 15 773     |
+| blob (32 KB binary)                    | 2.6 µs   | 16.0 µs  | 6.2×     | 32 792         | 43 703     |
 
 Honest reading:
 
-- **capnwasm dominates sparse access (50×).** Reading 5 fields out of 256 is exactly the strength of fixed-offset reads. JSON.parse must decode the entire object even if you read one property.
-- **capnwasm dominates binary blobs (6×).** No base64 round-trip; the bytes sit in linear memory and `Uint8Array.slice` hands them back. JSON pays decode + base64-decode.
-- **capnwasm and JSON are within run-to-run noise on the lazy-list shape.** A 1000-row list with two-field reads per row sits at the breakeven point: capnwasm saves the parse step, JSON saves the per-row reader allocation. Re-running the bench produces ratios swinging between 0.65× and 1.0× as JIT warmup, GC pressure, and OS scheduling dominate the per-iteration cost. Wire bytes still favor capnwasm by ~25%, which matters more on real networks than the in-process CPU budget.
+- **capnwasm dominates sparse access (~49×).** Reading 5 fields out of 256 is exactly the strength of fixed-offset reads. JSON.parse must decode the entire object even if you read one property.
+- **capnwasm dominates binary blobs (~6×).** No base64 round-trip; the bytes sit in linear memory and `Uint8Array.slice` hands them back. JSON pays decode + base64-decode.
+- **list/dense iteration: capnwasm at ~83-85% of JSON.parse speed.** A 1000-row list with two-field reads per row, or a 500-row dense full-iteration, both run at ~0.85× JSON's speed. JSON.parse pays an O(N) parse cost but then iterates plain JS arrays at hidden-class speeds; capnwasm pays a per-row Reader allocation (~30 ns/row) but skips the parse. Closing the gap further would mean either a single rebindable cursor (breaking the "each `at(i)` is independent" contract) or batched typed-array views for primitive-list reads. Wire bytes still favor capnwasm by ~25%, which matters more on real networks than the in-process CPU budget.
 - **JSON wins on small structs (~2× faster).** V8's `JSON.parse` is internal C++ optimized for decades; on a single 80-byte object the slot acquire / dispose / FinalizationRegistry overhead in capnwasm outweighs the parse savings.
-- **JSON wins on dense iteration (~1.5× faster).** Same story at higher row counts: parsing once into plain JS objects and iterating native arrays beats per-row reader allocation when you read every row's every field. The reader-allocation cost is ~46 ns/row; on a workload that reads every column of every row, JSON's "parse once and you're done" model wins.
 
-So **capnwasm is not a universal speedup over JSON.parse.** Where it wins, it wins by a lot (sparse, blobs); where it loses, it loses by ~2×. The wire bytes always favor capnwasm on this corpus, which matters more on real networks than the in-process CPU budget.
+So **capnwasm is not a universal speedup over JSON.parse.** Where it wins, it wins by a lot (sparse, blobs); where it loses on small structs and full-iteration shapes, it loses by ~1.2-2×. The wire bytes always favor capnwasm on this corpus, which matters more on real networks than the in-process CPU budget.
 
 If your app fits inside "fetch some data, render it, occasionally POST" then plain REST is fine and probably what you should use. Both capnweb and capnwasm are for apps that need RPC semantics. Capability-secure objects, pipelining, streaming, wire-compatible types.
 

@@ -491,9 +491,11 @@ function _ensureCapnwasmReader(reader) {
       reader._gen = cpp._generation ?? 0;
       reader._u8 = cpp._u8;
       reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
     } else if (reader._dv && reader._dv.buffer !== cpp.memory.buffer) {
       reader._u8 = cpp._u8;
       reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
     }
     return;
   }
@@ -504,6 +506,7 @@ function _ensureCapnwasmReader(reader) {
     reader._gen = reader._cpp._generation ?? 0;
     reader._u8 = reader._cpp._u8;
     reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    reader._u16 = reader._cpp._u16; reader._i16 = reader._cpp._i16; reader._u32 = reader._cpp._u32; reader._i32 = reader._cpp._i32; reader._f32 = reader._cpp._f32; reader._f64 = reader._cpp._f64;
     return;
   }
   if (reader._msg) {
@@ -511,6 +514,7 @@ function _ensureCapnwasmReader(reader) {
     reader._gen = reader._cpp._generation ?? 0;
     reader._u8 = reader._cpp._u8;
     reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    reader._u16 = reader._cpp._u16; reader._i16 = reader._cpp._i16; reader._u32 = reader._cpp._u32; reader._i32 = reader._cpp._i32; reader._f32 = reader._cpp._f32; reader._f64 = reader._cpp._f64;
     return;
   }
   throw new StaleReaderError();
@@ -730,8 +734,15 @@ export class PrimitivesReader {
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
-    this._u8 = cpp._u8;
-    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
     this._disposed = false;
   }
 
@@ -756,11 +767,11 @@ export class PrimitivesReader {
   }
   get u16() {
     _ensureCapnwasmReader(this);
-    return this._dataPtr ? this._dv.getUint16(this._dataPtr + 2, true) : this._exp.cpp_any_uint16_at(2, 0);
+    return this._dataPtr ? this._u16[(this._dataPtr + 2) >>> 1] : this._exp.cpp_any_uint16_at(2, 0);
   }
   get u32() {
     _ensureCapnwasmReader(this);
-    return this._dataPtr ? this._dv.getUint32(this._dataPtr + 4, true) : this._exp.cpp_any_uint32_at(4, 0);
+    return this._dataPtr ? this._u32[(this._dataPtr + 4) >>> 2] : this._exp.cpp_any_uint32_at(4, 0);
   }
   get u64() {
     _ensureCapnwasmReader(this);
@@ -772,11 +783,11 @@ export class PrimitivesReader {
   }
   get i16() {
     _ensureCapnwasmReader(this);
-    return this._dataPtr ? this._dv.getInt16(this._dataPtr + 16, true) : ((this._exp.cpp_any_uint16_at(16, 0) << 16) >> 16);
+    return this._dataPtr ? this._i16[(this._dataPtr + 16) >>> 1] : ((this._exp.cpp_any_uint16_at(16, 0) << 16) >> 16);
   }
   get i32() {
     _ensureCapnwasmReader(this);
-    return this._dataPtr ? this._dv.getInt32(this._dataPtr + 20, true) : (this._exp.cpp_any_uint32_at(20, 0) | 0);
+    return this._dataPtr ? this._i32[(this._dataPtr + 20) >>> 2] : (this._exp.cpp_any_uint32_at(20, 0) | 0);
   }
   get i64() {
     _ensureCapnwasmReader(this);
@@ -784,14 +795,11 @@ export class PrimitivesReader {
   }
   get f32() {
     _ensureCapnwasmReader(this);
-    _F32_VIEW_U32[0] = this._exp.cpp_any_uint32_at(32, 0) >>> 0;
-    return _F32_VIEW_F32[0];
+    return this._dataPtr ? this._f32[(this._dataPtr + 32) >>> 2] : (function(){ _F32_VIEW_U32[0] = (this._exp.cpp_any_uint32_at(32, 0) >>> 0); return _F32_VIEW_F32[0]; }).call(this);
   }
   get f64() {
     _ensureCapnwasmReader(this);
-    _F64_VIEW_U32[0] = this._exp.cpp_any_uint32_at(40, 0) >>> 0;
-    _F64_VIEW_U32[1] = this._exp.cpp_any_uint32_at(44, 0) >>> 0;
-    return _F64_VIEW_F64[0];
+    return this._dataPtr ? this._f64[(this._dataPtr + 40) >>> 3] : (function(){ _F64_VIEW_U32[0] = (this._exp.cpp_any_uint32_at(40, 0) >>> 0); _F64_VIEW_U32[1] = (this._exp.cpp_any_uint32_at(44, 0) >>> 0); return _F64_VIEW_F64[0]; }).call(this);
   }
   get flag0() {
     _ensureCapnwasmReader(this);

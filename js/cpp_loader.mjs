@@ -139,6 +139,19 @@ export class CapnCpp {
   // instead of `new DataView(...)` per call. Refreshed on memory growth
   // via #refreshDv().
   #dv = null;
+  // Cached typed-array views over memory.buffer. capnp wire format is
+  // little-endian and fields are aligned at element-size boundaries by
+  // the layout compiler, so we can read primitive fields via typed
+  // arrays (~1 ns) instead of DataView (~5-7 ns). All views share the
+  // same backing buffer; refresh together when memory grows.
+  // Asserted little-endian host at load (#assertLittleEndian).
+  #u8a = null;
+  #u16 = null;
+  #i16 = null;
+  #u32 = null;
+  #i32 = null;
+  #f32 = null;
+  #f64 = null;
 
   static async load(wasmSource) {
     // Inline WASI imports. Avoids a cross-module factory call on the cold
@@ -206,6 +219,18 @@ export class CapnCpp {
       cpp.#auxCap = cpp.#exports.cpp_scratch_aux_capacity();
     }
     cpp.#dv = new DataView(mem.buffer);
+    // capnp wire format is little-endian. Typed-array reads use the host's
+    // native endianness, so we must run on a little-endian host to use them.
+    // Every production target (x86, arm64, riscv64, wasm itself) is LE.
+    // We refuse to load on a BE host rather than silently producing
+    // byte-swapped reads.
+    {
+      const probe = new Uint8Array(new Uint16Array([0x0102]).buffer);
+      if (probe[0] !== 0x02) {
+        throw new Error("capnwasm requires a little-endian host (got big-endian)");
+      }
+    }
+    cpp.#refreshTypedViews(mem.buffer);
     cpp.#messageFinalizer = new FinalizationRegistry((ptr) => {
       try { cpp.#exports.cpp_msg_free?.(ptr); } catch (_) {}
     });
@@ -242,6 +267,40 @@ export class CapnCpp {
   _dv() {
     if (this.#dv.buffer !== this.#memory.buffer) {
       this.#dv = new DataView(this.#memory.buffer);
+      this.#refreshTypedViews(this.#memory.buffer);
+    }
+    return this.#dv;
+  }
+
+  /**
+   * Build all primitive typed-array views over `buf`. Called once at load
+   * time and on memory growth. The views share `buf` so they all see the
+   * same bytes. Primitive struct fields use the index-by-element-size form
+   * (e.g. `_u32[(ptr + off) >>> 2]`) which the JIT compiles to a single
+   * indexed load — no bounds-check on the JS side beyond the typed-array's
+   * own implicit `i < length` check, which V8 elides on monomorphic loops.
+   */
+  #refreshTypedViews(buf) {
+    this.#u8a = new Uint8Array(buf);
+    this.#u16 = new Uint16Array(buf);
+    this.#i16 = new Int16Array(buf);
+    this.#u32 = new Uint32Array(buf);
+    this.#i32 = new Int32Array(buf);
+    this.#f32 = new Float32Array(buf);
+    this.#f64 = new Float64Array(buf);
+  }
+
+  /**
+   * Refresh **all** cached views (DataView + typed arrays) if memory grew.
+   * Hot-path readers cache `_u32`/`_f64`/etc. on the reader and re-fetch
+   * via this when their cached view's `.buffer` no longer matches
+   * `cpp.memory.buffer`. Returns the current DataView for callers that
+   * still want one.
+   */
+  _refreshViews() {
+    if (this.#dv.buffer !== this.#memory.buffer) {
+      this.#dv = new DataView(this.#memory.buffer);
+      this.#refreshTypedViews(this.#memory.buffer);
     }
     return this.#dv;
   }
@@ -250,7 +309,13 @@ export class CapnCpp {
   get memory() { return this.#memory; }
   get _generation() { return this.#generation; }
 
-  #u8() { return new Uint8Array(this.#memory.buffer); }
+  #u8() {
+    // Refresh-if-grown. Same backing buffer as all other typed views.
+    if (this.#u8a === null || this.#u8a.buffer !== this.#memory.buffer) {
+      this.#refreshTypedViews(this.#memory.buffer);
+    }
+    return this.#u8a;
+  }
 
   _bumpGeneration() { return ++this.#generation; }
 
@@ -439,6 +504,16 @@ export class CapnCpp {
   get _auxPtr()  { return this.#auxPtr; }
   get _auxCap()  { return this.#auxCap; }
   get _u8()      { return this.#u8(); }
+  // Typed-array views over wasm memory. Codegen reads primitive fields
+  // via these (e.g. `this._u32[(this._dataPtr + 16) >>> 2]`). The
+  // get-with-refresh pattern keeps the reader-side cache valid across
+  // memory growth: if `cpp._u32 !== reader._u32`, the buffer changed.
+  get _u16()     { if (this.#u16 === null || this.#u16.buffer !== this.#memory.buffer) this.#refreshTypedViews(this.#memory.buffer); return this.#u16; }
+  get _i16()     { if (this.#i16 === null || this.#i16.buffer !== this.#memory.buffer) this.#refreshTypedViews(this.#memory.buffer); return this.#i16; }
+  get _u32()     { if (this.#u32 === null || this.#u32.buffer !== this.#memory.buffer) this.#refreshTypedViews(this.#memory.buffer); return this.#u32; }
+  get _i32()     { if (this.#i32 === null || this.#i32.buffer !== this.#memory.buffer) this.#refreshTypedViews(this.#memory.buffer); return this.#i32; }
+  get _f32()     { if (this.#f32 === null || this.#f32.buffer !== this.#memory.buffer) this.#refreshTypedViews(this.#memory.buffer); return this.#f32; }
+  get _f64()     { if (this.#f64 === null || this.#f64.buffer !== this.#memory.buffer) this.#refreshTypedViews(this.#memory.buffer); return this.#f64; }
 
   // M1: Single-segment ABI surface. Exposed as an instance method so
   // codegen + dynamic readers can call `cpp._validateSingleSegment(bytes)`

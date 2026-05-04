@@ -214,6 +214,40 @@ Everything that *would* benefit from SIMD is **already SIMD-accelerated by V8 in
 
 **Lesson**: SIMD wins on workloads that look like ML or graphics. Vector dot products, image filters, audio mixing, hash functions, video frame transforms. It doesn't win on RPC-shaped work, where the bottlenecks are call-graph latency (boundary, microtask, GC) rather than parallel arithmetic. Reverted the change. The negative result is more useful than a slightly-faster build with a 22% size penalty.
 
+## Trap 7: typed-array reads beat DataView, but only if you don't pay for them
+
+The dense-iteration bench (500 rows × 2-field full read) sat at ~67 µs vs JSON.parse's ~43 µs. JSON.parse winning by 1.5× is the kind of "we lose to the C++ baseline" result you accept until someone asks "so why didn't the typed schema help?"
+
+The honest answer: every primitive field read was going through `DataView.getXxx(off, true)`. Cap'n Proto wire format is little-endian and the layout compiler aligns primitive struct fields at their element-size boundaries — exactly the conditions for typed-array reads (`Uint32Array[i]` ≈ 1 ns) to be valid. We were paying ~5-7 ns per field instead of ~1 ns, on a typed schema where the alignment guarantee was already in the hand we were holding.
+
+Codegen change: emit `this._u32[(this._dataPtr + off) >>> 2]` for `UInt32` fields, similarly for `UInt16`/`Int16`/`Int32`/`Float32`/`Float64`. `Bool`/`UInt8`/`Int8` already used direct `_u8[]` reads (it was easier to write, so we did). The shifted index works because capnp's offsets are aligned; for unaligned offsets we'd corrupt reads silently. We don't have those.
+
+Naive first attempt: cache `_u16`, `_i16`, `_u32`, `_i32`, `_f32`, `_f64` views as instance fields on every Reader, set them in the constructor next to `_u8` and `_dv`. Bench result on dense: **125 µs**, almost 2× slower than baseline. List went 88% slower too.
+
+The reads themselves got faster. The constructor did six extra view assignments. Each `list.at(i)` allocates a fresh element Reader, so on a 500-row dense bench we paid 500 × 6 typed-view-getter chains × ~5 ns each = ~15 µs of pure setup cost per iteration. The typed-view getters on the cpp instance check `buffer.detached` on every access (so they refresh after `memory.grow`), which V8 doesn't fully inline. We were running the boundary-detached check 3000 times per iteration to set up reads that would only fire 1000 times.
+
+Fix: pass the parent reader directly. Element reader copies the typed-view fields off the parent's instance (which validated them once when the root opened), not from the cpp getters. The hot path is now `this._u32 = parent._u32` — a hidden-class slot read followed by a slot write, V8 inlines that to two ops.
+
+Bench result on dense: **53 µs**. **22% faster than baseline.** List dropped from 136 µs → 103 µs. Conformance suite + hostile-input fuzz still pass.
+
+**Lesson**: when you have a typed schema, the wire format aligned at element-size boundaries, and the bytes living in `WebAssembly.Memory.buffer`, the natural read primitive is a typed-array index, not `DataView.get`. But the boundary-detached check on every getter call is a real per-access cost that V8's optimizer doesn't always inline. If you're allocating short-lived readers in a loop, fetch views once on the long-lived owner (root reader, parent reader) and propagate them down. The win shifts from "faster per-field reads" to "fewer boundary-detach checks at allocation time," which is where the time was actually being spent.
+
+The same pattern almost certainly applies to other JS-on-wasm libraries that hand back per-element wrappers. We just happened to notice it because we had a bench that pinned the regression on a single change.
+
+## Trap 8: capnp on `WebAssembly.Memory` unlocks things JSON literally can't do
+
+The reframe that surfaced Trap 7: capnwasm isn't "a library that reads wasm memory from JS." It's "a wire format that already matches an aligned typed buffer that we expose to the runtime." Once you treat `wasm.memory.buffer` as a first-class typed buffer instead of an opaque source the JS wraps, the API design questions change.
+
+Things this enables that no JSON parser can do:
+
+- **Typed-array views over primitive lists.** A `List(Float64)` can return a `Float64Array` subarray over wasm memory. Zero copy. JSON parses arrays into JS `Array<number>` boxed values; capnwasm hands back a contiguous typed buffer the JIT can vectorize over.
+- **Direct GPU upload.** A `Float32Array` view of `wasm.memory.buffer` is a valid source for `GPUDevice.queue.writeBuffer` or `WebGLBuffer.bufferData`. No copy from JS heap to GPU staging buffer. JSON has to materialize JS objects, then iterate them into a fresh `Float32Array`, then upload.
+- **SharedArrayBuffer hand-off across Worker threads.** If the wasm instance was created with shared memory, two Worker threads can read the same capnp message at the same byte addresses with no IPC and no copy. JSON.parse always materializes per-isolate JS objects.
+- **In-place text matching without decoding.** For tag/enum-style strings, `bytesEqual(uint8Slice, "important")` is ~10 ns; `TextDecoder.decode` + string compare is ~100 ns. No need to ever produce a JS string when you only want to compare.
+- **Streaming reads while bytes are still arriving.** capnp's wire format is random-access; if `_msgEnd` advances as bytes land, a reader can read field 0 before bytes 8-N have arrived. Typed-array views don't have to be re-fetched (same buffer). JSON.parse is one-shot — you wait for the whole document.
+
+We don't have all of these implemented. They're the architectural opportunities the wire-format-on-wasm-memory model creates. The cost of *not* exposing them is "capnwasm is fine for sparse access and binary blobs and loses on everything else, just like any RPC library." The cost of exposing them is API surface that breaks the "every reader is independent" contract — and that's where Trap 7's fix landed: keep the safe contract, just plumb the views down internally so the user doesn't pay for re-validation on every element.
+
 ## Final scoreboard vs. capnweb
 
 In-process bench, both peers in the same Node process via a memory transport pair:
