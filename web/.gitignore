@@ -7,3 +7,7 @@ public/capnp.slim.wasm
 # capnwasm/vite-plugin). Source of truth is users.capnp.
 src/**/*.gen.mjs
 src/**/*.gen.d.ts
+!src/chat/chat.capnp.gen.mjs
+!src/chat/chat.capnp.gen.d.ts
+!src/playground/users.capnp.gen.mjs
+!src/playground/users.capnp.gen.d.ts
