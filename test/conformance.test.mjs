@@ -149,7 +149,7 @@ test("Text. Long string forces multi-segment, rejected by M1 ABI", () => {
   // small first segment and produces a multi-segment frame, which the
   // safe reader now rejects with MultiSegmentMessageError. Applications
   // that need to ship payloads this large should size their builder's
-  // first segment accordingly. See docs/capnp-in-wasm-memory.md.
+  // first segment accordingly.
   const s = "x".repeat(8192);
   assert.throws(
     () => roundTrip({ ...baseline, text: s }),

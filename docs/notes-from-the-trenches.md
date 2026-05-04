@@ -237,13 +237,13 @@ In-process bench, both peers in the same Node process via a memory transport pai
 | OpenAPI client codegen | yes | structurally no |
 | Schema requirement | yes | no |
 
-The frame: **capnweb keeps Cap'n Proto-style RPC semantics in a compact JS-only package with a JSON-shaped wire. capnwasm keeps the Cap'n Proto binary wire too, by paying for a wasm runtime.** For workloads where the wire matters (binary data, cross-language interop, sustained throughput), the binary wire can win by a lot. For workloads where the wire doesn't matter (small JSON-shaped payloads in a JS-only stack), capnweb's 18 KB brotli bundle and fast cold start are the better tradeoff.
+The frame: **capnweb keeps Cap'n Proto-style RPC semantics in a compact JS-only package with a JSON-shaped wire. capnwasm keeps the Cap'n Proto binary wire too, by paying for a wasm runtime.** For workloads where the wire matters (binary data, sparse reads, sustained throughput), the binary wire can win by a lot. For workloads where the wire doesn't matter (small JSON-shaped payloads in a JS-only stack), capnweb's 18 KB brotli bundle and fast cold start are the better tradeoff.
 
-Neither one is wrong. They're optimized for different things. capnweb intentionally favors a small JS-only bundle and a JSON-shaped wire that feels natural in JavaScript apps. capnwasm explores the opposite choice: keep the binary Cap'n Proto wire and pay the wasm/runtime cost. The useful result is the boundary between those choices: capnweb is better for tiny JS-shaped traffic and bundle budgets; capnwasm becomes interesting when the workload is binary-heavy, large, sparse, or cross-language.
+Neither one is wrong. They're optimized for different things. capnweb intentionally favors a small JS-only bundle and a JSON-shaped wire that feels natural in JavaScript apps. capnwasm explores the opposite choice: keep the binary Cap'n Proto wire and pay the wasm/runtime cost. The useful result is the boundary between those choices: capnweb is better for tiny JS-shaped traffic and bundle budgets; capnwasm becomes interesting when the workload is binary-heavy, large, or sparse.
 
 ## OpenAPI ↔ Cap'n Proto work
 
-Separate from the RPC perf work, this repo now has a manifest pipeline that moves between OpenAPI, TypeScript REST interfaces, and Cap'n Proto schemas: `manifest`, `emit-capnp`, `emit-openapi`, `lock`, `compat`, `probe`, `emit-codec`, and `emit-agents` / `mcp`. The tradeoff is the same theme as the rest of the repo: JSON/OpenAPI is best for public docs, partner APIs, and tiny text payloads; Cap'n Proto becomes interesting when binary payloads, sparse reads, cross-language RPC, or explicit schema evolution matter.
+Separate from the RPC perf work, this repo now has a manifest pipeline that moves between OpenAPI, TypeScript REST interfaces, and Cap'n Proto schemas: `manifest`, `emit-capnp`, `emit-openapi`, `lock`, `compat`, `probe`, `emit-codec`, and `emit-agents` / `mcp`. The tradeoff is the same theme as the rest of the repo: JSON/OpenAPI is best for public docs, partner APIs, and tiny text payloads; Cap'n Proto becomes interesting when binary payloads, sparse reads, or explicit schema evolution matter.
 
 ## Reproducing
 

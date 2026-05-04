@@ -10,8 +10,10 @@
 // foreign wasm module hosting capnwasm bytes -- e.g. Rust on Workers
 // -- can run the same code path without the C++ runtime.
 //
-// Reference: docs/capnp-in-wasm-memory.md "Step 1.8" + the pointer
-// encoding section.
+// Pointer encoding reference: cpp/vendor/capnp/layout.c++ in this
+// repo (the upstream FlatArrayMessageReader we stay byte-for-byte
+// compatible with) and js/pointer_decoder.mjs (the standalone
+// implementation).
 
 import { test, before } from "node:test";
 import { strict as assert } from "node:assert";

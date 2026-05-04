@@ -1,7 +1,7 @@
 // M1: Single-segment ABI surface validation.
 //
 // The capnwasm public reader ABI accepts only single-segment Cap'n Proto
-// framed messages (see docs/capnp-in-wasm-memory.md). These tests cover:
+// framed messages (the M1 ABI contract). These tests cover:
 //   - Valid single-segment input round-trips through openDynamic and
 //     codegen openFoo on both safe and unsafe paths.
 //   - Hand-crafted multi-segment input is rejected with
