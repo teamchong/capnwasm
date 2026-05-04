@@ -76,7 +76,15 @@ async function probeServer(): Promise<boolean> {
 
 // ---- capnwasm session helpers ------------------------------------------
 let cppRoot: any = null;
-async function ensureCapnwasm() {
+let cppBurstRoot: any = null;
+async function ensureCapnwasm(opts: { batchWindow?: boolean } = {}) {
+  if (opts.batchWindow) {
+    if (cppBurstRoot) return cppBurstRoot;
+    const cpp = await load(new URL("/capnp.slim.wasm", location.origin));
+    const session = await connectWebSocket(cpp, SERVER + "/capnwasm", { batchWindowMs: 2 });
+    cppBurstRoot = session.bootstrap();
+    return cppBurstRoot;
+  }
   if (cppRoot) return cppRoot;
   const cpp = await load(new URL("/capnp.slim.wasm", location.origin));
   const session = await connectWebSocket(cpp, SERVER + "/capnwasm");
@@ -94,7 +102,7 @@ async function ensureCapnweb() {
 // ---- workloads ---------------------------------------------------------
 
 async function burstCapnwasm(n: number): Promise<number> {
-  const root = await ensureCapnwasm();
+  const root = await ensureCapnwasm({ batchWindow: true });
   const t0 = performance.now();
   const promises: Promise<number>[] = new Array(n);
   for (let i = 0; i < n; i++) {

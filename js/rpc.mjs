@@ -248,6 +248,8 @@ export class RpcSession {
   #sendQueue = null;
   #sendQueueBytes = 0;
   #flushScheduled = false;
+  #flushTimer = null;
+  #batchWindowMs = 0;
   #flushBound;
   // Outbound streaming-call state: questionId -> { pushChunk, end, next }.
   // Populated by callStream; drained by #handleStreamChunk / End.
@@ -286,9 +288,11 @@ export class RpcSession {
    * @param {object} [options.bootstrap] - object exposed when peer requests Bootstrap
    *
    * Multiple sends made in the same tick are always coalesced into one
-   * transport.send at the next microtask boundary. There is no
-   * "no-batch" mode because the latency cost is invisible. If you need
-   * to force a send before the microtask boundary, call session.flush().
+   * transport.send at the next microtask boundary by default. Pass
+   * `{ batchWindowMs: 1 }` (or similar) to widen that into a small
+   * time-window batch for UI/event/timer bursts that don't land in the
+   * same microtask. If you need to force a send before the boundary,
+   * call session.flush().
    */
   constructor(cpp, transport, registry, options = {}) {
     this.#cpp = cpp;
@@ -304,6 +308,11 @@ export class RpcSession {
     this.#dv     = new DataView(this.#buffer);
     this.#transport = transport;
     this.#registry = registry || new InterfaceRegistry();
+    if (options.batchWindowMs !== undefined) {
+      const n = Number(options.batchWindowMs);
+      if (!Number.isFinite(n) || n < 0) throw new TypeError("batchWindowMs must be a non-negative number");
+      this.#batchWindowMs = n;
+    }
     if (options.stateless) this.#stateless = true;
     if (options.bootstrap) {
       this.#localBootstrap = options.bootstrap;
@@ -481,10 +490,7 @@ export class RpcSession {
       if (!this.#sendQueue) this.#sendQueue = [];
       this.#sendQueue.push(buf);
       this.#sendQueueBytes += buf.length;
-      if (!this.#flushScheduled) {
-        this.#flushScheduled = true;
-        queueMicrotask(this.#flushBound);
-      }
+      this.#scheduleFlush();
       len = buf.length;
     } else {
       this.#stageIn(paramsBytes);
@@ -634,10 +640,7 @@ export class RpcSession {
     const bytes = buildFinishFrame(questionId);
     this.#sendQueue.push(bytes);
     this.#sendQueueBytes += bytes.length;
-    if (!this.#flushScheduled) {
-      this.#flushScheduled = true;
-      queueMicrotask(this.#flushBound);
-    }
+    this.#scheduleFlush();
   }
 
   // Send Release(importId, refcount) so the peer can drop its export entry
@@ -1482,17 +1485,28 @@ export class RpcSession {
     if (!this.#sendQueue) this.#sendQueue = [];
     this.#sendQueueBytes += framedLen;
     this.#sendQueue.push(this.#mem().slice(this.#outPtr, this.#outPtr + framedLen));
-    if (!this.#flushScheduled) {
-      this.#flushScheduled = true;
-      queueMicrotask(this.#flushBound);
-    }
+    this.#scheduleFlush();
   }
 
   /** Force any queued frames out NOW. Rarely needed. The microtask
    *  boundary already does this. Useful when about to close the session. */
   flush() { this.#flush(); }
 
+  #scheduleFlush() {
+    if (this.#flushScheduled) return;
+    this.#flushScheduled = true;
+    if (this.#batchWindowMs > 0) {
+      this.#flushTimer = setTimeout(this.#flushBound, this.#batchWindowMs);
+    } else {
+      queueMicrotask(this.#flushBound);
+    }
+  }
+
   #flush() {
+    if (this.#flushTimer !== null) {
+      clearTimeout(this.#flushTimer);
+      this.#flushTimer = null;
+    }
     this.#flushScheduled = false;
     const q = this.#sendQueue;
     if (!q || q.length === 0) { this.#maybeNotifyIdle(); return; }
@@ -1712,6 +1726,7 @@ export function wsTransport(ws) {
  * @param {InterfaceRegistry} [opts.registry] - typed wrappers for inbound calls
  * @param {object} [opts.bootstrap] - exposed when peer requests Bootstrap
  * @param {Function} [opts.WebSocket] - WebSocket constructor (defaults to globalThis.WebSocket)
+ * @param {number} [opts.batchWindowMs] - optional time-window batch before transport.send
  */
 export async function connectWebSocket(cpp, url, opts = {}) {
   const WSCtor = opts.WebSocket ?? globalThis.WebSocket;
@@ -1723,6 +1738,7 @@ export async function connectWebSocket(cpp, url, opts = {}) {
   });
   return new RpcSession(cpp, wsTransport(ws), opts.registry, {
     bootstrap: opts.bootstrap,
+    batchWindowMs: opts.batchWindowMs,
   });
 }
 
