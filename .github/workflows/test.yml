@@ -32,5 +32,11 @@ jobs:
       - name: Install (workspace)
         run: pnpm install --frozen-lockfile
 
+      - name: Install browser test dependencies
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Generate web test schemas
+        run: pnpm -C web run codegen
+
       - name: Run unit tests
         run: pnpm test
