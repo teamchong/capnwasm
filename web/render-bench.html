@@ -7,6 +7,7 @@
   <meta name="description" content="End-to-end RPC bench across capnweb vs capnwasm × WS vs HTTP × small/medium/large × cold/warm. Measures the full pipeline from cap.method() to forced DOM layout. Wins, losses, ties — all in one place." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="stylesheet" href="./src/render-bench/style.css" />
+  <link rel="stylesheet" href="./src/site-nav.css" />
 </head>
 <body>
   <aside class="network-tip" aria-label="Network throttle tip">
@@ -14,17 +15,23 @@
   </aside>
   <article id="app">
     <header>
-      <h1><a href="./">capnwasm</a> <span class="dim">render bench</span></h1>
+      <h1><a href="./"><span class="brand-capn">capn</span><span class="brand-wasm">wasm</span></a> <span class="page-title">render bench</span></h1>
       <p class="subtitle">
         End-to-end pipeline: <code>request</code> &rarr; wire &rarr; <code>decode</code> &rarr; <code>field reads</code> &rarr;
         <code>DOM mutation</code> &rarr; forced layout. capnweb &times; capnwasm crossed with WebSocket &times; HTTP-batch,
         each at three sizes, with cold &amp; warm timings. No averages between transports &mdash; you see every cell.
       </p>
-      <nav>
-        <a href="./">&larr; Landing</a> &middot;
-        <a href="./vs-capnweb">vs capnweb</a> &middot;
-        <a href="./playground">playground</a> &middot;
-        <a href="./rpc">RPC bench</a>
+      <nav class="site-nav" aria-label="Site sections">
+        <a href="./">&larr; Landing</a><span class="sep">&middot;</span>
+        <a href="./playground">Playground</a><span class="sep">&middot;</span>
+        <a href="./render-bench" aria-current="page">Render bench</a><span class="sep">&middot;</span>
+        <a href="./editor">Snippets</a><span class="sep">&middot;</span>
+        <a href="./dynamic">Dynamic</a><span class="sep">&middot;</span>
+        <a href="./openapi">OpenAPI</a><span class="sep">&middot;</span>
+        <a href="./inspect">Wire inspector</a><span class="sep">&middot;</span>
+        <a href="./chat">Chat</a><span class="sep">&middot;</span>
+        <a href="./notes">Notes</a><span class="sep">&middot;</span>
+        <a href="./vs-capnweb">vs capnweb</a>
       </nav>
     </header>
 
@@ -53,25 +60,15 @@
 
     <section class="how-to-read">
       <h2>How to read this page</h2>
+      <img
+        class="pipeline-diagram"
+        src="/render-pipeline-flow.svg"
+        alt="Pipeline diagram: client call, wire, decode, field reads, DOM mutation, forced layout. Each cell compares capnweb or capnwasm over WebSocket or HTTP."
+      />
       <p>
-        These are live end-to-end timings from this browser to the current Worker server.
-        A cell includes the client call, Worker dispatch, server-side response encoding,
-        transport, browser-side decode/deserialization, the field reads used by that
-        workload, DOM mutation, and one forced layout via <code>offsetHeight</code>.
-      </p>
-      <p>
-        capnwasm is expected to lose some rows. Even with Immer-style <code>draft()</code>
-        projections, DOM work, transport scheduling, and capnweb&apos;s eager JSON materialization
-        can dominate small cells. capnwasm tends to show up when the workload is
-        binary-heavy, sparse-field, or benefits from batched Cap&apos;n Proto wire reads.
-        The useful result is the shape of the tradeoff, not a single winner.
-      </p>
-      <p>
-        Fairness model: each workload asks both libraries to produce the same DOM output.
-        The code uses each library&apos;s intended fast path: capnweb returns eagerly materialized
-        JS objects; capnwasm uses generated readers plus <code>draft()</code> projections when the app
-        wants to materialize fields. If an optimization requires capnwasm-specific syntax,
-        that is called out below.
+        Every cell measures the full path above. The matrix crosses capnweb/capnwasm
+        with WebSocket/HTTP; lower cold and warm timings win. Both libraries are allowed
+        to use their intended fast path, and each workload renders the same DOM output.
       </p>
     </section>
 
@@ -158,12 +155,9 @@
       <ul>
         <li><strong>Cold</strong> = the very first call against a transport (includes WS handshake / first POST connect, and for capnwasm the wasm fetch + compile if not cached).</li>
         <li><strong>Warm</strong> = median of the configured iter count, after a warmup pass.</li>
-        <li><strong>End-to-end</strong> includes client request construction, Worker dispatch, server-side response encode/serialize, transport, browser-side decode/deserialize, every <code>.field</code> access used by the render path, DOM mutation, and forced layout via <code>offsetHeight</code>.</li>
-        <li>Both libraries hit the <em>same</em> Worker endpoints in the deployed path (or the matching Vite shim during frontend-only dev), with matching method semantics, so the only thing varying is the library + transport.</li>
-        <li><strong>Same app output, different API shape:</strong> capnweb exposes eager JS objects; capnwasm exposes lazy readers and uses Immer-style <code>draft()</code> projections where batching is needed. The benchmark uses those intended paths rather than forcing both libraries through the same syntax.</li>
-        <li><strong>Partial vs full reads are separated:</strong> sparse reads 3/32 fields; dense reads 32/32 fields; reread materializes 10 fields once and then rereads cached JS values.</li>
-        <li>capnwasm&rsquo;s sparse-field bench actually skips reads &mdash; we don&rsquo;t materialize the 29 fields we don&rsquo;t need, and the selected fields are read through one batched <code>draft()</code> projection. capnweb has no equivalent (the JSON is fully parsed upfront), so it&rsquo;s an architectural win for capnp.</li>
-        <li>capnweb base64-inflates binary; capnwasm sends raw bytes &mdash; on the blob workload the wire-bytes column tells the story.</li>
+        <li><strong>End-to-end</strong> = request construction, Worker dispatch, response encode, transport, decode, field reads, DOM mutation, and forced layout.</li>
+        <li><strong>Same output:</strong> both paths render the same logical fields; capnweb uses eager JS objects, capnwasm uses generated readers plus <code>draft()</code> where batching matters.</li>
+        <li><strong>Separated cases:</strong> sparse reads 3/32 fields, dense reads 32/32, reread loops over cached values, and blob isolates binary transport cost.</li>
       </ul>
     </section>
 

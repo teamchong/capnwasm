@@ -88,12 +88,16 @@ const RENDER_M_USER_LIST  = 0;
 const RENDER_M_METADATA   = 1;
 const RENDER_M_BLOB       = 2;
 
-// One CapnCpp instance per isolate. Each instance is ~25 MB of linear
-// memory; sharing across requests is cheap and avoids re-instantiation
-// cost on every `fetch`.
+// Shared CapnCpp instance for simple request/response demo endpoints. Each
+// instance owns mutable scratch buffers, so long-lived WebSocket RPC sessions
+// get their own instance below instead of sharing this one.
 let cppPromise = null;
 function cpp() {
   return (cppPromise ??= CapnCpp.load(wasmModule));
+}
+
+function newCpp() {
+  return CapnCpp.load(wasmModule);
 }
 
 // User schema (same shape as web/users.capnp). Defined inline so the
@@ -369,7 +373,10 @@ async function acceptCapnwasmWebSocket(req) {
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair);
   server.accept();
-  const c = await cpp();
+  // RpcSession mutates cpp's rpc_reader/rpc_builder scratch memory while
+  // handling frames. The RPC bench opens more than one capnwasm WebSocket at
+  // a time, so every WebSocket needs an independent runtime instance.
+  const c = await newCpp();
   new RpcSession(c, wsTransport(server), registry, { bootstrap: { kind: "root", cpp: c } });
   return new Response(null, { status: 101, webSocket: client });
 }

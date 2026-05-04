@@ -122,11 +122,8 @@ type Bundle = {
   close: () => void;
 };
 
-let cppRuntime: any = null;
-async function ensureCpp() {
-  if (cppRuntime) return cppRuntime;
-  cppRuntime = await load(new URL("/capnp.slim.wasm", location.origin));
-  return cppRuntime;
+function newCpp() {
+  return load(new URL("/capnp.slim.wasm", location.origin));
 }
 
 // ---- capnwasm bundle factory (shared between WS + HTTP) ----------------
@@ -208,12 +205,12 @@ function capnwasmBundle(key: TransportKey, session: any, root: any, cpp: any): B
 }
 
 async function makeCapnwasmWs(): Promise<Bundle> {
-  const cpp = await ensureCpp();
+  const cpp = await newCpp();
   const session = await connectWebSocket(cpp, URL_CAPNWASM_WS);
   return capnwasmBundle("capnwasm-ws", session, session.bootstrap(), cpp);
 }
 async function makeCapnwasmHttp(): Promise<Bundle> {
-  const cpp = await ensureCpp();
+  const cpp = await newCpp();
   const session = connectHttpBatch(cpp, URL_CAPNWASM_HTTP);
   return capnwasmBundle("capnwasm-http", session, session.bootstrap(), cpp);
 }
@@ -377,30 +374,42 @@ const WORKLOADS: Workload[] = [
 function buildTable(workload: Workload): HTMLTableElement {
   const t = document.createElement("table");
   t.className = "bench";
+  const colgroup = document.createElement("colgroup");
+  const transportCol = document.createElement("col");
+  transportCol.className = "transport-col";
+  colgroup.appendChild(transportCol);
+  for (const _ of workload.sizes) {
+    colgroup.appendChild(document.createElement("col"));
+    colgroup.appendChild(document.createElement("col"));
+  }
+  t.appendChild(colgroup);
   const cap = document.createElement("caption");
   cap.textContent = `Workload — ${workload.id}: cold / warm per transport × size`;
   t.appendChild(cap);
   const thead = document.createElement("thead");
   const hr = document.createElement("tr");
-  hr.appendChild(document.createElement("th"));
+  const transportHead = document.createElement("th");
+  transportHead.rowSpan = 2;
+  transportHead.className = "transport-head";
+  transportHead.textContent = "transport";
+  hr.appendChild(transportHead);
   for (const s of workload.sizes) {
     const th = document.createElement("th");
     th.colSpan = 2;
+    th.className = "size-head group-start";
     th.textContent = s.label;
-    th.style.textAlign = "center";
     hr.appendChild(th);
   }
   thead.appendChild(hr);
   const sub = document.createElement("tr");
-  sub.appendChild(document.createElement("th"));
   for (const _ of workload.sizes) {
     const cold = document.createElement("th");
     cold.textContent = "cold";
-    cold.style.textAlign = "right";
+    cold.className = "metric-head group-start";
     sub.appendChild(cold);
     const warm = document.createElement("th");
     warm.textContent = "warm";
-    warm.style.textAlign = "right";
+    warm.className = "metric-head";
     sub.appendChild(warm);
   }
   thead.appendChild(sub);
@@ -409,11 +418,12 @@ function buildTable(workload: Workload): HTMLTableElement {
   for (const tr of TRANSPORTS) {
     const row = document.createElement("tr");
     const td0 = document.createElement("td");
+    td0.className = "transport-cell";
     td0.textContent = tr.label;
     row.appendChild(td0);
     for (const s of workload.sizes) {
       const cold = document.createElement("td");
-      cold.className = "num running";
+      cold.className = "num running group-start";
       cold.textContent = "—";
       cold.id = `cell-${workload.id}-${tr.key}-${s.value}-cold`;
       row.appendChild(cold);
@@ -461,12 +471,12 @@ function paintWinners(workload: Workload, results: Map<TransportKey, Map<number,
 }
 
 async function probeServer(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const ws = new WebSocket(URL_CAPNWASM_WS);
-    const t = setTimeout(() => { try { ws.close(); } catch {} resolve(false); }, 1500);
-    ws.onopen  = () => { clearTimeout(t); ws.close(); resolve(true); };
-    ws.onerror = () => { clearTimeout(t); resolve(false); };
-  });
+  try {
+    const res = await fetch("/api/health", { cache: "no-store" });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function runAll() {
@@ -483,7 +493,6 @@ async function runAll() {
   });
 
   status.textContent = "Loading wasm + connecting transports…";
-  await ensureCpp();
   const bundles: Record<TransportKey, Bundle> = {
     "capnweb-ws":   await makeCapnwebWs(),
     "capnweb-http": await makeCapnwebHttp(),

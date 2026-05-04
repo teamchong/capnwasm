@@ -10,6 +10,7 @@ import { load } from "../../../js/browser.mjs";
 // @ts-ignore — generated reader/builder for the demo schema.
 import { openUser } from "./users.capnp.gen.mjs";
 import { deserialize as cwbDeserialize } from "capnweb";
+import { runRpcBench, probeRpcServer } from "../rpc/bench";
 
 const $ = (id: string) => document.getElementById(id)!;
 const status = $("status");
@@ -219,6 +220,10 @@ function fmtBytes(b: number) {
   if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)} MB`;
   return `${(b / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
+
+function summaryRow(label: string, value: string, note = "") {
+  return `<span class="summary-label">${label}</span><span class="summary-value">${value}</span><span class="summary-note">${note}</span>`;
+}
 // "Egress at 1k req/s for 1 hour" — extrapolates per-request wire bytes
 // to a Worker-shaped sustained-traffic load, the case where bytes-on-wire
 // translates straight into an egress bill. 1000 req/s × 3600 s = 3.6 M
@@ -365,13 +370,20 @@ async function runBench() {
     ? `At <strong>1k req/s sustained</strong> that's <strong>${fmtBytes(savedPerHour)}/hour</strong> less wire vs REST. On Cloudflare (zero-rated egress) the win is UX and Worker CPU, not the bill; on AWS S3 ($0.09/GB) it's ~$${savedDollarsPerMonthAws.toFixed(2)}/month.`
     : "";
 
-  if (winner.name === "capnwasm") {
-    summary.className = "win";
-    summary.innerHTML = `<strong>capnwasm wins</strong>: ${fmtMs(totals.capnp)} vs REST ${fmtMs(totals.rest)} (${(totals.rest / totals.capnp).toFixed(2)}×) and capnweb ${fmtMs(totals.cwb)} (${(totals.cwb / totals.capnp).toFixed(2)}×). Wire ${fmtBytes(rest.bytes)} JSON / ${fmtBytes(cwb.bytes)} capnweb / ${fmtBytes(capnp.bytes)} capnp.<br>${bandwidthLine}`;
-  } else {
-    summary.className = "lose";
-    summary.innerHTML = `<strong>${winner.name} wins this workload</strong>: ${fmtMs(winner.t)}. capnwasm came in at ${fmtMs(totals.capnp)} (${(totals.capnp / winner.t).toFixed(2)}× ${winner.name}&apos;s). In this same-origin static-fixture bench, wasm load + per-record boundary cost can outweigh the bytes savings; capnwasm&apos;s wins (RPC bursts, sparse reads, binary wire interop) need a different workload &mdash; see ${honestLink}.<br>${bandwidthLine}`;
-  }
+  summary.className = winner.name === "capnwasm" ? "win" : "lose";
+  const order = sorted.map((r, i) => `${i + 1}. ${r.name} ${fmtMs(r.t)}`).join(" · ");
+  const capnwasmNote = winner.name === "capnwasm"
+    ? "fastest total time"
+    : `not this workload; see ${honestLink}`;
+  summary.innerHTML = `
+    <div class="summary-title"><strong>${winner.name} wins this workload</strong></div>
+    <div class="summary-grid">
+      ${summaryRow("Finish order", order)}
+      ${summaryRow("Payload bytes", `${fmtBytes(rest.bytes)} JSON · ${fmtBytes(cwb.bytes)} capnweb · ${fmtBytes(capnp.bytes)} capnp`)}
+      ${summaryRow("capnwasm", fmtMs(totals.capnp), capnwasmNote)}
+      ${bandwidthLine ? summaryRow("1k req/s model", bandwidthLine) : ""}
+    </div>
+  `;
 
   status.textContent = `done — ${workload} workload, ${count} records × ${iters} iter (median)`;
   runBtn.disabled = false;
@@ -387,6 +399,7 @@ async function runBenchSafe() {
   inFlight = true;
   try {
     await runBench();
+    await runRpcAfterFetch();
   } finally {
     inFlight = false;
   }
@@ -395,3 +408,38 @@ runBtn.addEventListener("click", runBenchSafe);
 window.addEventListener("DOMContentLoaded", () => {
   setTimeout(runBenchSafe, 100);
 });
+
+// ---- RPC bench (auto-runs once the fetch comparison finishes) ---------
+async function runRpcAfterFetch() {
+  const rpcStatus = document.getElementById("rpc-status");
+  const rpcSummary = document.getElementById("rpc-summary");
+  const rpcIters = document.getElementById("rpc-iters-selector") as HTMLSelectElement | null;
+  const serverDot = document.getElementById("server-dot");
+  const serverMsg = document.getElementById("server-msg");
+  if (!rpcStatus || !rpcSummary || !rpcIters || !serverDot || !serverMsg) return;
+  const wsOrigin = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+  rpcStatus.textContent = "Probing RPC server…";
+  const up = await probeRpcServer();
+  if (!up) {
+    serverDot.classList.remove("up");
+    serverDot.classList.add("down");
+    serverMsg.innerHTML = `<strong>RPC server unreachable.</strong> Run <code>pnpm dev</code> from the repo root.`;
+    rpcStatus.textContent = "RPC server unreachable — see banner above.";
+    return;
+  }
+  serverDot.classList.remove("down");
+  serverDot.classList.add("up");
+  serverMsg.innerHTML = `RPC server up at <code>${wsOrigin}</code> &mdash; running bench&hellip;`;
+  try {
+    await runRpcBench({ status: rpcStatus, summary: rpcSummary, iters: rpcIters });
+    serverMsg.innerHTML = `RPC server up at <code>${wsOrigin}</code> &mdash; bench complete.`;
+  } catch (err) {
+    rpcSummary.className = "lose";
+    rpcSummary.textContent = `RPC bench failed: ${err instanceof Error ? err.message : String(err)}`;
+    rpcStatus.textContent = "RPC failed — see summary";
+    serverDot.classList.remove("up");
+    serverDot.classList.add("down");
+    serverMsg.innerHTML = `RPC server reachable but bench errored. See summary below.`;
+    console.warn("RPC bench failed", err);
+  }
+}

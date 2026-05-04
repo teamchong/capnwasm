@@ -1,0 +1,30 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #0a0a0a; color: #e0e0e0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 32px 20px; }
+#app { max-width: var(--page-max-width); margin: 0 auto; }
+header { margin-bottom: 24px; }
+h1 { margin: 0 0 8px; font-size: 28px; }
+h1 a { color: inherit; text-decoration: none; border-bottom: 1px dotted #777; }
+h1 span { color: #888; font-weight: 400; }
+header p { max-width: 760px; color: #999; line-height: 1.6; margin: 0 0 10px; }
+a { color: #4fc3f7; text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, textarea, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.editor-shell { display: grid; grid-template-columns: 260px minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: stretch; }
+.hints, .source-pane, .output-pane { background: #141414; border: 1px solid #222; border-radius: 12px; }
+.hints { padding: 16px; }
+.hints h2 { margin: 0 0 12px; color: #ffa726; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
+.hints dt { margin-top: 12px; color: #e8eef2; font-size: 12px; }
+.hints dd { margin: 4px 0 0; color: #8d99a2; font-size: 12px; line-height: 1.45; }
+.source-pane { display: flex; flex-direction: column; overflow: hidden; }
+.source-pane > span { padding: 10px 12px; color: #999; border-bottom: 1px solid #222; font-size: 13px; }
+.source-pane pre { margin: 0; flex: 1; min-height: 620px; padding: 14px; overflow: auto; background: #0d0d0d; color: #e8eef2; font-size: 13px; line-height: 1.55; }
+.source-pane code { display: block; tab-size: 2; }
+.output-pane { overflow: hidden; display: flex; flex-direction: column; }
+.tabs { display: flex; gap: 4px; padding: 8px; border-bottom: 1px solid #222; background: #101010; }
+.tabs button { background: transparent; border: 1px solid #2a2a2a; color: #9aa8b2; border-radius: 999px; padding: 5px 10px; cursor: pointer; }
+.tabs button.active { color: #0a0a0a; background: #4fc3f7; border-color: #4fc3f7; font-weight: 700; }
+pre { flex: 1; min-height: 620px; margin: 0; padding: 14px; overflow: auto; color: #d6edf7; background: #080b0d; font-size: 12px; line-height: 1.5; }
+.status { margin-top: 14px; color: #8d99a2; font-size: 13px; }
+.status.error { color: #ff7043; }
+@media (max-width: 980px) { .editor-shell { grid-template-columns: 1fr; } textarea, pre { min-height: 360px; } }

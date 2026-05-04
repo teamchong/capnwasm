@@ -17,6 +17,7 @@
     "ws": "^8.20.0"
   },
   "dependencies": {
-    "capnweb": "^0.7.0"
+    "capnweb": "^0.7.0",
+    "highlight.js": "^11.11.1"
   }
 }

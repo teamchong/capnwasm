@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 260" role="img" aria-labelledby="title desc">
+  <title id="title">Render benchmark pipeline</title>
+  <desc id="desc">A straight pipeline from selected benchmark cell through client call, Worker dispatch, wire, browser decode, field reads, DOM and layout, then cold and warm timing cells. The bar below states that the matrix crosses capnweb and capnwasm with WebSocket and HTTP.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6f8797"/>
+    </marker>
+    <style>
+      .bg { fill: #0b0b0b; }
+      .box { fill: #121820; stroke: #2c3d49; stroke-width: 2; rx: 12; }
+      .box.alt { fill: #17130b; stroke: #3a2d15; }
+      .box.good { fill: #102016; stroke: #2f6b3f; }
+      .label { fill: #edf5f9; font: 600 16px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-anchor: middle; }
+      .sub { fill: #9fb2be; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-anchor: middle; }
+      .arrow { stroke: #6f8797; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+      .note { fill: #aeb9c0; font: 13px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .note-strong { fill: #ffa726; font-weight: 700; }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1180" height="260" rx="18"/>
+
+  <g transform="translate(30 42)">
+    <rect class="box alt" x="0" y="0" width="140" height="78" rx="12"/>
+    <text class="label" x="70" y="32">choose cell</text>
+    <text class="sub" x="70" y="54">library × transport</text>
+
+    <rect class="box" x="170" y="0" width="130" height="78" rx="12"/>
+    <text class="label" x="235" y="32">client call</text>
+    <text class="sub" x="235" y="54">same method</text>
+
+    <rect class="box" x="330" y="0" width="150" height="78" rx="12"/>
+    <text class="label" x="405" y="32">Worker</text>
+    <text class="sub" x="405" y="54">dispatch + encode</text>
+
+    <rect class="box" x="510" y="0" width="100" height="78" rx="12"/>
+    <text class="label" x="560" y="32">wire</text>
+    <text class="sub" x="560" y="54">WS / HTTP</text>
+
+    <rect class="box" x="640" y="0" width="140" height="78" rx="12"/>
+    <text class="label" x="710" y="32">decode</text>
+    <text class="sub" x="710" y="54">browser side</text>
+
+    <rect class="box" x="810" y="0" width="130" height="78" rx="12"/>
+    <text class="label" x="875" y="32">field reads</text>
+    <text class="sub" x="875" y="54">same output</text>
+
+    <rect class="box good" x="970" y="0" width="150" height="78" rx="12"/>
+    <text class="label" x="1045" y="32">DOM + layout</text>
+    <text class="sub" x="1045" y="54">measured cell</text>
+
+    <path class="arrow" d="M140 39 H160"/>
+    <path class="arrow" d="M300 39 H320"/>
+    <path class="arrow" d="M480 39 H500"/>
+    <path class="arrow" d="M610 39 H630"/>
+    <path class="arrow" d="M780 39 H800"/>
+    <path class="arrow" d="M940 39 H960"/>
+  </g>
+
+  <g transform="translate(70 158)">
+    <rect x="0" y="0" width="1040" height="58" rx="14" fill="#101010" stroke="#242424" stroke-width="2"/>
+    <text class="note" x="28" y="24">
+      <tspan class="note-strong">Matrix:</tspan>
+      <tspan> capnweb / capnwasm × WebSocket / HTTP. </tspan>
+      <tspan class="note-strong">Cells:</tspan>
+      <tspan> cold call + warm median. </tspan>
+      <tspan class="note-strong">Rule:</tspan>
+      <tspan> lower time wins.</tspan>
+    </text>
+    <text class="note" x="28" y="44">Both libraries render the same DOM output; each uses its intended fast path.</text>
+  </g>
+</svg>

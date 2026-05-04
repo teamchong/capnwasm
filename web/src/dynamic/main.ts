@@ -6,6 +6,13 @@
 import { load } from "../../../js/browser.mjs";
 // @ts-ignore — dynamic runtime has no local .d.ts in this workspace.
 import { defineSchema, buildDynamic, openDynamic } from "../../../js/dynamic.mjs";
+import hljs from "highlight.js/lib/core";
+import typescriptLang from "highlight.js/lib/languages/typescript";
+import "highlight.js/styles/github-dark.css";
+
+hljs.registerLanguage("typescript", typescriptLang);
+const codeBlock = document.getElementById("dynamic-code-block");
+if (codeBlock) hljs.highlightElement(codeBlock as HTMLElement);
 
 const statusEl = document.getElementById("status")!;
 const resultEl = document.getElementById("result")!;

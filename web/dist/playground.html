@@ -14,12 +14,14 @@
   <meta name="twitter:description" content="Live three-way bench, your browser." />
   <meta name="twitter:image" content="/og-image.svg" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <script type="module" crossorigin src="/assets/playground-CiNpKbdH.js"></script>
-  <link rel="modulepreload" crossorigin href="/assets/main-D1o9XKOZ.js">
+  <script type="module" crossorigin src="/assets/playground-CJu8lpoX.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/main-iIenSymA.js">
   <link rel="modulepreload" crossorigin href="/assets/browser-Cvhjzqnm.js">
-  <link rel="modulepreload" crossorigin href="/assets/users.capnp.gen-LNWo6u5A.js">
-  <link rel="modulepreload" crossorigin href="/assets/index-q38vqkxF.js">
-  <link rel="stylesheet" crossorigin href="/assets/style-DBhXjw55.css">
+  <link rel="modulepreload" crossorigin href="/assets/users.capnp.gen-J4R985v5.js">
+  <link rel="modulepreload" crossorigin href="/assets/index-CJEMSB8I.js">
+  <link rel="modulepreload" crossorigin href="/assets/conformance_schema.gen-JtUl27TK.js">
+  <link rel="stylesheet" crossorigin href="/assets/main-DGtLEXHE.css">
+  <link rel="stylesheet" crossorigin href="/assets/playground-C5CMGl5w.css">
 </head>
 <body>
   <aside class="network-tip" aria-label="Network throttle tip">
@@ -27,12 +29,23 @@
   </aside>
   <div id="app">
     <header>
-      <h1>capnwasm <span class="dim">playground</span></h1>
+      <h1><a href="./"><span class="brand-capn">capn</span><span class="brand-wasm">wasm</span></a> <span class="page-title">playground</span></h1>
       <p class="subtitle">
         Live in-browser bench. Fetch 200 user records in parallel from static fixtures,
         decode, render. Same data both sides &mdash; only the wire format and decoder differ.
       </p>
-      <nav><a href="./">&larr; Landing</a> &middot; <a href="./vs-capnweb">vs capnweb</a></nav>
+      <nav class="site-nav" aria-label="Site sections">
+        <a href="./">&larr; Landing</a><span class="sep">&middot;</span>
+        <a href="./playground" aria-current="page">Playground</a><span class="sep">&middot;</span>
+        <a href="./render-bench">Render bench</a><span class="sep">&middot;</span>
+        <a href="./editor">Snippets</a><span class="sep">&middot;</span>
+        <a href="./dynamic">Dynamic</a><span class="sep">&middot;</span>
+        <a href="./openapi">OpenAPI</a><span class="sep">&middot;</span>
+        <a href="./inspect">Wire inspector</a><span class="sep">&middot;</span>
+        <a href="./chat">Chat</a><span class="sep">&middot;</span>
+        <a href="./notes">Notes</a><span class="sep">&middot;</span>
+        <a href="./vs-capnweb">vs capnweb</a>
+      </nav>
     </header>
 
     <noscript>
@@ -126,6 +139,78 @@
     </div>
 
     <div id="summary" role="status" aria-live="polite"></div>
+
+    <section id="rpc-bench-section" aria-labelledby="rpc-bench-title">
+      <h2 id="rpc-bench-title" class="section-title">RPC bench (auto-runs after fetch)</h2>
+      <div id="server-status" class="server-status" role="status" aria-live="polite">
+        <span id="server-dot" class="dot" aria-hidden="true"></span>
+        <span id="server-msg">Probing RPC server&hellip;</span>
+      </div>
+
+      <div id="rpc-controls" class="rpc-controls">
+        <label>
+          <span>RPC iterations:</span>
+          <select id="rpc-iters-selector">
+            <option value="1">1</option>
+            <option value="3" selected>3 (median)</option>
+            <option value="10">10 (median)</option>
+          </select>
+        </label>
+        <span id="rpc-status" role="status" aria-live="polite" aria-atomic="true"></span>
+      </div>
+
+      <div id="results-rpc">
+        <div class="workload-card">
+          <h3>Burst &mdash; 200 concurrent <code>echoU8</code> calls</h3>
+          <table class="metrics">
+            <tr>
+              <th>capnwasm</th>
+              <td id="burst-capnp" class="big">&mdash;</td>
+              <td id="burst-capnp-x" class="ratio">&mdash;</td>
+            </tr>
+            <tr>
+              <th>capnweb</th>
+              <td id="burst-cwb" class="big">&mdash;</td>
+              <td id="burst-cwb-x" class="ratio">&mdash;</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="workload-card">
+          <h3>Pipelining &mdash; <code>getChild() &rarr; echoU8()</code></h3>
+          <table class="metrics">
+            <tr>
+              <th>capnwasm</th>
+              <td id="pipe-capnp" class="big">&mdash;</td>
+              <td id="pipe-capnp-x" class="ratio">&mdash;</td>
+            </tr>
+            <tr>
+              <th>capnweb</th>
+              <td id="pipe-cwb" class="big">&mdash;</td>
+              <td id="pipe-cwb-x" class="ratio">&mdash;</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="workload-card">
+          <h3>Big binary &mdash; <code>echoBinary(64 KB)</code></h3>
+          <table class="metrics">
+            <tr>
+              <th>capnwasm</th>
+              <td id="blob-capnp" class="big">&mdash;</td>
+              <td id="blob-capnp-bytes">&mdash;</td>
+            </tr>
+            <tr>
+              <th>capnweb</th>
+              <td id="blob-cwb" class="big">&mdash;</td>
+              <td id="blob-cwb-bytes">&mdash;</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+
+      <div id="rpc-summary" role="status" aria-live="polite"></div>
+    </section>
   </div>
 
 </body>

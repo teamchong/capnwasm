@@ -14,20 +14,21 @@
   <meta name="twitter:description" content="Real Cap'n Proto C++ in the browser. Live RPC bench in the playground." />
   <meta name="twitter:image" content="/og-image.svg" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <script type="module" crossorigin src="/assets/index-CGb5hTNb.js"></script>
-  <link rel="modulepreload" crossorigin href="/assets/main-D1o9XKOZ.js">
+  <script type="module" crossorigin src="/assets/index-JljvY0nd.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/main-iIenSymA.js">
   <link rel="modulepreload" crossorigin href="/assets/browser-Cvhjzqnm.js">
   <link rel="modulepreload" crossorigin href="/assets/conformance_schema.gen-JtUl27TK.js">
-  <link rel="modulepreload" crossorigin href="/assets/rpc-DpSplyTE.js">
-  <link rel="modulepreload" crossorigin href="/assets/index-q38vqkxF.js">
-  <link rel="stylesheet" crossorigin href="/assets/index-DaGc8WPk.css">
+  <link rel="modulepreload" crossorigin href="/assets/users.capnp.gen-J4R985v5.js">
+  <link rel="modulepreload" crossorigin href="/assets/index-CJEMSB8I.js">
+  <link rel="stylesheet" crossorigin href="/assets/main-DGtLEXHE.css">
+  <link rel="stylesheet" crossorigin href="/assets/index-B_dEDG6e.css">
 </head>
 <body>
   <aside class="network-tip" aria-label="Network throttle tip">
     Try DevTools &rarr; Network &rarr; Fast/Slow 3G. Latency changes which rows win.
   </aside>
   <div id="app">
-    <h1>capn<span class="dim">wasm</span></h1>
+    <h1><span class="brand-capn">capn</span><span class="brand-wasm">wasm</span></h1>
     <p class="tagline">Real Cap'n Proto C++ in the browser. Typed RPC, binary wire.</p>
     <p class="description">
       One typed-client toolchain for any backend &mdash; write a <code>.capnp</code> schema, get
@@ -67,23 +68,54 @@
       </div>
     </section>
 
-    <div class="headline">
-      <h2>vs capnweb &amp; REST/JSON</h2>
-      <p class="headline-note">Every number below is measured either in this browser against the current Worker server, or generated at build time from the current assets. No hardcoded benchmark values.</p>
+    <section class="inline-compare" aria-labelledby="inline-compare-title">
+      <div class="compare-head">
+        <div>
+          <h2 id="inline-compare-title">Live comparison</h2>
+          <p>
+            First this page runs a small fetch/decode/render pass using the same fixture rows as
+            the playground. Then it starts the RPC smoke against the current Worker.
+          </p>
+        </div>
+      </div>
+
+      <h3 class="compare-subhead">1. Fetch playground smoke: same data, three encodings</h3>
+      <div class="compare-grid" aria-live="polite">
+        <div class="compare-row" id="compare-row-rest">
+          <span class="compare-name">REST / JSON</span>
+          <span class="compare-payload" id="compare-rest-payload">measuring…</span>
+          <span class="compare-time" id="compare-rest-time">time: —</span>
+          <span class="compare-bar" aria-label="REST payload size bar"><span id="compare-rest-bar"></span></span>
+          <span class="compare-badge" id="compare-rest-badge"></span>
+        </div>
+        <div class="compare-row" id="compare-row-cwb">
+          <span class="compare-name">capnweb</span>
+          <span class="compare-payload" id="compare-cwb-payload">measuring…</span>
+          <span class="compare-time" id="compare-cwb-time">time: —</span>
+          <span class="compare-bar" aria-label="capnweb payload size bar"><span id="compare-cwb-bar"></span></span>
+          <span class="compare-badge" id="compare-cwb-badge"></span>
+        </div>
+        <div class="compare-row" id="compare-row-capnp">
+          <span class="compare-name">capnwasm</span>
+          <span class="compare-payload" id="compare-capnp-payload">measuring…</span>
+          <span class="compare-time" id="compare-capnp-time">time: —</span>
+          <span class="compare-bar" aria-label="capnwasm payload size bar"><span id="compare-capnp-bar"></span></span>
+          <span class="compare-badge" id="compare-capnp-badge"></span>
+        </div>
+      </div>
+      <p class="compare-summary" id="compare-summary">Running fetch smoke…</p>
+      <ul class="compare-sink" id="compare-sink" aria-hidden="true"></ul>
+
+      <h3 class="compare-subhead">2. RPC smoke: runs after payload sizes load</h3>
       <div class="headline-row">
         <span class="label">RPC burst, 200 concurrent calls (browser&rarr;Worker WS)</span>
-        <span id="metric-rpc-burst" class="value measuring">measuring…</span>
+        <span id="metric-rpc-burst" class="value measuring">waiting for payloads…</span>
         <span class="metric-source">live</span>
       </div>
       <div class="headline-row">
         <span class="label">RPC 64 KB binary echo (browser&rarr;Worker WS)</span>
-        <span id="metric-rpc-blob" class="value measuring">measuring…</span>
+        <span id="metric-rpc-blob" class="value measuring">waiting for payloads…</span>
         <span class="metric-source">live</span>
-      </div>
-      <div class="headline-row">
-        <span class="label">Wire bytes for 4 KB binary blob (gzip)</span>
-        <span id="metric-fixture-wire" class="value measuring">loading…</span>
-        <span class="metric-source">build</span>
       </div>
       <div class="headline-row">
         <span class="label">Bundle &mdash; full RPC client (JS + wasm, gzip)</span>
@@ -91,33 +123,43 @@
         <span class="metric-source">build</span>
       </div>
       <div class="headline-row">
-        <span class="label">Wasm runtime asset (gzip)</span>
-        <span id="metric-browser-load" class="value measuring">loading…</span>
-        <span class="metric-source">build</span>
+        <span class="label">Wasm init on this page (fetch + compile)</span>
+        <span id="metric-browser-load" class="value measuring">measuring…</span>
+        <span class="metric-source">live</span>
       </div>
-    </div>
+    </section>
 
     <div class="demos">
-      <a href="./playground" class="demo-card">
-        <div class="demo-icon">&#x26A1;</div>
-        <div class="demo-title">Fetch playground</div>
+      <a href="./render-bench" class="demo-card">
+        <div class="demo-icon">&#x1F4CA;</div>
+        <div class="demo-title">Render bench</div>
         <div class="demo-desc">
-          REST/JSON vs capnweb vs capnwasm side-by-side, fetching static fixtures.
-          Wire bytes, decode time, and render-to-DOM time for each. Tiny same-origin
-          payloads often come out tied; the wire savings show in the egress row.
+          End-to-end full pipeline: capnweb &times; capnwasm crossed with
+          WebSocket &times; HTTP-batch, three sizes, cold &amp; warm.
+          Both libraries win some, lose some &mdash; the whole picture.
         </div>
-        <span class="demo-tag">HTTP</span>
+        <span class="demo-tag tradeoffs">Tradeoffs</span>
       </a>
 
-      <a href="./rpc" class="demo-card">
-        <div class="demo-icon">&#x1F501;</div>
-        <div class="demo-title">RPC bench</div>
+      <a href="./editor" class="demo-card">
+        <div class="demo-icon">&#x1F4D6;</div>
+        <div class="demo-title">Reader access snippets</div>
         <div class="demo-desc">
-          Live WebSocket RPC against a Node server. Three workloads:
-          200-call burst, promise pipelining, 64 KB binary echo. Runs live
-          in your browser so you can compare the current numbers.
+          Read-only TypeScript snippets for <code>draft()</code>, direct getters,
+          <code>toObject()</code>, and builder edits. Each snippet runs against
+          real Cap&apos;n Proto bytes in your browser.
         </div>
-        <span class="demo-tag">Interactive</span>
+        <span class="demo-tag">Snippets</span>
+      </a>
+
+      <a href="./playground" class="demo-card">
+        <div class="demo-icon">&#x26A1;</div>
+        <div class="demo-title">Fetch + RPC details</div>
+        <div class="demo-desc">
+          The landing page runs the quick version. Open the playground for the full
+          fetch/decode/render table; use the RPC page when you need longer WebSocket runs.
+        </div>
+        <span class="demo-tag">Live benches</span>
       </a>
 
       <a href="./chat" class="demo-card">
@@ -160,17 +202,6 @@
         <span class="demo-tag tradeoffs">Tradeoffs</span>
       </a>
 
-      <a href="./render-bench" class="demo-card">
-        <div class="demo-icon">&#x1F4CA;</div>
-        <div class="demo-title">Render bench</div>
-        <div class="demo-desc">
-          End-to-end full pipeline: capnweb &times; capnwasm crossed with
-          WebSocket &times; HTTP-batch, three sizes, cold &amp; warm.
-          Both libraries win some, lose some &mdash; the whole picture.
-        </div>
-        <span class="demo-tag tradeoffs">Tradeoffs</span>
-      </a>
-
       <a href="./inspect" class="demo-card">
         <div class="demo-icon">&#x1F50D;</div>
         <div class="demo-title">Wire inspector</div>
@@ -197,6 +228,7 @@
     <div class="links">
       <a href="https://www.npmjs.com/package/capnwasm">npm</a>
       <a href="https://github.com/teamchong/capnwasm">GitHub</a>
+      <a href="./editor">Snippets</a>
       <a href="./playground">Playground</a>
       <a href="./vs-capnweb">vs capnweb</a>
       <a href="./render-bench">Render bench</a>

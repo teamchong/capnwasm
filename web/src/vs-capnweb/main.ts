@@ -73,18 +73,22 @@ async function ensureCpp(): Promise<any> {
   return await cppPromise;
 }
 
+function newCpp(): Promise<any> {
+  return load(new URL("/capnp.slim.wasm", location.origin));
+}
+
 let capnwasmRoot: any = null;
 let capnwasmBurstRoot: any = null;
 async function ensureCapnwasmRoot(opts: { batchWindow?: boolean } = {}): Promise<any> {
   if (opts.batchWindow) {
     if (capnwasmBurstRoot) return capnwasmBurstRoot;
-    const cpp = await ensureCpp();
+    const cpp = await newCpp();
     const session = await connectWebSocket(cpp, WS_ORIGIN + "/capnwasm", { batchWindowMs: 2 });
     capnwasmBurstRoot = session.bootstrap();
     return capnwasmBurstRoot;
   }
   if (capnwasmRoot) return capnwasmRoot;
-  const cpp = await ensureCpp();
+  const cpp = await newCpp();
   const session = await connectWebSocket(cpp, WS_ORIGIN + "/capnwasm");
   capnwasmRoot = session.bootstrap();
   return capnwasmRoot;

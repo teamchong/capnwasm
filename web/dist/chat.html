@@ -8,7 +8,8 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <style>
     * { box-sizing: border-box; }
-    body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 32px 24px; max-width: 1100px; margin: 0 auto; color: #e0e0e0; background: #0a0a0a; }
+    body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 32px 24px; color: #e0e0e0; background: #0a0a0a; }
+    #app { max-width: var(--page-max-width); margin: 0 auto; }
     h1 { font-size: 1.4em; margin: 0 0 0.4em; }
     h3 { font-size: 1em; margin: 0 0 0.5em; }
     .sub { color: #888; margin: 0 0 1.5em; font-size: 0.9em; line-height: 1.6; }
@@ -16,8 +17,7 @@
     a:hover { text-decoration: underline; }
     header { text-align: center; margin-bottom: 24px; }
     header h1 .dim { color: #4fc3f7; font-weight: 400; }
-    nav { margin-top: 12px; color: #666; font-size: 0.82em; }
-    nav a { color: #4fc3f7; }
+
     .network-tip { position: fixed; right: 18px; top: 50%; transform: translateY(-50%); z-index: 20; max-width: 190px; padding: 10px 12px; border: 1px solid #2d3c47; border-radius: 10px; background: rgba(13, 20, 24, 0.94); color: #b7c4ce; font-size: 12px; line-height: 1.45; box-shadow: 0 10px 28px rgba(0,0,0,0.24); }
 
     .controls { display: flex; flex-direction: column; gap: 0.6em; margin-bottom: 1em; padding: 0.7em 0.9em; background: #141414; border: 1px solid #222; border-radius: 10px; }
@@ -61,19 +61,20 @@
     @media (min-width: 880px) { .compare { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 760px) { .network-tip { display: none; } }
   </style>
-  <script type="module" crossorigin src="/assets/chat-D25WsilP.js"></script>
-  <link rel="modulepreload" crossorigin href="/assets/main-D1o9XKOZ.js">
+  <script type="module" crossorigin src="/assets/chat-BkqaLkoL.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/main-iIenSymA.js">
   <link rel="modulepreload" crossorigin href="/assets/browser-Cvhjzqnm.js">
-  <link rel="modulepreload" crossorigin href="/assets/rpc-DpSplyTE.js">
-  <link rel="modulepreload" crossorigin href="/assets/http_batch-B03rN2o4.js">
-  <link rel="modulepreload" crossorigin href="/assets/index-q38vqkxF.js">
+  <link rel="modulepreload" crossorigin href="/assets/index-CJEMSB8I.js">
+  <link rel="modulepreload" crossorigin href="/assets/http_batch-Cl8JkqSG.js">
+  <link rel="stylesheet" crossorigin href="/assets/main-DGtLEXHE.css">
 </head>
 <body>
   <aside class="network-tip" aria-label="Network throttle tip">
     Try DevTools &rarr; Network &rarr; Fast/Slow 3G. The PNG byte cost is easier to see under throttling.
   </aside>
+  <div id="app">
   <header>
-    <h1>capnwasm <span class="dim">chat</span></h1>
+    <h1><a href="./"><span class="brand-capn">capn</span><span class="brand-wasm">wasm</span></a> <span class="page-title">chat</span></h1>
     <p class="sub">
     Two independent chats, one per library, sharing only the input box and the send
     button. Every click fires <code>capnwasm.post(...)</code> AND <code>capnweb.post(...)</code>
@@ -89,11 +90,17 @@
     <a href="https://github.com/teamchong/capnwasm/blob/main/web/src/chat/capnweb-pane.ts">capnweb-pane.ts</a>,
     <a href="https://github.com/teamchong/capnwasm/blob/main/src/chat_room.mjs">chat_room.mjs</a>.
     </p>
-    <nav>
-      <a href="./">&larr; Landing</a> &middot;
-      <a href="./rpc">RPC bench</a> &middot;
-      <a href="./vs-capnweb">vs capnweb</a> &middot;
-      <a href="./render-bench">Render bench</a>
+    <nav class="site-nav" aria-label="Site sections">
+      <a href="./">&larr; Landing</a><span class="sep">&middot;</span>
+      <a href="./playground">Playground</a><span class="sep">&middot;</span>
+      <a href="./render-bench">Render bench</a><span class="sep">&middot;</span>
+      <a href="./editor">Snippets</a><span class="sep">&middot;</span>
+      <a href="./dynamic">Dynamic</a><span class="sep">&middot;</span>
+      <a href="./openapi">OpenAPI</a><span class="sep">&middot;</span>
+      <a href="./inspect">Wire inspector</a><span class="sep">&middot;</span>
+      <a href="./chat" aria-current="page">Chat</a><span class="sep">&middot;</span>
+      <a href="./notes">Notes</a><span class="sep">&middot;</span>
+      <a href="./vs-capnweb">vs capnweb</a>
     </nav>
   </header>
 
@@ -185,6 +192,7 @@ const items = await main.getMessagesSince(cursor);</pre>
       crossing workerd's per-event request boundary.
     </p>
     <p><a href="./">&larr; back to landing</a></p>
+  </div>
   </div>
 
 </body>

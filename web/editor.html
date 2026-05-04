@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>capnwasm — reader access snippets</title>
+  <meta name="description" content="Read-only capnwasm reader/builder syntax snippets. See draft(), direct getters, toObject(), and builder edits running against sample Cap'n Proto bytes." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="./src/editor/style.css" />
+  <link rel="stylesheet" href="./src/site-nav.css" />
+</head>
+<body>
+  <main id="app">
+    <header>
+      <h1><a href="./"><span class="brand-capn">capn</span><span class="brand-wasm">wasm</span></a> <span class="page-title">snippets</span></h1>
+      <p>
+        Read-only snippets that show how generated readers and builders are called
+        from TypeScript-flavoured code. Each tab runs the snippet against real
+        Cap&apos;n Proto bytes in your browser.
+      </p>
+      <nav class="site-nav" aria-label="Site sections">
+        <a href="./">&larr; Landing</a><span class="sep">&middot;</span>
+        <a href="./playground">Playground</a><span class="sep">&middot;</span>
+        <a href="./render-bench">Render bench</a><span class="sep">&middot;</span>
+        <a href="./editor" aria-current="page">Snippets</a><span class="sep">&middot;</span>
+        <a href="./dynamic">Dynamic</a><span class="sep">&middot;</span>
+        <a href="./openapi">OpenAPI</a><span class="sep">&middot;</span>
+        <a href="./inspect">Wire inspector</a><span class="sep">&middot;</span>
+        <a href="./chat">Chat</a><span class="sep">&middot;</span>
+        <a href="./notes">Notes</a><span class="sep">&middot;</span>
+        <a href="./vs-capnweb">vs capnweb</a>
+      </nav>
+    </header>
+
+    <section class="editor-shell">
+      <aside class="hints" aria-label="Reader syntax hints">
+        <h2>Generated API</h2>
+        <dl>
+          <dt><code>reader.id</code></dt>
+          <dd>Direct getter. Good for one or two fields.</dd>
+          <dt><code>reader.draft(u =&gt; ...)</code></dt>
+          <dd>Batched projection. Good for render paths and sparse reads.</dd>
+          <dt><code>reader.toObject()</code></dt>
+          <dd>Materialize every field into plain JS.</dd>
+          <dt><code>UserBuilder.from(cpp, obj)</code></dt>
+          <dd>Edit/build bytes from plain JS, then reopen as a reader.</dd>
+        </dl>
+      </aside>
+
+      <section class="source-pane" aria-label="Snippet (read-only)">
+        <span>Snippet (read-only)</span>
+        <pre><code id="source" class="language-typescript"></code></pre>
+      </section>
+
+      <section class="output-pane" aria-label="Generated outputs">
+        <div class="tabs" role="tablist">
+          <button data-tab="draft" class="active" type="button">draft()</button>
+          <button data-tab="getters" type="button">getters</button>
+          <button data-tab="object" type="button">toObject()</button>
+          <button data-tab="builder" type="button">builder edit</button>
+          <button data-tab="schema" type="button">schema</button>
+        </div>
+        <pre id="output"></pre>
+      </section>
+    </section>
+
+    <p id="status" class="status">Ready.</p>
+  </main>
+  <script type="module" src="./src/editor/main.ts"></script>
+  <script type="module" src="./src/analytics/main.ts"></script>
+</body>
+</html>

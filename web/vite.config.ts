@@ -38,9 +38,9 @@ export default defineConfig(({ command }) => ({
       input: {
         index: resolve(__dirname, "index.html"),
         playground: resolve(__dirname, "playground.html"),
-        rpc: resolve(__dirname, "rpc.html"),
         chat: resolve(__dirname, "chat.html"),
         dynamic: resolve(__dirname, "dynamic.html"),
+        editor: resolve(__dirname, "editor.html"),
         openapi: resolve(__dirname, "openapi.html"),
         vsCapnweb: resolve(__dirname, "vs-capnweb.html"),
         renderBench: resolve(__dirname, "render-bench.html"),

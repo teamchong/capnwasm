@@ -30,22 +30,30 @@
     .dropzone input[type="file"] { display:none; }
     .download-bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
   </style>
-  <script type="module" crossorigin src="/assets/openapi-7O0BBBsn.js"></script>
-  <link rel="modulepreload" crossorigin href="/assets/main-D1o9XKOZ.js">
-  <link rel="stylesheet" crossorigin href="/assets/style-BhgZW8HM.css">
+  <script type="module" crossorigin src="/assets/openapi-DdyMvxvp.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/main-iIenSymA.js">
+  <link rel="stylesheet" crossorigin href="/assets/main-DGtLEXHE.css">
+  <link rel="stylesheet" crossorigin href="/assets/style-D4ReKKOv.css">
   <link rel="stylesheet" crossorigin href="/assets/style-CwTc6JpS.css">
 </head>
 <body>
   <article id="app">
     <header>
-      <h1><a href="./">capnwasm</a> <span class="dim">OpenAPI conversion</span></h1>
+      <h1><a href="./"><span class="brand-capn">capn</span><span class="brand-wasm">wasm</span></a> <span class="page-title">OpenAPI conversion</span></h1>
       <p class="subtitle">
         Paste OpenAPI JSON. The browser converts it to capnwasm&apos;s manifest IR,
         emits canonical <code>.capnp</code>, and emits canonical OpenAPI again.
       </p>
-      <nav>
-        <a href="./">&larr; Landing</a> &middot;
-        <a href="./dynamic">Dynamic demo</a> &middot;
+      <nav class="site-nav" aria-label="Site sections">
+        <a href="./">&larr; Landing</a><span class="sep">&middot;</span>
+        <a href="./playground">Playground</a><span class="sep">&middot;</span>
+        <a href="./render-bench">Render bench</a><span class="sep">&middot;</span>
+        <a href="./editor">Snippets</a><span class="sep">&middot;</span>
+        <a href="./dynamic">Dynamic</a><span class="sep">&middot;</span>
+        <a href="./openapi" aria-current="page">OpenAPI</a><span class="sep">&middot;</span>
+        <a href="./inspect">Wire inspector</a><span class="sep">&middot;</span>
+        <a href="./chat">Chat</a><span class="sep">&middot;</span>
+        <a href="./notes">Notes</a><span class="sep">&middot;</span>
         <a href="./vs-capnweb">vs capnweb</a>
       </nav>
     </header>

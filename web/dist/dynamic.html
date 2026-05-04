@@ -17,23 +17,33 @@
     .kv dd { margin:0; font-family: ui-monospace, SFMono-Regular, monospace; color:#e0e0e0; overflow-wrap:anywhere; }
     .note { color:#aaa; font-size:0.88rem; line-height:1.6; }
   </style>
-  <script type="module" crossorigin src="/assets/dynamic-BFtWOsvV.js"></script>
-  <link rel="modulepreload" crossorigin href="/assets/main-D1o9XKOZ.js">
+  <script type="module" crossorigin src="/assets/dynamic-ynl9m9yn.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/main-iIenSymA.js">
   <link rel="modulepreload" crossorigin href="/assets/browser-Cvhjzqnm.js">
-  <link rel="stylesheet" crossorigin href="/assets/style-BhgZW8HM.css">
+  <link rel="modulepreload" crossorigin href="/assets/github-dark-CaJORwwl.js">
+  <link rel="stylesheet" crossorigin href="/assets/main-DGtLEXHE.css">
+  <link rel="stylesheet" crossorigin href="/assets/github-dark-BEHUn5zE.css">
+  <link rel="stylesheet" crossorigin href="/assets/style-D4ReKKOv.css">
   <link rel="stylesheet" crossorigin href="/assets/style-CwTc6JpS.css">
 </head>
 <body>
   <article id="app">
     <header>
-      <h1><a href="./">capnwasm</a> <span class="dim">dynamic schema demo</span></h1>
+      <h1><a href="./"><span class="brand-capn">capn</span><span class="brand-wasm">wasm</span></a> <span class="page-title">dynamic schema demo</span></h1>
       <p class="subtitle">
         Runtime schema, no generated reader/builder. This is the path for tenant-uploaded schemas,
         admin tools, schema explorers, or anything where the shape arrives after the app ships.
       </p>
-      <nav>
-        <a href="./">&larr; Landing</a> &middot;
-        <a href="./inspect">Wire inspector</a> &middot;
+      <nav class="site-nav" aria-label="Site sections">
+        <a href="./">&larr; Landing</a><span class="sep">&middot;</span>
+        <a href="./playground">Playground</a><span class="sep">&middot;</span>
+        <a href="./render-bench">Render bench</a><span class="sep">&middot;</span>
+        <a href="./editor">Snippets</a><span class="sep">&middot;</span>
+        <a href="./dynamic" aria-current="page">Dynamic</a><span class="sep">&middot;</span>
+        <a href="./openapi">OpenAPI</a><span class="sep">&middot;</span>
+        <a href="./inspect">Wire inspector</a><span class="sep">&middot;</span>
+        <a href="./chat">Chat</a><span class="sep">&middot;</span>
+        <a href="./notes">Notes</a><span class="sep">&middot;</span>
         <a href="./vs-capnweb">vs capnweb</a>
       </nav>
     </header>
@@ -51,7 +61,7 @@
 
     <section>
       <h2>The whole demo</h2>
-      <pre><code>import { load } from "capnwasm/browser";
+      <pre><code id="dynamic-code-block" class="language-typescript">import { load } from "capnwasm/browser";
 import { defineSchema, buildDynamic, openDynamic } from "capnwasm/dynamic";
 
 const User = defineSchema({

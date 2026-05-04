@@ -16,21 +16,28 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="stylesheet" href="./src/vs-capnweb/style.css" />
   <link rel="stylesheet" href="./src/inspect/style.css" />
+  <link rel="stylesheet" href="./src/site-nav.css" />
 </head>
 <body>
   <article id="app">
     <header>
-      <h1><a href="./">capnwasm</a> <span class="dim">wire inspector</span></h1>
+      <h1><a href="./"><span class="brand-capn">capn</span><span class="brand-wasm">wasm</span></a> <span class="page-title">wire inspector</span></h1>
       <p class="subtitle">
         A standalone Cap&apos;n Proto wire inspector hosted as a single file on this site.
         <strong>Not part of the npm package</strong> &mdash; you don&apos;t pay for it in
         production. Paste one line into DevTools when you need to see what&apos;s actually on
         the wire.
       </p>
-      <nav>
-        <a href="./">&larr; Landing</a> &middot;
-        <a href="./playground">Fetch playground</a> &middot;
-        <a href="./rpc">RPC bench</a> &middot;
+      <nav class="site-nav" aria-label="Site sections">
+        <a href="./">&larr; Landing</a><span class="sep">&middot;</span>
+        <a href="./playground">Playground</a><span class="sep">&middot;</span>
+        <a href="./render-bench">Render bench</a><span class="sep">&middot;</span>
+        <a href="./editor">Snippets</a><span class="sep">&middot;</span>
+        <a href="./dynamic">Dynamic</a><span class="sep">&middot;</span>
+        <a href="./openapi">OpenAPI</a><span class="sep">&middot;</span>
+        <a href="./inspect" aria-current="page">Wire inspector</a><span class="sep">&middot;</span>
+        <a href="./chat">Chat</a><span class="sep">&middot;</span>
+        <a href="./notes">Notes</a><span class="sep">&middot;</span>
         <a href="./vs-capnweb">vs capnweb</a>
       </nav>
     </header>

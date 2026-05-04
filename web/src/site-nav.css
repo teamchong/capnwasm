@@ -1,0 +1,76 @@
+/* Shared page width. Anchors every top-level container at the widest
+   page in the site so navigating between pages doesn't shift layout. */
+:root {
+  --page-max-width: 1280px;
+}
+
+#app {
+  max-width: var(--page-max-width) !important;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Shared brand h1 so every page reads the same: white "capn" + blue "wasm". */
+h1 a { color: inherit; text-decoration: none; }
+h1 .brand-capn { color: #f5f5f5; font-weight: 700; }
+h1 .brand-wasm { color: #4fc3f7; font-weight: 400; }
+h1 .page-title {
+  color: #8a96a3;
+  font-weight: 400;
+  font-size: 0.55em;
+  letter-spacing: 0.04em;
+  margin-left: 0.5em;
+  text-transform: lowercase;
+}
+h1 .dim { color: #4fc3f7; font-weight: 400; }
+
+/* Shared site nav. Linked from every subpage so order/spacing match. */
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 10px 14px;
+  margin: 0 0 20px;
+  background: #101010;
+  border: 1px solid #1d1d1d;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  color: #8a96a3;
+  align-items: center;
+}
+
+.site-nav a {
+  color: #4fc3f7;
+  text-decoration: none;
+  white-space: nowrap;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+
+.site-nav a:hover {
+  color: #29b6f6;
+  background: rgba(79, 195, 247, 0.08);
+}
+
+.site-nav a[aria-current="page"] {
+  color: #ffa726;
+  background: rgba(255, 167, 38, 0.1);
+}
+
+.site-nav .sep {
+  color: #2c3a45;
+}
+
+.site-nav-section {
+  color: #5b6b76;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .site-nav { font-size: 0.74rem; gap: 4px 10px; }
+  .site-nav .sep { display: none; }
+}

@@ -16,20 +16,27 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="stylesheet" href="./src/vs-capnweb/style.css" />
   <link rel="stylesheet" href="./src/inspect/style.css" />
+  <link rel="stylesheet" href="./src/site-nav.css" />
 </head>
 <body>
   <article id="app">
     <header>
-      <h1><a href="./">capnwasm</a> <span class="dim">notes from the trenches</span></h1>
+      <h1><a href="./"><span class="brand-capn">capn</span><span class="brand-wasm">wasm</span></a> <span class="page-title">notes from the trenches</span></h1>
       <p class="subtitle">
         A field report on rebuilding capnweb&apos;s wire format with real
         Cap&apos;n Proto in wasm. The hypothesis was &ldquo;the binary wire is doing
         real work that JSON can&apos;t.&rdquo; The actual surprises were elsewhere.
       </p>
-      <nav>
-        <a href="./">&larr; Landing</a> &middot;
-        <a href="./playground">Fetch playground</a> &middot;
-        <a href="./rpc">RPC bench</a> &middot;
+      <nav class="site-nav" aria-label="Site sections">
+        <a href="./">&larr; Landing</a><span class="sep">&middot;</span>
+        <a href="./playground">Playground</a><span class="sep">&middot;</span>
+        <a href="./render-bench">Render bench</a><span class="sep">&middot;</span>
+        <a href="./editor">Snippets</a><span class="sep">&middot;</span>
+        <a href="./dynamic">Dynamic</a><span class="sep">&middot;</span>
+        <a href="./openapi">OpenAPI</a><span class="sep">&middot;</span>
+        <a href="./inspect">Wire inspector</a><span class="sep">&middot;</span>
+        <a href="./chat">Chat</a><span class="sep">&middot;</span>
+        <a href="./notes" aria-current="page">Notes</a><span class="sep">&middot;</span>
         <a href="./vs-capnweb">vs capnweb</a>
       </nav>
     </header>

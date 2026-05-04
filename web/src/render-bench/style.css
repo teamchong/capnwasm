@@ -35,7 +35,7 @@ body {
   line-height: 1.45;
   box-shadow: 0 10px 28px rgba(0,0,0,0.24);
 }
-article#app { max-width: 1100px; margin: 0 auto; }
+article#app { max-width: var(--page-max-width); margin: 0 auto; }
 header h1 { margin: 0 0 4px 0; font-size: 28px; }
 header h1 .dim { color: var(--dim); font-weight: 400; }
 header h1 a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--dim); }
@@ -85,6 +85,16 @@ button:disabled { background: #555; color: #aaa; cursor: not-allowed; }
   margin-top: 0;
 }
 
+.pipeline-diagram {
+  display: block;
+  width: 100%;
+  max-width: 980px;
+  margin: 12px auto 16px;
+  border: 1px solid #222;
+  border-radius: 10px;
+  background: #0b0b0b;
+}
+
 .how-to-read p {
   margin: 10px 0 0;
   color: var(--dim);
@@ -102,6 +112,7 @@ button:disabled { background: #555; color: #aaa; cursor: not-allowed; }
 table.bench {
   width: 100%; border-collapse: collapse; background: var(--panel);
   border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  table-layout: fixed;
 }
 table.bench caption {
   text-align: left; padding: 10px 12px; background: #101010;
@@ -113,6 +124,29 @@ table.bench th, table.bench td {
 }
 table.bench th { background: #101010; font-weight: 500; color: var(--dim); }
 table.bench tr:last-child td { border-bottom: none; }
+th.transport-head,
+td.transport-cell {
+  width: 150px;
+  color: var(--dim);
+  background: #101010;
+}
+th.size-head {
+  text-align: center;
+  border-left: 1px solid #2b2b2b;
+  color: #c8c8c8;
+}
+th.metric-head {
+  text-align: right;
+  color: #9a9a9a;
+}
+th.group-start,
+td.group-start {
+  border-left: 1px solid #2b2b2b;
+}
+th.metric-head + th.metric-head,
+td.num + td.num {
+  border-left: 1px solid #1a1a1a;
+}
 td.num { text-align: right; }
 td.win  { background: var(--win-bg); color: var(--win); font-weight: 600; }
 td.lose { color: var(--lose); }
