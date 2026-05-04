@@ -1,0 +1,23 @@
+.github/workflows/release.yml
+  a40863a2008f4bc3 4-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "bff65ff45275cb924bacb1dbcd703d8c3697f535",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "stevenchongcloudflare.com",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 9,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
