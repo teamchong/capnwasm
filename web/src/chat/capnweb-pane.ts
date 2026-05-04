@@ -141,9 +141,7 @@ async function setupWs(args: {
   statusEl: HTMLElement; render: (m: Msg) => void; setStatusBase: (s: string) => void;
 }): Promise<ChatPaneHandle> {
   const { statusEl, render, setStatusBase } = args;
-  const wsHost = location.hostname === "localhost"
-    ? `127.0.0.1${location.port ? `:${location.port}` : ""}`
-    : location.host;
+  const wsHost = location.host;
   const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + wsHost + "/capnweb-chat-ws";
   const main: any = newWebSocketRpcSession(wsUrl);
 

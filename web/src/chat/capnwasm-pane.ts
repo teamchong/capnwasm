@@ -130,9 +130,7 @@ async function setupWs(args: {
   logEl: HTMLElement; statusEl: HTMLElement; cpp: any; render: (m: Msg) => void; setStatusBase: (s: string) => void;
 }): Promise<ChatPaneHandle> {
   const { statusEl, cpp, render, setStatusBase } = args;
-  const wsHost = location.hostname === "localhost"
-    ? `127.0.0.1${location.port ? `:${location.port}` : ""}`
-    : location.host;
+  const wsHost = location.host;
   const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + wsHost + "/chat-ws";
   const session = await connectWebSocket(cpp, wsUrl);
   const cap = session.bootstrap();
