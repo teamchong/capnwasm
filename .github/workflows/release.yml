@@ -1,25 +1,23 @@
-name: publish
+name: release
 
-# Triggered when a tag matching v* is pushed (e.g. `git tag v0.1.0 && git push --tags`).
-# A manual dispatch is also allowed for re-publishing without a new tag.
+# Publishes capnwasm to npm via npm Trusted Publisher (GitHub Actions OIDC).
+# npm package settings must match:
+#   Publisher: GitHub Actions
+#   Repository: teamchong/capnwasm
+#   Workflow filename: release.yml
+#   Environment: unset, unless this workflow is updated to use the same name
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
 
-# Required repo configuration before this can run:
-#   - Settings → Secrets → Actions → NPM_TOKEN  (an npm automation token with
-#     publish access to the `capnwasm` package)
-#   - The version field in package.json matches the pushed tag (without `v`).
-#     The workflow refuses to publish if they disagree.
-
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write   # for npm provenance
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +32,9 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
           cache: pnpm
+
+      - name: Use npm with trusted publishing support
+        run: npm install -g npm@11
 
       - name: Install (workspace)
         run: pnpm install --frozen-lockfile
@@ -57,7 +58,17 @@ jobs:
             exit 1
           fi
 
+      - name: Check npm version
+        id: npm-version
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          if npm view "capnwasm@$PKG" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "capnwasm@$PKG is already published; skipping npm publish."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm
-        run: pnpm publish --provenance --access public --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: steps.npm-version.outputs.published != 'true'
+        run: npm publish --provenance --access public
