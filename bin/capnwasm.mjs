@@ -1197,6 +1197,15 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`    this.name = "StaleReaderError";`);
   lines.push(`  }`);
   lines.push(`}`);
+  // M4: Explicit lifetime. dispose() releases the slot eagerly instead
+  // of waiting for FinalizationRegistry. Subsequent field access throws
+  // this error so use-after-dispose bugs surface immediately.
+  lines.push(`export class DisposedReaderError extends Error {`);
+  lines.push(`  constructor(message = "Cap'n Proto reader has been disposed; field access is no longer valid") {`);
+  lines.push(`    super(message);`);
+  lines.push(`    this.name = "DisposedReaderError";`);
+  lines.push(`  }`);
+  lines.push(`}`);
   lines.push(`function _openCapnwasmMessage(cpp, bytes, unsafe = false) {`);
   // M1: Single-segment ABI surface. Validate before either path so the
   // unsafe scratch path also rejects multi-segment input. The check is
@@ -1248,6 +1257,10 @@ function _capnwasmPick(cpp, fields, names) {`);
   // closures. Both paths bump generation as a side effect so peer
   // readers know to re-bind too.
   lines.push(`function _ensureCapnwasmReader(reader) {`);
+  // M4: Disposed-reader guard. Runs before any work so a use-after-
+  // dispose() bug surfaces immediately rather than reading garbage
+  // from a slot that has been released or reassigned.
+  lines.push(`  if (reader._disposed) throw new DisposedReaderError();`);
   // M3 fast path: slot pool. Three things to keep coherent:
   //   1) Active slot. JS tracks cpp._activeSlot in lockstep with
   //      cpp_any_use_slot, so the single-reader hot loop short-circuits
@@ -1625,7 +1638,45 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push(`    this._dataPtr = dataPtr | 0;`);
     lines.push(`    this._u8 = cpp._u8;`);
     lines.push(`    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+    // M4: dispose flag. False until dispose() runs. After dispose,
+    // _ensureCapnwasmReader throws DisposedReaderError on every getter.
+    lines.push(`    this._disposed = false;`);
     lines.push(`  }`);
+    lines.push("");
+    // M4: Explicit lifetime API.
+    //
+    // dispose() releases the wasm slot back to the pool immediately
+    // (instead of waiting for FinalizationRegistry timing) and frees
+    // the message bytes. Idempotent. Subsequent field access throws
+    // DisposedReaderError. Element readers (those with a parent's
+    // _slotIdx but no _slotHandle of their own) only mark themselves
+    // disposed; the parent's slot stays alive until the parent's
+    // dispose() runs.
+    //
+    // [Symbol.dispose] makes the reader compatible with TC39 explicit
+    // resource management: `using r = openFoo(cpp, bytes);` runs the
+    // dispose method automatically when r leaves scope. Available on
+    // Node 22+, Chrome 134+, Safari 18.4+. On older runtimes the
+    // method is still callable, just not invoked by `using`.
+    lines.push(`  dispose() {`);
+    lines.push(`    if (this._disposed) return;`);
+    lines.push(`    this._disposed = true;`);
+    lines.push(`    if (this._slotHandle) {`);
+    lines.push(`      this._cpp._releaseSlot(this._slotHandle);`);
+    lines.push(`      this._slotHandle = null;`);
+    lines.push(`    } else if (this._msg) {`);
+    lines.push(`      this._cpp._freeMessage(this._msg);`);
+    lines.push(`      this._msg = null;`);
+    lines.push(`    }`);
+    lines.push(`    this._dataPtr = 0;`);
+    lines.push(`    this._rebind = null;`);
+    lines.push(`  }`);
+    lines.push("");
+    // Guard Symbol.dispose for older runtimes (Node <22, Safari <18.4)
+    // where the symbol is undefined. We assign the dispose alias on the
+    // class prototype after declaration; in the no-Symbol case it
+    // becomes a string-keyed property named "undefined", which is
+    // harmless (just unused) and does not break the class shape.
     lines.push("");
     // Union accessor: when this struct holds a union, `which()` returns the
     // discriminant value (0..N-1) and the codegen below adds `is<Foo>()`
@@ -1706,6 +1757,13 @@ function _capnwasmPick(cpp, fields, names) {`);
     lines.push(`    _ensureCapnwasmReader(this);`);
     lines.push(`    return _capnwasmPick(this._cpp, ${s.name}Reader._FIELDS, Object.keys(${s.name}Reader._FIELDS));`);
     lines.push(`  }`);
+    lines.push(`}`);
+    // M4: Wire Symbol.dispose to dispose() so `using` works on
+    // runtimes that have the symbol. Older runtimes (Node <22 etc.)
+    // skip this assignment and the reader still has dispose() to call
+    // by hand or via withReader().
+    lines.push(`if (typeof Symbol.dispose === "symbol") {`);
+    lines.push(`  ${s.name}Reader.prototype[Symbol.dispose] = ${s.name}Reader.prototype.dispose;`);
     lines.push(`}`);
     lines.push("");
   }

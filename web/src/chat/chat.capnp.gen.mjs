@@ -372,6 +372,12 @@ export class StaleReaderError extends Error {
     this.name = "StaleReaderError";
   }
 }
+export class DisposedReaderError extends Error {
+  constructor(message = "Cap'n Proto reader has been disposed; field access is no longer valid") {
+    super(message);
+    this.name = "DisposedReaderError";
+  }
+}
 function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
   if (typeof cpp._validateSingleSegment === "function") {
     cpp._validateSingleSegment(bytes);
@@ -394,6 +400,7 @@ function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
   return { dataPtr, slotIdx: 0, slotHandle: null, msg: null, gen: cpp._generation ?? 0 };
 }
 function _ensureCapnwasmReader(reader) {
+  if (reader._disposed) throw new DisposedReaderError();
   if (reader._slotIdx) {
     const cpp = reader._cpp;
     if (cpp._activeSlot !== reader._slotIdx) {
@@ -644,7 +651,23 @@ export class PostParamsReader {
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._disposed = false;
   }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
 
   get author() {
     _ensureCapnwasmReader(this);
@@ -678,6 +701,9 @@ export class PostParamsReader {
     return _capnwasmPick(this._cpp, PostParamsReader._FIELDS, Object.keys(PostParamsReader._FIELDS));
   }
 }
+if (typeof Symbol.dispose === "symbol") {
+  PostParamsReader.prototype[Symbol.dispose] = PostParamsReader.prototype.dispose;
+}
 
 export class ChatMessageReader {
   constructor(cpp, dataPtr, opts = undefined) {
@@ -691,7 +717,23 @@ export class ChatMessageReader {
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._disposed = false;
   }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
 
   get id() {
     _ensureCapnwasmReader(this);
@@ -743,6 +785,9 @@ export class ChatMessageReader {
     return _capnwasmPick(this._cpp, ChatMessageReader._FIELDS, Object.keys(ChatMessageReader._FIELDS));
   }
 }
+if (typeof Symbol.dispose === "symbol") {
+  ChatMessageReader.prototype[Symbol.dispose] = ChatMessageReader.prototype.dispose;
+}
 
 export class GetSinceParamsReader {
   constructor(cpp, dataPtr, opts = undefined) {
@@ -756,7 +801,23 @@ export class GetSinceParamsReader {
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._disposed = false;
   }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
 
   get since() {
     _ensureCapnwasmReader(this);
@@ -777,6 +838,9 @@ export class GetSinceParamsReader {
     return _capnwasmPick(this._cpp, GetSinceParamsReader._FIELDS, Object.keys(GetSinceParamsReader._FIELDS));
   }
 }
+if (typeof Symbol.dispose === "symbol") {
+  GetSinceParamsReader.prototype[Symbol.dispose] = GetSinceParamsReader.prototype.dispose;
+}
 
 export class ChatMessageListReader {
   constructor(cpp, dataPtr, opts = undefined) {
@@ -790,7 +854,23 @@ export class ChatMessageListReader {
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._disposed = false;
   }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
 
   get items() {
     _ensureCapnwasmReader(this);
@@ -828,6 +908,9 @@ export class ChatMessageListReader {
     _ensureCapnwasmReader(this);
     return _capnwasmPick(this._cpp, ChatMessageListReader._FIELDS, Object.keys(ChatMessageListReader._FIELDS));
   }
+}
+if (typeof Symbol.dispose === "symbol") {
+  ChatMessageListReader.prototype[Symbol.dispose] = ChatMessageListReader.prototype.dispose;
 }
 
 _STRUCT_FIELDS["PostParams"] = PostParamsReader._FIELDS;

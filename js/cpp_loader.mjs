@@ -358,6 +358,13 @@ export class CapnCpp {
     this.#slotFinalizer?.unregister(handle);
     if (this._supportsReaderSlotPool()) {
       this.#exports.cpp_any_release_slot(handle.slotIdx);
+      // Wasm-side cpp_any_release_slot resets active_slot_idx to 0
+      // when the released slot was active. Mirror that in JS so
+      // _useSlot does not short-circuit a future switch under the
+      // false belief that the active slot is still the released one.
+      if (this.#activeSlot === handle.slotIdx) {
+        this.#activeSlot = 0;
+      }
     }
     if (handle.ptr) {
       this.#exports.cpp_msg_free?.(handle.ptr);

@@ -372,6 +372,12 @@ export class StaleReaderError extends Error {
     this.name = "StaleReaderError";
   }
 }
+export class DisposedReaderError extends Error {
+  constructor(message = "Cap'n Proto reader has been disposed; field access is no longer valid") {
+    super(message);
+    this.name = "DisposedReaderError";
+  }
+}
 function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
   if (typeof cpp._validateSingleSegment === "function") {
     cpp._validateSingleSegment(bytes);
@@ -394,6 +400,7 @@ function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
   return { dataPtr, slotIdx: 0, slotHandle: null, msg: null, gen: cpp._generation ?? 0 };
 }
 function _ensureCapnwasmReader(reader) {
+  if (reader._disposed) throw new DisposedReaderError();
   if (reader._slotIdx) {
     const cpp = reader._cpp;
     if (cpp._activeSlot !== reader._slotIdx) {
@@ -644,7 +651,23 @@ export class UserReader {
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._disposed = false;
   }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
 
   get id() {
     _ensureCapnwasmReader(this);
@@ -702,6 +725,9 @@ export class UserReader {
     return _capnwasmPick(this._cpp, UserReader._FIELDS, Object.keys(UserReader._FIELDS));
   }
 }
+if (typeof Symbol.dispose === "symbol") {
+  UserReader.prototype[Symbol.dispose] = UserReader.prototype.dispose;
+}
 
 export class GreetingReader {
   constructor(cpp, dataPtr, opts = undefined) {
@@ -715,7 +741,23 @@ export class GreetingReader {
     this._dataPtr = dataPtr | 0;
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._disposed = false;
   }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
 
   get message() {
     _ensureCapnwasmReader(this);
@@ -744,6 +786,9 @@ export class GreetingReader {
     _ensureCapnwasmReader(this);
     return _capnwasmPick(this._cpp, GreetingReader._FIELDS, Object.keys(GreetingReader._FIELDS));
   }
+}
+if (typeof Symbol.dispose === "symbol") {
+  GreetingReader.prototype[Symbol.dispose] = GreetingReader.prototype.dispose;
 }
 
 _STRUCT_FIELDS["User"] = UserReader._FIELDS;

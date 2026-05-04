@@ -573,14 +573,38 @@ export class DynamicReader {
     // M3: Slot pool. _slotIdx > 0 means this reader owns a wasm slot
     // and _ensureOpen flips the active slot via cpp._useSlot before
     // any boundary call. _slotHandle is the registration object the
-    // slot finalizer holds (release runs on GC; M4 will add explicit
-    // dispose()).
+    // slot finalizer holds; M4's dispose() releases it eagerly.
     this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    // M4: dispose flag. False until dispose() runs. Subsequent reads
+    // throw DisposedDynamicReaderError so use-after-dispose surfaces
+    // immediately.
+    this._disposed = false;
+  }
+
+  /**
+   * M4: Explicit lifetime. Releases the wasm slot back to the pool
+   * (or frees the managed message bytes) immediately instead of
+   * waiting for FinalizationRegistry. Idempotent. Subsequent reads
+   * throw DisposedDynamicReaderError. Compatible with TC39 `using`
+   * via the [Symbol.dispose] method below.
+   */
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._proxy = null;
   }
 
   _ensureOpen() {
+    if (this._disposed) throw new DisposedDynamicReaderError();
     // M3 fast path: slot pool. Skip the gen check entirely -- the
     // slot's cursor is preserved across other readers' activity, so
     // the only thing we need to confirm is that *our* slot is the
@@ -648,11 +672,61 @@ export class DynamicReader {
   }
 }
 
+// M4: Wire Symbol.dispose to dispose() for `using` compatibility on
+// runtimes that have the symbol. Older runtimes skip the assignment
+// and the reader still has dispose() to call by hand or via withReader.
+if (typeof Symbol.dispose === "symbol") {
+  DynamicReader.prototype[Symbol.dispose] = DynamicReader.prototype.dispose;
+}
+
 export class StaleDynamicReaderError extends Error {
   constructor(message = "DynamicReader is stale because the CapnCpp runtime opened another message") {
     super(message);
     this.name = "StaleDynamicReaderError";
   }
+}
+
+/** M4: Thrown when a getter runs against a DynamicReader after dispose(). */
+export class DisposedDynamicReaderError extends Error {
+  constructor(message = "DynamicReader has been disposed; field access is no longer valid") {
+    super(message);
+    this.name = "DisposedDynamicReaderError";
+  }
+}
+
+/**
+ * M4: Scoped reader helper for environments that do not yet support
+ * TC39 `using`. Opens `bytes` against `ReaderClass` (or `openFooName`
+ * function), invokes `fn(reader)`, and disposes the reader on exit
+ * regardless of whether `fn` threw or returned normally.
+ *
+ * `opener` can be either:
+ *   - a function `openFoo(cpp, bytes)` that returns a reader, or
+ *   - a class with a static factory; we then call `opener(cpp, bytes)`
+ *     because the codegen `openFoo` family already follows that
+ *     signature.
+ *
+ * Returns whatever `fn` returns. If `fn` returns a Promise the helper
+ * awaits it before disposing -- async handlers should not have their
+ * reader yanked mid-flight.
+ */
+export function withReader(cpp, bytes, opener, fn) {
+  const reader = opener(cpp, bytes);
+  let result;
+  try {
+    result = fn(reader);
+  } catch (err) {
+    reader.dispose();
+    throw err;
+  }
+  if (result && typeof result.then === "function") {
+    return result.then(
+      (v) => { reader.dispose(); return v; },
+      (e) => { reader.dispose(); throw e; },
+    );
+  }
+  reader.dispose();
+  return result;
 }
 
 // Single-field read. One wasm call. Use this for the Proxy path, or when

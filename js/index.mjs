@@ -11,6 +11,11 @@ export {
   validateSingleSegment,
 } from "../dist/inlined.mjs";
 export {
+  StaleDynamicReaderError,
+  DisposedDynamicReaderError,
+  withReader,
+} from "./dynamic.mjs";
+export {
   RpcSession,
   RpcCap,
   InterfaceRegistry,
