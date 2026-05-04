@@ -102,28 +102,29 @@ test("dispose() on root reader does NOT prevent peer readers from working", () =
 });
 
 test("Symbol.dispose enables TC39 `using` semantics", () => {
-  // Node 22+ has Symbol.dispose. We rely on that here since the test
-  // runs on our test matrix Node version.
+  // Symbol.dispose has been stable since Node 20 (runtime symbol).
+  // The `using` *declaration syntax* lands in different Node versions
+  // (V8 13.x → Node 24 stable). We don't write `using r = ...` in this
+  // test because that would force the entire CI matrix to Node 24+;
+  // instead we drive Symbol.dispose by hand, which is exactly what the
+  // syntax desugars to. Library consumers on Node 24+ get the syntax
+  // sugar; everyone else still gets the disposable contract.
   if (typeof Symbol.dispose !== "symbol") {
-    console.warn("Symbol.dispose unavailable; skipping `using` test on this runtime");
+    console.warn("Symbol.dispose unavailable; skipping dispose-protocol test on this runtime");
     return;
   }
   const bytes = buildPostBytes("using-scoped");
-  let captured;
-  let disposedDuringScope = false;
-  {
-    using r = openPost(cpp, bytes);
-    captured = r.title;
-    // r is in scope; not yet disposed.
+  const r = openPost(cpp, bytes);
+  try {
+    assert.equal(r.title, "using-scoped");
     assert.equal(r._disposed, false);
-    // We capture a closure over r so we can verify post-scope dispose.
-    Object.defineProperty(globalThis, "__lastR", { value: r, configurable: true });
+  } finally {
+    // This is what `using r = ...` desugars to on scope exit. If the
+    // class hasn't wired Symbol.dispose to dispose(), this is a no-op
+    // and the next assert catches it.
+    r[Symbol.dispose]();
   }
-  // After the block exits, r.dispose() ran via Symbol.dispose.
-  disposedDuringScope = globalThis.__lastR._disposed;
-  delete globalThis.__lastR;
-  assert.equal(captured, "using-scoped");
-  assert.equal(disposedDuringScope, true);
+  assert.equal(r._disposed, true);
 });
 
 // ---- DynamicReader: dispose + Symbol.dispose --------------------------------
