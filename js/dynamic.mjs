@@ -517,13 +517,7 @@ export function encodeDynamic(cpp, schema, obj) {
  * `defineSchema`. `bytes` is a serialized Cap'n Proto message.
  */
 export function openDynamic(cpp, schema, bytes) {
-  // M1: Single-segment ABI surface. The managed-message path's
-  // _allocMessage already validates, but call it explicitly here so the
-  // _allocMessage-unavailable fallback (older runtime, unsafe path) also
-  // rejects multi-segment input.
-  if (typeof cpp._validateSingleSegment === "function") {
-    cpp._validateSingleSegment(bytes);
-  }
+  if (typeof cpp._validateSingleSegment === "function") cpp._validateSingleSegment(bytes);
   // M3: Native multi-reader slot pool. Acquire a dedicated slot so this
   // reader survives unrelated decodes without rebinding. Falls back to
   // managed-message + rebind on older runtimes that don't export the
@@ -537,18 +531,13 @@ export function openDynamic(cpp, schema, bytes) {
   if (typeof cpp._allocMessage === "function") {
     const msg = cpp._allocMessage(bytes);
     const dataPtr = cpp._openAnyMessage(msg);
-    return new DynamicReader(cpp, schema, { msg, dataPtr, msgStart: msg.ptr + 8, msgEnd: msg.ptr + msg.len, gen: cpp._generation });
+    return new DynamicReader(cpp, schema, { msg, dataPtr, msgStart: msg.ptr + (msg.segment0Start ?? 0), msgEnd: msg.ptr + (msg.segment0End ?? 0), gen: cpp._generation });
   }
   return openDynamicUnsafe(cpp, schema, bytes);
 }
 
 export function openDynamicUnsafe(cpp, schema, bytes) {
-  // M1: Single-segment ABI surface. Validate even on the unsafe path —
-  // "unsafe" only refers to reader lifetime, not to relaxed input
-  // contracts. Multi-segment input would still crash JS pointer reads.
-  if (typeof cpp._validateSingleSegment === "function") {
-    cpp._validateSingleSegment(bytes);
-  }
+  if (typeof cpp._validateSingleSegment === "function") cpp._validateSingleSegment(bytes);
   if (bytes.length > cpp._cap) throw new Error("input larger than scratch buffer");
   cpp._u8.set(bytes, cpp._inPtr);
   // cpp_any_open returns the data section pointer (or 0 for an empty
@@ -556,7 +545,9 @@ export function openDynamicUnsafe(cpp, schema, bytes) {
   // throwing inside the wasm if the bytes are malformed.
   const dataPtr = cpp._exports.cpp_any_open(bytes.length);
   if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();
-  return new DynamicReader(cpp, schema, { dataPtr, gen: cpp._generation ?? 0 });
+  const msgStart = cpp._exports.cpp_any_msg_start?.() >>> 0;
+  const msgEnd = cpp._exports.cpp_any_msg_end?.() >>> 0;
+  return new DynamicReader(cpp, schema, { dataPtr, msgStart, msgEnd, gen: cpp._generation ?? 0 });
 }
 
 /**

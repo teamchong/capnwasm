@@ -1367,10 +1367,8 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`  }`);
   lines.push(`}`);
   lines.push(`function _openCapnwasmMessage(cpp, bytes, unsafe = false) {`);
-  // M1: Single-segment ABI surface. Validate before either path so the
-  // unsafe scratch path also rejects multi-segment input. The check is
-  // pure-JS and only touches the first 8 bytes; cost is negligible vs
-  // the wasm boundary call that follows.
+  // Validate framed input before opening. Multi-segment frames are accepted;
+  // JS fast paths use segment-0 bounds and FAR pointers fall back to C++.
   lines.push(`  if (typeof cpp._validateSingleSegment === "function") {`);
   lines.push(`    cpp._validateSingleSegment(bytes);`);
   lines.push(`  }`);
@@ -1382,27 +1380,29 @@ function _capnwasmPick(cpp, fields, names) {`);
   // readers prefer slotIdx > 0 when set.
   // _acquireSlot returns null on pool exhaustion; fall through to the
   // managed-message path which still works (just rebinds on stale).
-  // M5: forward msgStart/msgEnd so the pure-JS pointer decoder can
-  // bounds-check pointer targets without crossing into wasm.
+  // M5: forward segment-0 msgStart/msgEnd so the pure-JS pointer decoder can
+  // bounds-check same-segment pointer targets without crossing into wasm.
   lines.push(`  if (!unsafe && typeof cpp._acquireSlot === "function" && cpp._supportsReaderSlotPool && cpp._supportsReaderSlotPool()) {`);
   lines.push(`    const acquired = cpp._acquireSlot(bytes);`);
   lines.push(`    if (acquired) {`);
   lines.push(`      return { dataPtr: acquired.dataPtr, slotIdx: acquired.slotIdx, slotHandle: acquired.handle, msgStart: acquired.msgStart, msgEnd: acquired.msgEnd, msg: null, gen: cpp._generation };`);
   lines.push(`    }`);
   lines.push(`  }`);
-  // M1 fallback path: managed-message via _allocMessage. Used when the
+  // Managed-message fallback via _allocMessage. Used when the
   // wasm runtime predates the slot pool exports. Keeps legacy semantics
   // (rebind on stale-gen) so 0.0.5 -> 0.0.6 upgrades stay seamless.
   lines.push(`  if (!unsafe && typeof cpp._allocMessage === "function") {`);
   lines.push(`    const msg = cpp._allocMessage(bytes);`);
   lines.push(`    const dataPtr = cpp._openAnyMessage(msg);`);
-  lines.push(`    return { dataPtr, slotIdx: 0, slotHandle: null, msg, gen: cpp._generation };`);
+  lines.push(`    return { dataPtr, slotIdx: 0, slotHandle: null, msg, msgStart: msg.ptr + (msg.segment0Start ?? 8), msgEnd: msg.ptr + (msg.segment0End ?? msg.len), gen: cpp._generation };`);
   lines.push(`  }`);
   lines.push(`  if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");`);
   lines.push(`  cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());`);
   lines.push(`  const dataPtr = cpp._exports.cpp_any_open(bytes.length);`);
   lines.push(`  if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();`);
-  lines.push(`  return { dataPtr, slotIdx: 0, slotHandle: null, msg: null, gen: cpp._generation ?? 0 };`);
+  lines.push(`  const msgStart = cpp._exports.cpp_any_msg_start?.() >>> 0;`);
+  lines.push(`  const msgEnd = cpp._exports.cpp_any_msg_end?.() >>> 0;`);
+  lines.push(`  return { dataPtr, slotIdx: 0, slotHandle: null, msg: null, msgStart, msgEnd, gen: cpp._generation ?? 0 };`);
   lines.push(`}`);
   // Re-position the C++ cursor onto this reader's struct before any
   // boundary-call read.

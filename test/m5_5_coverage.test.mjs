@@ -180,27 +180,17 @@ test("Text: 32 KB string fits the builder's first segment and round-trips", () =
   r.dispose();
 });
 
-test("Text: 64+ KB string overflows the builder's first segment (M1 rejects on read)", async () => {
-  // Documents the current upper bound on inline Text payloads. The
-  // builder's any_builder_first_seg is 64 KB; encoding a 64 KB+
-  // string spills to a second segment, and the M1 single-segment
-  // reader rejects multi-segment frames with MultiSegmentMessageError.
-  // Applications that need larger payloads should chunk at the
-  // application layer or wait for a future "large message" mode.
-  const { MultiSegmentMessageError } = await import("../dist/inlined.mjs");
+test("Text: 64+ KB string round-trips across segments", async () => {
   const long = "x".repeat(64 * 1024);  // exactly 64 KB
   const bytes = buildStr(long);
-  assert.throws(
-    () => openDynamic(cpp, STR, bytes),
-    (err) => err instanceof MultiSegmentMessageError,
-    "64 KB text expected to overflow first segment",
-  );
+  const r = openDynamic(cpp, STR, bytes);
+  assert.equal(r.get("text"), long);
+  r.dispose();
 });
 
 test("Data: 32 KB binary blob round-trips byte-for-byte", () => {
-  // 32 KB is the largest single-segment Data we can ship today
-  // through buildDynamic. See the Text overflow test above for the
-  // documented upper bound.
+  // Exercises binary payloads that still fit in one segment; larger
+  // multi-segment text coverage is above.
   const blob = new Uint8Array(32 * 1024);
   for (let i = 0; i < blob.length; i++) blob[i] = (i * 31) & 0xFF;
   const bytes = buildStr("", blob);
@@ -392,4 +382,3 @@ test("Recursive List<Struct>: tree of 5 levels with branching factor 3", () => {
   }
   r.dispose();
 });
-

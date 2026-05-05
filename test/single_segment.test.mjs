@@ -1,12 +1,10 @@
-// M1: Single-segment ABI surface validation.
+// Framed-message ABI surface validation.
 //
-// The capnwasm public reader ABI accepts only single-segment Cap'n Proto
-// framed messages (the M1 ABI contract). These tests cover:
+// The capnwasm public reader ABI accepts normal Cap'n Proto framed messages,
+// including multi-segment frames. These tests cover:
 //   - Valid single-segment input round-trips through openDynamic and
 //     codegen openFoo on both safe and unsafe paths.
-//   - Hand-crafted multi-segment input is rejected with
-//     MultiSegmentMessageError on every public open path (managed,
-//     unsafe scratch, dynamic safe, dynamic unsafe).
+//   - Hand-crafted multi-segment input is accepted by every public open path.
 //   - Truncated framed headers and unaligned lengths are rejected with
 //     the same typed error.
 //   - validateSingleSegment is exported and usable standalone.
@@ -63,12 +61,10 @@ const PrimitivesSchema = defineSchema({
   text: { kind: "text",  slot: 0 },
 });
 
-// ---- Valid single-segment ---------------------------------------------------
+// ---- Valid framed messages --------------------------------------------------
 
 test("validateSingleSegment accepts a real Cap'n Proto framed message", () => {
-  // Pure-JS validator on the canonical bytes the wasm just produced.
-  // No throw means single-segment OK.
-  validateSingleSegment(validBytes);
+  assert.equal(validateSingleSegment(validBytes), true);
 });
 
 test("openDynamic round-trips a valid single-segment message", () => {
@@ -97,7 +93,7 @@ test("openPrimitivesUnsafe (codegen, unsafe) round-trips a valid message", () =>
   assert.equal(r.text, "hi");
 });
 
-// ---- Multi-segment rejection ------------------------------------------------
+// ---- Multi-segment acceptance -----------------------------------------------
 
 // Build a hand-crafted two-segment framed message. Header layout per
 // capnp serialize.h:
@@ -125,46 +121,35 @@ function buildTwoSegmentBytes() {
   return out;
 }
 
-test("validateSingleSegment rejects a multi-segment message", () => {
+test("validateSingleSegment accepts a multi-segment message", () => {
   const bad = buildTwoSegmentBytes();
-  assert.throws(
-    () => validateSingleSegment(bad),
-    (err) => err instanceof MultiSegmentMessageError && /multi-segment/i.test(err.message),
-  );
+  assert.equal(validateSingleSegment(bad), true);
 });
 
-test("openDynamic (safe) rejects multi-segment input", () => {
+test("openDynamic (safe) accepts multi-segment input", () => {
   const bad = buildTwoSegmentBytes();
-  assert.throws(
-    () => openDynamic(cpp, PrimitivesSchema, bad),
-    MultiSegmentMessageError,
-  );
+  const r = openDynamic(cpp, PrimitivesSchema, bad);
+  assert.equal(r.get("u8"), 0);
+  r.dispose();
 });
 
-test("openDynamicUnsafe also rejects multi-segment input", () => {
-  // Unsafe refers to reader lifetime, not the input contract. Multi-segment
-  // input would still corrupt JS pointer reads, so we reject early.
+test("openDynamicUnsafe accepts multi-segment input", () => {
   const bad = buildTwoSegmentBytes();
-  assert.throws(
-    () => openDynamicUnsafe(cpp, PrimitivesSchema, bad),
-    MultiSegmentMessageError,
-  );
+  const r = openDynamicUnsafe(cpp, PrimitivesSchema, bad);
+  assert.equal(r.get("u8"), 0);
 });
 
-test("openPrimitives (codegen, safe) rejects multi-segment input", () => {
+test("openPrimitives (codegen, safe) accepts multi-segment input", () => {
   const bad = buildTwoSegmentBytes();
-  assert.throws(
-    () => openPrimitives(cpp, bad),
-    MultiSegmentMessageError,
-  );
+  const r = openPrimitives(cpp, bad);
+  assert.equal(r.u8, 0);
+  r.dispose();
 });
 
-test("openPrimitivesUnsafe (codegen, unsafe) rejects multi-segment input", () => {
+test("openPrimitivesUnsafe (codegen, unsafe) accepts multi-segment input", () => {
   const bad = buildTwoSegmentBytes();
-  assert.throws(
-    () => openPrimitivesUnsafe(cpp, bad),
-    MultiSegmentMessageError,
-  );
+  const r = openPrimitivesUnsafe(cpp, bad);
+  assert.equal(r.u8, 0);
 });
 
 // ---- Malformed framed headers ----------------------------------------------
@@ -193,19 +178,15 @@ test("validateSingleSegment rejects unaligned (non-multiple-of-8) lengths", () =
   );
 });
 
-test("validateSingleSegment rejects header/payload size mismatch", () => {
-  // 16-byte buffer: header says single-segment with 2 words of payload,
-  // but the buffer contains exactly 1 word of payload (16 - 8 = 8 bytes).
+test("validateSingleSegment leaves header/payload size checks to C++", () => {
+  // JS only does cheap shape checks now; C++ FlatArrayMessageReader is the
+  // framing authority. This buffer passes the JS helper but will fail if a
+  // public open asks C++ to decode it.
   const buf = new Uint8Array(16);
   const dv = new DataView(buf.buffer);
   dv.setUint32(0, 0, true);  // single-segment
   dv.setUint32(4, 2, true);  // claim 2 words but we only have 1
-  assert.throws(
-    () => validateSingleSegment(buf),
-    (err) =>
-      err instanceof MultiSegmentMessageError &&
-      /declares 2 segment words but payload contains 1/.test(err.message),
-  );
+  assert.equal(validateSingleSegment(buf), true);
 });
 
 test("validateSingleSegment accepts an empty single-segment message", () => {

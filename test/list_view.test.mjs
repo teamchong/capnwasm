@@ -210,15 +210,15 @@ test("List(Data): at(i) reads pointer-list elements without cursor growth", () =
   r.dispose();
 });
 
-test("view(): unsafe / cursor-only readers throw a clear error", () => {
-  // openProbeUnsafe doesn't carry _msgEnd, so view() can't safely return
-  // an aliased typed array — the cursor path doesn't expose stable bytes
-  // for the lifetime view() promises. Throwing surfaces the misuse
-  // immediately instead of returning a view that races with the next
-  // open call.
+test("view(): unsafe reader can view scratch bytes for its unsafe lifetime", () => {
+  // Unsafe readers are valid only until the next open on the same CapnCpp.
+  // They now carry segment-0 bounds too, so view() can return an alias over
+  // the scratch buffer with the same lifetime caveat as unsafe field reads.
   const bytes = buildBytes({ f64s: [1, 2, 3] });
   const r = mod.openProbeUnsafe(cpp, bytes);
-  assert.throws(() => r.f64s.view(), /view\(\)/, "unsafe reader's view() throws");
+  const v = r.f64s.view();
+  assert.ok(v instanceof Float64Array);
+  assert.deepEqual(Array.from(v), [1, 2, 3]);
 });
 
 test("view(): can be passed to typed-array consumers (Math.max, reduce) at native speed", () => {

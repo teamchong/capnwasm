@@ -511,13 +511,15 @@ function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
   if (!unsafe && typeof cpp._allocMessage === "function") {
     const msg = cpp._allocMessage(bytes);
     const dataPtr = cpp._openAnyMessage(msg);
-    return { dataPtr, slotIdx: 0, slotHandle: null, msg, gen: cpp._generation };
+    return { dataPtr, slotIdx: 0, slotHandle: null, msg, msgStart: msg.ptr + (msg.segment0Start ?? 8), msgEnd: msg.ptr + (msg.segment0End ?? msg.len), gen: cpp._generation };
   }
   if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
   cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
   const dataPtr = cpp._exports.cpp_any_open(bytes.length);
   if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();
-  return { dataPtr, slotIdx: 0, slotHandle: null, msg: null, gen: cpp._generation ?? 0 };
+  const msgStart = cpp._exports.cpp_any_msg_start?.() >>> 0;
+  const msgEnd = cpp._exports.cpp_any_msg_end?.() >>> 0;
+  return { dataPtr, slotIdx: 0, slotHandle: null, msg: null, msgStart, msgEnd, gen: cpp._generation ?? 0 };
 }
 function _ensureCapnwasmReader(reader) {
   if (reader._disposed) throw new DisposedReaderError();

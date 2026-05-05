@@ -863,6 +863,8 @@ struct ReaderSlot {
   capnp::FlatArrayMessageReader* reader;
   AnyStackSlot stack[ANY_STACK_DEPTH];
   int32_t stack_top;
+  uint32_t msg_start;
+  uint32_t msg_end;
   capnp::AnyList::Reader list_reader;
   bool list_reader_set;
   bool in_use;
@@ -933,6 +935,8 @@ static uint32_t open_into_slot(uint32_t slot_idx, const uint8_t* bytes_ptr, uint
   s.reader = new (storage) capnp::FlatArrayMessageReader(words);
   s.stack_top = 0;
   s.stack[0].r = s.reader->getRoot<capnp::AnyPointer>().getAs<capnp::AnyStruct>();
+  s.msg_start = reinterpret_cast<uint32_t>(bytes_ptr + 8);
+  s.msg_end = reinterpret_cast<uint32_t>(s.reader->getEnd());
   s.list_reader_set = false;
   // Mirror into the live globals if this slot is currently active.
   if (active_slot_idx == static_cast<int32_t>(slot_idx)) {
@@ -978,6 +982,8 @@ void cpp_any_release_slot(uint32_t slot_idx) {
     }
     any_stack_top = -1;
     any_list_reader_set = false;
+    s.msg_start = 0;
+    s.msg_end = 0;
     active_slot_idx = 0;
     load_active_from(reader_slots[0]);
   } else {
@@ -986,6 +992,8 @@ void cpp_any_release_slot(uint32_t slot_idx) {
       s.reader = nullptr;
     }
     s.stack_top = -1;
+    s.msg_start = 0;
+    s.msg_end = 0;
     s.list_reader_set = false;
   }
   s.in_use = false;
@@ -1031,6 +1039,28 @@ uint32_t cpp_any_slot_data_ptr(uint32_t slot_idx) {
   ReaderSlot& s = reader_slots[slot_idx];
   if (!s.reader || s.stack_top < 0) return 0;
   return reinterpret_cast<uint32_t>(s.stack[0].r.getDataSection().begin());
+}
+
+uint32_t cpp_any_slot_msg_start(uint32_t slot_idx) {
+  if (slot_idx >= READER_SLOT_COUNT) return 0;
+  ReaderSlot& s = reader_slots[slot_idx];
+  return s.msg_start;
+}
+
+uint32_t cpp_any_slot_msg_end(uint32_t slot_idx) {
+  if (slot_idx >= READER_SLOT_COUNT) return 0;
+  ReaderSlot& s = reader_slots[slot_idx];
+  return s.msg_end;
+}
+
+uint32_t cpp_any_msg_start() {
+  if (active_slot_idx < 0 || active_slot_idx >= static_cast<int32_t>(READER_SLOT_COUNT)) return 0;
+  return reader_slots[active_slot_idx].msg_start;
+}
+
+uint32_t cpp_any_msg_end() {
+  if (active_slot_idx < 0 || active_slot_idx >= static_cast<int32_t>(READER_SLOT_COUNT)) return 0;
+  return reader_slots[active_slot_idx].msg_end;
 }
 
 uint32_t cpp_any_open_at(const uint8_t* bytes_ptr, uint32_t bytes_len) {

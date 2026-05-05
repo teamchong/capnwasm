@@ -191,11 +191,9 @@ test("Pointer at the very end of the buffer (no room for word1) returns undefine
   assert.equal(v, undefined, "truncated pointer slot must reject");
 });
 
-// ---- Single-segment ABI catches multi-segment hostile input ---------------
+// ---- Multi-segment framing is accepted ------------------------------------
 
-test("Open path rejects multi-segment input via M1 before reaching the decoder", () => {
-  // Hand-craft a multi-segment frame. This is the catch-everything net
-  // that prevents the decoder from ever seeing FAR pointers.
+test("Open path accepts a structurally valid multi-segment frame", () => {
   const u8 = new Uint8Array(32);
   const dv = new DataView(u8.buffer);
   dv.setUint32(0, 1, true);  // segmentCount - 1 = 1 -> 2 segments
@@ -204,11 +202,9 @@ test("Open path rejects multi-segment input via M1 before reaching the decoder",
   // padding word
   // segment data
   const SCHEMA = defineSchema({ x: { kind: "uint32", offset: 0 } }, { dataWords: 1, ptrWords: 0 });
-  assert.throws(
-    () => openDynamic(cpp, SCHEMA, u8),
-    (err) => err instanceof MultiSegmentMessageError,
-    "M1 must reject multi-segment before any decoder runs",
-  );
+  const r = openDynamic(cpp, SCHEMA, u8);
+  assert.equal(r.get("x"), 0);
+  r.dispose();
 });
 
 // ---- Random fuzz: throw bytes at openDynamic and confirm no escape -------
@@ -260,5 +256,4 @@ test("Random fuzz: 10000 short random buffers cause typed errors only, no wasm t
   // is doing something).
   assert.ok(typedErrors + traps + opens === 10_000, "every iteration accounted for");
 });
-
 
