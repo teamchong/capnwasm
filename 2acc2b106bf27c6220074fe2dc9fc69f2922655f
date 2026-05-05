@@ -1,0 +1,29 @@
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+bin/capnwasm.mjs
+  a40863a2008f4bc3 931-953,1803,1929,2913,2971-3018
+test/_fixtures/interop.capnp
+  a40863a2008f4bc3 1-47
+test/interop_alltypes.test.mjs
+  a40863a2008f4bc3 1-244
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "2acc2b106bf27c6220074fe2dc9fc69f2922655f",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 367,
+      "total_deletions": 57,
+      "accepted_lines": 367,
+      "overriden_lines": 0
+    }
+  }
+}
