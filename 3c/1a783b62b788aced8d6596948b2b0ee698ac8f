@@ -1,0 +1,41 @@
+web/dist/chat.html
+  a40863a2008f4bc3 64
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+web/dist/vs-capnweb.html
+  a40863a2008f4bc3 17,21
+bin/capnwasm.mjs
+  a40863a2008f4bc3 1066,1449-1544,1546,1953-1954,1961,1963,1965-1966,2161,2187
+web/dist/index.html
+  a40863a2008f4bc3 17,21
+web/dist/playground.html
+  a40863a2008f4bc3 17,20
+web/dist/assets/chat-CyqIWBoP.js
+  a40863a2008f4bc3 1-9
+web/dist/editor.html
+  a40863a2008f4bc3 9,12
+web/dist/render-bench.html
+  a40863a2008f4bc3 9,12
+web/dist/assets/users.capnp.gen-DXjK8Fdg.js
+  a40863a2008f4bc3 1-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "3c1a783b62b788aced8d6596948b2b0ee698ac8f",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 135,
+      "total_deletions": 30,
+      "accepted_lines": 135,
+      "overriden_lines": 0
+    }
+  }
+}
