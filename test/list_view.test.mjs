@@ -167,6 +167,23 @@ test("view(): mutating the view's bytes is visible to subsequent at(i) reads (al
   r.dispose();
 });
 
+test("view(): at(i) and view() refresh cached typed arrays after memory.grow", () => {
+  const values = [10, 20, 30, 40];
+  const bytes = buildBytes({ u32s: values });
+  const r = mod.openProbe(cpp, bytes);
+  const list = r.u32s;
+  const oldBuffer = cpp.memory.buffer;
+
+  cpp.memory.grow(1);
+  assert.notEqual(cpp.memory.buffer, oldBuffer, "memory.grow detaches the old buffer");
+
+  assert.equal(list.at(2), 30);
+  const v = list.view();
+  assert.equal(v.buffer, cpp.memory.buffer, "view() returns the refreshed wasm buffer");
+  assert.deepEqual(Array.from(v), values);
+  r.dispose();
+});
+
 test("view(): Int64 list returns BigInt64Array with BigInt elements", () => {
   const i64 = [0n, -1n, 1n, -(2n ** 50n), 2n ** 50n];
   const bytes = buildBytes({ i64s: i64 });

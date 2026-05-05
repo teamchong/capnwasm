@@ -2556,8 +2556,18 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
       // on the reader, so construct the view inline; that's still much
       // faster than the wasm-cursor reopen-per-element path.
       if (viewSpec.field) {
+        lines.push(`      let v = reader.${viewSpec.field}[_baseIdx + i];`);
+        lines.push(`      if (v !== undefined) return v;`);
+        lines.push(`      if (reader.${viewSpec.field}.buffer !== cpp.memory.buffer) {`);
+        lines.push(`        reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+        lines.push(`        reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
+        lines.push(`      }`);
         lines.push(`      return reader.${viewSpec.field}[_baseIdx + i];`);
       } else {
+        lines.push(`      if (reader._u8.buffer !== cpp.memory.buffer) {`);
+        lines.push(`        reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+        lines.push(`        reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
+        lines.push(`      }`);
         lines.push(`      return new ${viewSpec.ctor}(reader._u8.buffer, _baseByte, _count)[i];`);
       }
       lines.push(`    },`);
@@ -2567,8 +2577,16 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
       // form: zero allocation beyond the subarray descriptor. Otherwise
       // construct a fresh typed array; still O(1) and zero-copy.
       if (viewSpec.field) {
+        lines.push(`      if (reader.${viewSpec.field}.buffer !== cpp.memory.buffer) {`);
+        lines.push(`        reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+        lines.push(`        reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
+        lines.push(`      }`);
         lines.push(`      return reader.${viewSpec.field}.subarray(_baseIdx, _baseIdx + _count);`);
       } else {
+        lines.push(`      if (reader._u8.buffer !== cpp.memory.buffer) {`);
+        lines.push(`        reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+        lines.push(`        reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
+        lines.push(`      }`);
         lines.push(`      return new ${viewSpec.ctor}(reader._u8.buffer, _baseByte, _count);`);
       }
       lines.push(`    },`);
