@@ -3,25 +3,43 @@
 // cxa_exception.o). KJ requires C++ exceptions to compile but, in our
 // serialize/deserialize use, the throw paths only fire on malformed input.
 //
-// Why not real C++ exceptions on wasm?
+// Why trap-on-throw instead of real C++ exceptions through wasm-EH?
 //
-// LLVM 21 (shipped with zig 0.16) supports `-fwasm-exceptions` and emits
-// `try_table` opcodes for catch blocks, but the wasm backend's cleanup-pad
-// lowering can't select `cleanupret` when the thrown value has a non-trivial
-// destructor (the canonical case: `throw kj::Exception(...)` or
-// `throw std::runtime_error(...)`). Verified with a minimal repro on
-// 2025-05; the backend prints
-//   `fatal error: error in backend: Cannot select: cleanupret`
-// and aborts. Trivially-destructible exception types (raw int, pointer,
-// POD struct) lower fine.
+// EARLIER WRITE-UP CLAIMED THIS WAS BLOCKED ON LLVM 21'S WASM BACKEND
+// FAILING TO SELECT `cleanupret`. THAT WAS WRONG. The cleanupret backend
+// error fires only when the wasm CPU/feature mix doesn't include the
+// exception-handling proposal. Adding
+//   -mcpu=generic+exception_handling+reference_types
+// makes LLVM 21 (shipped with zig 0.16) compile `-fwasm-exceptions`
+// IR cleanly, including throws of objects with non-trivial destructors.
+// Verified end-to-end with `throw kj::Exception(...)` on 2025-05.
 //
-// Until LLVM fixes the wasm-EH cleanupret lowering, we keep the
-// trap-on-throw model: the compiler emits __cxa_throw / __cxa_begin_catch
-// references, our stubs map them to wasm `unreachable` traps, and JS
-// catches the resulting RuntimeError. Switching to real EH is then a
-// one-line build flip (`-fexceptions` -> `-fwasm-exceptions`) plus
-// linking zig's libcxxabi+libunwind sources (which exist as source under
-// `$ZIG_LIB/libcxxabi/src` and `$ZIG_LIB/libunwind/src/Unwind-wasm.c`).
+// What actually keeps real wasm-EH out of capnwasm today is the
+// integration work:
+//
+//   1. Build zig's libcxxabi sources (~12 .cpp files) with `-fwasm-exceptions`
+//      and link them into our wasm. These are vendored at
+//      $ZIG_LIB/libcxxabi/src; one file (cxa_personality.cpp) needs a
+//      patch to stub `__cxa_call_unexpected`'s body (the deprecated-EH
+//      branch the wasm backend can't lower).
+//   2. Compile zig's libunwind/src/Unwind-wasm.c for the
+//      `__wasm_lpad_context` / `_Unwind_CallPersonality` runtime helpers.
+//   3. Provide the `__cpp_exception` wasm tag. zig 0.17's wasm-ld
+//      auto-defines it; zig 0.16's wasm-ld errors out with
+//      "undefined tag symbol cannot be weak", so a switch to zig 0.17
+//      (or a manual tag-def assembly file) is required.
+//   4. Disable zig's automatic libc++/libcxxabi link with -nostdlib++
+//      since our locally-built variant would otherwise duplicate-define
+//      handler/typeinfo symbols.
+//   5. Wire the resulting EH-capable wasm into the existing build
+//      pipeline without breaking the slim/inlined/web outputs.
+//
+// All five steps are well-defined; estimated effort 1–2 days of focused
+// build-system work. They land as a follow-up batch when prioritized.
+//
+// Until then we keep the trap-on-throw model: the compiler emits
+// __cxa_throw / __cxa_begin_catch references, our stubs map them to wasm
+// `unreachable` traps, and JS catches the resulting RuntimeError.
 //
 // We use `__builtin_trap()` instead of `std::terminate()` because the
 // libc++abi terminate handler prints "libc++abi: terminating" to stderr
