@@ -1,0 +1,23 @@
+.github/workflows/build-wasm.yml
+  a40863a2008f4bc3 45-57,80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "c2540df74fc2d7246336f4c93cb588efa9491d5e",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 14,
+      "total_deletions": 16,
+      "accepted_lines": 14,
+      "overriden_lines": 0
+    }
+  }
+}
