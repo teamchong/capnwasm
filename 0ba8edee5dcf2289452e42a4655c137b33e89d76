@@ -1,0 +1,59 @@
+js/index.mjs
+  a40863a2008f4bc3 9
+web/dist/chat.html
+  a40863a2008f4bc3 64,66
+dist/inlined.mjs
+  a40863a2008f4bc3 75-80,83,87-91,110,112,117,530-533,535-559,565
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2,43-45,49-51,55-57,61
+js/cpp_loader.mjs
+  a40863a2008f4bc3 12-17,20,24-28,47,49,54,467-470,472-496
+web/dist/render-bench.html
+  a40863a2008f4bc3 9,11
+web/dist/editor.html
+  a40863a2008f4bc3 9,11
+web/dist/assets/browser-DyenM-Cy.js
+  a40863a2008f4bc3 1
+web/dist/vs-capnweb.html
+  a40863a2008f4bc3 17,19
+cpp/build.sh
+  a40863a2008f4bc3 89-91,108,193-194
+dist/cpp_loader.mjs
+  a40863a2008f4bc3 1
+web/dist/dynamic.html
+  a40863a2008f4bc3 20,22
+web/dist/index.html
+  a40863a2008f4bc3 17,19
+test/single_segment.test.mjs
+  a40863a2008f4bc3 203-204,207-208,210
+test/packed_encoding.test.mjs
+  a40863a2008f4bc3 1-45
+README.md
+  a40863a2008f4bc3 43
+cpp/wrapper.cpp
+  a40863a2008f4bc3 10,134-207
+web/dist/playground.html
+  a40863a2008f4bc3 17,19
+.github/workflows/test.yml
+  a40863a2008f4bc3 38-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "0ba8edee5dcf2289452e42a4655c137b33e89d76",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 1539,
+      "total_deletions": 1216,
+      "accepted_lines": 1539,
+      "overriden_lines": 0
+    }
+  }
+}
