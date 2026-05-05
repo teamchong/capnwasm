@@ -1,0 +1,57 @@
+web/dist/playground.html
+  a40863a2008f4bc3 17,19,25
+cpp/wrapper.cpp
+  a40863a2008f4bc3 21-24
+web/dist/dynamic.html
+  a40863a2008f4bc3 20,22
+cpp/eh_runtime.cpp
+  a40863a2008f4bc3 1-38
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2,43-45,49-51,55-57,61
+web/dist/chat.html
+  a40863a2008f4bc3 64,66
+web/dist/render-bench.html
+  a40863a2008f4bc3 9,11
+web/src/landing/style.css
+  a40863a2008f4bc3 200
+web/dist/vs-capnweb.html
+  a40863a2008f4bc3 17,19
+web/dist/assets/index-9EN__SEo.css
+  a40863a2008f4bc3 1
+cpp/build.sh
+  a40863a2008f4bc3 119-123,127,136-138,158,165-169,184-185,192,199
+test/wasm_eh.test.mjs
+  a40863a2008f4bc3 1-6
+web/src/playground/style.css
+  a40863a2008f4bc3 372-375
+web/dist/index.html
+  a40863a2008f4bc3 17,19,24
+web/dist/editor.html
+  a40863a2008f4bc3 9,11
+scripts/install-zig-eh.sh
+  a40863a2008f4bc3 4-7
+dist/inlined.mjs
+  a40863a2008f4bc3 615
+test/reader_options.test.mjs
+  a40863a2008f4bc3 6-8,31-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "f1ddb6dda1ac8133365b2c08e96a7cd09cecc310",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 1968,
+      "total_deletions": 3944,
+      "accepted_lines": 1968,
+      "overriden_lines": 0
+    }
+  }
+}
