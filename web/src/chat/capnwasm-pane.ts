@@ -208,9 +208,15 @@ async function setupRest(args: {
       await r.send({
         resultsReader: ChatMessageListReader,
         extract: (rdr: any) => {
-          const items = rdr.items;
+          const items = rdr.draft((p: any) => p.items.map((m: any) => ({
+            id: m.id,
+            author: m.author,
+            text: m.text,
+            ts: m.ts,
+            image: m.image,
+          })));
           for (let i = 0; i < items.length; i++) {
-            const m = items.at(i);
+            const m = items[i];
             const id = Number(m.id);
             const imageView = m.image as Uint8Array | undefined;
             const image = imageView && imageView.length > 0 ? new Uint8Array(imageView) : undefined;

@@ -142,8 +142,7 @@ hot loop. Example:
 
 ```js
 for (let i = 0; i < records.length; i++) {
-  const r = records.at(i);
-  acc += r.amount * r.fxRate;
+  acc += records.view()[i];
 }
 ```
 

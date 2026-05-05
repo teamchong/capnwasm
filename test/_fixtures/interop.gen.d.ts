@@ -29,13 +29,13 @@ export declare class AllTypesReader {
   readonly textField: string;
   readonly dataField: Uint8Array;
   readonly enumField: number;
-  readonly boolList: { readonly length: number; at(i: number): boolean | undefined; [Symbol.iterator](): IterableIterator<boolean> };
-  readonly int32List: { readonly length: number; at(i: number): number | undefined; view(): Int32Array; [Symbol.iterator](): IterableIterator<number> };
-  readonly uint64List: { readonly length: number; at(i: number): number | bigint | undefined; view(): BigUint64Array; [Symbol.iterator](): IterableIterator<number | bigint> };
-  readonly float64List: { readonly length: number; at(i: number): number | undefined; view(): Float64Array; [Symbol.iterator](): IterableIterator<number> };
-  readonly textList: { readonly length: number; at(i: number): string | undefined; [Symbol.iterator](): IterableIterator<string> };
+  readonly boolList: { readonly length: number; [Symbol.iterator](): IterableIterator<boolean> };
+  readonly int32List: { readonly length: number; view(): Int32Array; [Symbol.iterator](): IterableIterator<number> };
+  readonly uint64List: { readonly length: number; view(): BigUint64Array; [Symbol.iterator](): IterableIterator<number | bigint> };
+  readonly float64List: { readonly length: number; view(): Float64Array; [Symbol.iterator](): IterableIterator<number> };
+  readonly textList: { readonly length: number; [Symbol.iterator](): IterableIterator<string> };
   readonly nested: TagReader;
-  readonly tagList: { readonly length: number; at(i: number): TagReader | undefined; [Symbol.iterator](): IterableIterator<TagReader> };
+  readonly tagList: { readonly length: number };
   toObject(): {
     boolField: boolean;
     int8Field: number;
@@ -51,13 +51,13 @@ export declare class AllTypesReader {
     textField: string;
     dataField: Uint8Array;
     enumField: number;
-    boolList: { readonly length: number; at(i: number): boolean | undefined; [Symbol.iterator](): IterableIterator<boolean> };
-    int32List: { readonly length: number; at(i: number): number | undefined; view(): Int32Array; [Symbol.iterator](): IterableIterator<number> };
-    uint64List: { readonly length: number; at(i: number): number | bigint | undefined; view(): BigUint64Array; [Symbol.iterator](): IterableIterator<number | bigint> };
-    float64List: { readonly length: number; at(i: number): number | undefined; view(): Float64Array; [Symbol.iterator](): IterableIterator<number> };
-    textList: { readonly length: number; at(i: number): string | undefined; [Symbol.iterator](): IterableIterator<string> };
+    boolList: { readonly length: number; [Symbol.iterator](): IterableIterator<boolean> };
+    int32List: { readonly length: number; view(): Int32Array; [Symbol.iterator](): IterableIterator<number> };
+    uint64List: { readonly length: number; view(): BigUint64Array; [Symbol.iterator](): IterableIterator<number | bigint> };
+    float64List: { readonly length: number; view(): Float64Array; [Symbol.iterator](): IterableIterator<number> };
+    textList: { readonly length: number; [Symbol.iterator](): IterableIterator<string> };
     nested: TagReader;
-    tagList: { readonly length: number; at(i: number): TagReader | undefined; [Symbol.iterator](): IterableIterator<TagReader> };
+    tagList: { readonly length: number };
   };
   draft<T>(fn: (draft: any) => T): T;
 }

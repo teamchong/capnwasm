@@ -9,6 +9,32 @@ function decodeAscii(bytes) {
 function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
   if (!msgEnd) return undefined;
   const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  return _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);
+}
+
+function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  return _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);
+}
+
+function _jsReadListPointerPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return { elementsBase: 0, count: 0 };
+  if ((word0 & 3) !== 1) return undefined;
+  if ((word1 & 7) !== 6) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const count = word1 >>> 3;
+  const elementsBase = ptrAddr + 8 + offset * 8;
+  if (elementsBase < msgStart || elementsBase + count * 8 > msgEnd) return undefined;
+  return { elementsBase, count };
+}
+
+function _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd) {
   if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
   const word0 = dv.getUint32(ptrAddr, true);
   const word1 = dv.getUint32(ptrAddr + 4, true);
@@ -25,9 +51,7 @@ function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) 
   return SHARED_TEXT_DECODER.decode(u8.subarray(target, target + len));
 }
 
-function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
-  if (!msgEnd) return undefined;
-  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+function _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd) {
   if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
   const word0 = dv.getUint32(ptrAddr, true);
   const word1 = dv.getUint32(ptrAddr + 4, true);
@@ -61,6 +85,23 @@ function _jsReadListPrimPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgE
   return { elementsBase, count: elementCount };
 }
 
+function _jsReadStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return null;
+  if ((word0 & 3) !== 0) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const dWords = word1 & 0xffff;
+  const pWords = (word1 >>> 16) & 0xffff;
+  const target = ptrAddr + 8 + offset * 8;
+  const totalBytes = (dWords + pWords) * 8;
+  if (target < msgStart || target + totalBytes > msgEnd) return undefined;
+  return { dataPtr: target, dataWords: dWords, ptrWords: pWords };
+}
+
 function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
   if (!msgEnd) return undefined;
   const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
@@ -84,6 +125,69 @@ function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, ms
   const elementsBase = target + 8;
   if (elementsBase + elementCount * wordsPerElement * 8 > msgEnd) return undefined;
   return { elementsBase, count: elementCount, dataWords: tagDataWords, ptrWords: tagPtrWords };
+}
+
+class _AnyPointerReadHandle {
+  constructor(parent, parentDataWords, ptrIndex) {
+    this._parent = parent;
+    this._parentDataWords = parentDataWords;
+    this._ptrIndex = ptrIndex;
+  }
+  /** Returns the AnyPointer slot interpreted as Text, or null when the slot is null. */
+  asText() {
+    _ensureCapnwasmReader(this._parent);
+    const p = this._parent;
+    const v = _jsReadTextPtr(p._u8, p._dv, p._dataPtr, this._parentDataWords, this._ptrIndex, p._msgStart, p._msgEnd);
+    if (v !== undefined) return v ?? "";
+    const len = p._cpp._exports.cpp_any_text_at(this._ptrIndex);
+    if (len === 0) return "";
+    const out = p._cpp._outPtr;
+    return decodeAscii(p._cpp._u8.subarray(out, out + len));
+  }
+  /** Returns the AnyPointer slot as a Uint8Array (Data), or an empty array. */
+  asData() {
+    _ensureCapnwasmReader(this._parent);
+    const p = this._parent;
+    const v = _jsReadDataPtr(p._u8, p._dv, p._dataPtr, this._parentDataWords, this._ptrIndex, p._msgStart, p._msgEnd);
+    if (v !== undefined) return v ?? new Uint8Array(0);
+    const len = p._cpp._exports.cpp_any_data_at(this._ptrIndex);
+    const out = p._cpp._outPtr;
+    return p._cpp._u8.slice(out, out + len);
+  }
+  /** Decode the slot as a struct of the given Reader class. Pass the codegen reader class. */
+  asStruct(ReaderClass) {
+    _ensureCapnwasmReader(this._parent);
+    const p = this._parent;
+    const cpp = p._cpp;
+    const _msgStart = p._msgStart, _msgEnd = p._msgEnd;
+    const rebind = () => {
+      _ensureCapnwasmReader(p);
+      cpp._exports.cpp_any_slot_reset_root?.();
+      cpp._exports.cpp_any_enter_struct(this._ptrIndex);
+      cpp._bumpGeneration();
+    };
+    if (_msgEnd) {
+      const desc = _jsReadStructPtr(p._u8, p._dv, p._dataPtr, this._parentDataWords, this._ptrIndex, _msgStart, _msgEnd);
+      if (desc !== undefined) {
+        const dp = desc === null ? 0 : desc.dataPtr;
+        return new ReaderClass(cpp, dp, {
+          slotIdx: p._slotIdx,
+          msgStart: _msgStart,
+          msgEnd: _msgEnd,
+          gen: -1,
+          parent: p,
+          rebind,
+        });
+      }
+    }
+    rebind();
+    return new ReaderClass(cpp, 0, {
+      msg: p._msg,
+      slotIdx: p._slotIdx,
+      gen: cpp._generation ?? 0,
+      rebind,
+    });
+  }
 }
 
 const _F32_VIEW_BUF = new ArrayBuffer(4);
@@ -171,6 +275,8 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
   // and shaves ~30% off list-1000 materialization.
   const PAYLOAD_BREAK = new Set(["uint64", "int64", "float64", "data"]);
   const isTextRunMember = (i) => descs[i] && descs[i].type === "text";
+  const sharedTextEligible = descs.some((d) => d && d.type === "text") &&
+    descs.every((d) => d && !PAYLOAD_BREAK.has(d.type));
   const textBatch = new Array(cols).fill(null);
   for (let i = 0; i < cols; i++) {
     if (!isTextRunMember(i) || textBatch[i] !== null) continue;
@@ -203,6 +309,23 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
   out.push(`const arr = new Array(limit - start);`);
   if (filter) out.push(`let arrIdx = 0;`);
   out.push(`let readPos = 8 + rows * ${rowStride};`);
+  if (sharedTextEligible) {
+    // If this projection's payload section contains only text bytes (no data
+    // blobs or 64-bit scalar payloads) and those bytes are ASCII, decode the
+    // whole payload once and slice substrings by byte offset. For non-ASCII,
+    // fall back to the existing per-field decode so UTF-8 byte offsets never
+    // get mistaken for JS string indices.
+    out.push(`const _payloadStart = readPos;`);
+    out.push(`let _sharedText = null;`);
+    out.push(`{`);
+    out.push(`  const _payloadEnd = dv.byteLength;`);
+    out.push(`  let _ascii = true;`);
+    out.push(`  for (let _p = _payloadStart; _p < _payloadEnd; _p++) {`);
+    out.push(`    if (u8[out + _p] & 0x80) { _ascii = false; break; }`);
+    out.push(`  }`);
+    out.push(`  if (_ascii) _sharedText = TD.decode(u8.subarray(out + _payloadStart, out + _payloadEnd));`);
+    out.push(`}`);
+  }
   // Skip phase: when start > 0 we walk rows [0, start) advancing readPos by
   // the payload size of each row but never materializing. Each text/data
   // field contributes its header value (or 0 for missing); each
@@ -258,7 +381,15 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
       }
       const totalExpr = batch.members.map((m) => `_b${m}`).join(" + ");
       out.push(`    const _total = ${totalExpr};`);
-      out.push(`    const _blob = _total === 0 ? "" : TD.decode(u8.subarray(out + readPos, out + readPos + _total));`);
+      if (sharedTextEligible) {
+        out.push(`    let _canSlice = _sharedText !== null;`);
+        out.push(`    if (!_canSlice) { _canSlice = true; for (let _p = readPos; _p < readPos + _total; _p++) { if (u8[out + _p] & 0x80) { _canSlice = false; break; } } }`);
+        out.push(`    const _blob = _total === 0 ? "" : (_sharedText !== null ? _sharedText.substring(readPos - _payloadStart, readPos - _payloadStart + _total) : (_canSlice ? TD.decode(u8.subarray(out + readPos, out + readPos + _total)) : ""));`);
+      } else {
+        out.push(`    let _canSlice = true;`);
+        out.push(`    for (let _p = readPos; _p < readPos + _total; _p++) { if (u8[out + _p] & 0x80) { _canSlice = false; break; } }`);
+        out.push(`    const _blob = _total === 0 ? "" : (_canSlice ? TD.decode(u8.subarray(out + readPos, out + readPos + _total)) : "");`);
+      }
       // Walk substrings.
       let cumExpr = "0";
       for (let p = 0; p < batch.total; p++) {
@@ -266,7 +397,7 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
         const startExpr = cumExpr;
         const endExpr = `${cumExpr} + _b${m}`;
         out.push(
-          `    _v${m} = _h${m} === 0xFFFFFFFF ? undefined : _h${m} === 0 ? "" : _blob.substring(${startExpr}, ${endExpr});`,
+          `    _v${m} = _h${m} === 0xFFFFFFFF ? undefined : _h${m} === 0 ? "" : (_canSlice ? _blob.substring(${startExpr}, ${endExpr}) : TD.decode(u8.subarray(out + readPos + ${startExpr}, out + readPos + ${endExpr})));`,
         );
         cumExpr = endExpr;
       }
@@ -285,7 +416,11 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
         out.push(`  { const _h = dv.getUint32(${headerOff}, true);`);
         out.push(`    if (_h === 0xFFFFFFFF) _v${col} = undefined;`);
         out.push(`    else if (_h === 0) _v${col} = "";`);
-        out.push(`    else { _v${col} = TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }`);
+        if (sharedTextEligible) {
+          out.push(`    else { _v${col} = _sharedText !== null ? _sharedText.substring(readPos - _payloadStart, readPos - _payloadStart + _h) : TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }`);
+        } else {
+          out.push(`    else { _v${col} = TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }`);
+        }
         break;
       case "data":
         out.push(`  let _v${col};`);
@@ -482,13 +617,15 @@ function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
   if (!unsafe && typeof cpp._allocMessage === "function") {
     const msg = cpp._allocMessage(bytes);
     const dataPtr = cpp._openAnyMessage(msg);
-    return { dataPtr, slotIdx: 0, slotHandle: null, msg, gen: cpp._generation };
+    return { dataPtr, slotIdx: 0, slotHandle: null, msg, msgStart: msg.ptr + (msg.segment0Start ?? 8), msgEnd: msg.ptr + (msg.segment0End ?? msg.len), gen: cpp._generation };
   }
   if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
   cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
   const dataPtr = cpp._exports.cpp_any_open(bytes.length);
   if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();
-  return { dataPtr, slotIdx: 0, slotHandle: null, msg: null, gen: cpp._generation ?? 0 };
+  const msgStart = cpp._exports.cpp_any_msg_start?.() >>> 0;
+  const msgEnd = cpp._exports.cpp_any_msg_end?.() >>> 0;
+  return { dataPtr, slotIdx: 0, slotHandle: null, msg: null, msgStart, msgEnd, gen: cpp._generation ?? 0 };
 }
 function _ensureCapnwasmReader(reader) {
   if (reader._disposed) throw new DisposedReaderError();
@@ -750,6 +887,7 @@ export class BigUserReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -4399,6 +4537,7 @@ export class BigUserBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set field0(value) {
@@ -7008,3 +7147,4 @@ export function openBigUserUnsafe(cpp, bytes) {
 export function buildBigUser(cpp) {
   return new BigUserBuilder(cpp);
 }
+

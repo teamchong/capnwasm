@@ -3,9 +3,7 @@
 //   1. capnwasm view()  — typed-array view over wasm.memory.buffer,
 //      iterate with a native for loop. Zero copy on entry, V8 sees
 //      a Float64Array and uses its tight C++ sum loop.
-//   2. capnwasm at(i)   — per-element accessor through the slot pool.
-//      Each at(i) calls cpp_any_list_get_float64_bits + a bit
-//      reinterpret. One wasm boundary per element + per-call setup.
+//   2. capnwasm iterator — per-element iteration over the list view.
 //   3. JSON.parse + iter — parse the JSON-encoded array into a JS
 //      Array<number>, iterate. The all-in baseline if you weren't
 //      using capnwasm.
@@ -13,8 +11,8 @@
 // Result interpretation:
 //   - view() wins by far. Wire bytes are *already* the typed-array bytes;
 //     iteration is V8-native typed-array reads.
-//   - at(i) is the previous capnwasm story: correct, but pays a wasm
-//     call per element.
+//   - iterator is the compatibility/value-list story; view() is preferred
+//     when a typed-array view exists.
 //   - JSON.parse is the baseline. The whole-array parse cost dominates.
 
 import { load as loadWasm } from "../dist/inlined.mjs";
@@ -37,10 +35,9 @@ const SCHEMA = defineSchema({
   values: { kind: "listFloat64", slot: 0 },
 }, { dataWords: 0, ptrWords: 1 });
 
-// 8000 elements × 8 bytes = 64 KB, the M1 single-segment ceiling. Both
-// at(i) and view() share the same JS pointer-decode + typed-array
-// reads after the Trap 9 fix; bench at the largest payload that fits a
-// single segment so the comparison reflects the realistic upper bound.
+// 8000 elements × 8 bytes = 64 KB, the M1 single-segment ceiling. Bench at
+// the largest payload that fits a single segment so the comparison reflects
+// the realistic upper bound.
 const N = 8000;
 const values = new Array(N);
 for (let i = 0; i < N; i++) values[i] = Math.sin(i) * 1000 + i * 0.5;
@@ -81,11 +78,11 @@ const viewMedian = timed(() => {
   return sum;
 });
 
-const atMedian = timed(() => {
+const iterMedian = timed(() => {
   const r = openV(cpp, capnBytes);
   const list = r.values;
   let sum = 0;
-  for (let i = 0; i < list.length; i++) sum += list.at(i);
+  for (const value of list) sum += value;
   r.dispose();
   return sum;
 });
@@ -100,10 +97,10 @@ const jsonMedian = timed(() => {
 console.log(`Sum of ${N.toLocaleString()} Float64s. Median ns/op (5 trials × 150 ms after 200 ms warmup):`);
 console.log("");
 console.log(`  capnwasm view()  : ${fmt(viewMedian).padStart(10)}    (${capnBytes.length} bytes wire)`);
-console.log(`  capnwasm at(i)   : ${fmt(atMedian).padStart(10)}    (${capnBytes.length} bytes wire)`);
+console.log(`  capnwasm iterator: ${fmt(iterMedian).padStart(10)}    (${capnBytes.length} bytes wire)`);
 console.log(`  JSON.parse + sum : ${fmt(jsonMedian).padStart(10)}    (${jsonBytes.length} bytes wire)`);
 console.log("");
-console.log(`  view() vs at(i)  : ${(atMedian / viewMedian).toFixed(1)}x faster`);
+console.log(`  view() vs iter   : ${(iterMedian / viewMedian).toFixed(1)}x faster`);
 console.log(`  view() vs JSON   : ${(jsonMedian / viewMedian).toFixed(1)}x faster`);
 console.log(`  Wire size        : capnwasm ${(capnBytes.length / jsonBytes.length * 100).toFixed(0)}% of JSON`);
 

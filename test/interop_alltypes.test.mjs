@@ -146,11 +146,10 @@ function expectAllTypes(reader) {
   assert.deepEqual([...reader.textList], SAMPLE.textList);
   assert.equal(reader.nested.name, SAMPLE.nested.name);
   assert.equal(reader.nested.weight, SAMPLE.nested.weight);
-  for (let i = 0; i < SAMPLE.tagList.length; i++) {
-    const t = reader.tagList.at(i);
-    assert.equal(t.name, SAMPLE.tagList[i].name);
-    assert.equal(t.weight, SAMPLE.tagList[i].weight);
-  }
+  assert.deepEqual(
+    reader.draft((r) => r.tagList.map((t) => ({ name: t.name, weight: t.weight }))),
+    SAMPLE.tagList,
+  );
 }
 
 function asJsonValue(value) {

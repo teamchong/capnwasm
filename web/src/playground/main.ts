@@ -657,10 +657,10 @@ function runGeneralListScan(): GeneralRow {
   const jsonBytes = ENC.encode(JSON.stringify({ users }));
   const capnpUs = timed(() => {
     const r = openUserList(cpp, capnpBytes);
-    const rows = r.users;
+    const rows = r.draft((p: any) => p.users.map((u: any) => ({ name: u.name, active: u.active })));
     let sum = 0;
     for (let i = 0; i < rows.length; i++) {
-      const u = rows.at(i);
+      const u = rows[i];
       sum += u.name.length + (u.active ? 1 : 0);
     }
     r.dispose();

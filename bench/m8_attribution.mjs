@@ -114,10 +114,10 @@ const rows = [];
 
   const capnwasm = timed(() => {
     const r = openPost(cpp, capnBytes);
-    const list = r.tags;
+    const list = r.draft((p) => p.tags.map((t) => ({ name: t.name, weight: t.weight })));
     let sum = 0;
     for (let i = 0; i < list.length; i++) {
-      const t = list.at(i);
+      const t = list[i];
       sum += t.name.length + t.weight;
     }
     r.dispose();
@@ -132,7 +132,7 @@ const rows = [];
     return sum;
   });
   rows.push({
-    shape: "list (1000 rows, 2-field lazy read)",
+    shape: "list (1000 rows, 2-field draft projection)",
     capnwasm: capnwasm.median, json: json.median,
     capnBytes: capnBytes.length, jsonBytes: jsonBytes.length,
   });
@@ -174,7 +174,7 @@ const rows = [];
   console.log(`sparse:   capnwasm ${fmt(capnwasm.median)}/op (${capnBytes.length}B)  json ${fmt(json.median)}/op (${jsonBytes.length}B)  ratio ${(json.median / capnwasm.median).toFixed(2)}x`);
 }
 
-// ---- Shape 4: dense - read every field of every row (LAZY path) ---------
+// ---- Shape 4: dense - read every field of every row (draft path) --------
 
 {
   // Same shape as shape 2 but reading all rows + all fields, the
@@ -202,10 +202,10 @@ const rows = [];
 
   const capnwasm = timed(() => {
     const r = openPost(cpp, capnBytes);
-    const list = r.tags;
+    const list = r.draft((p) => p.tags.map((t) => ({ name: t.name, weight: t.weight })));
     let sum = 0;
     for (let i = 0; i < list.length; i++) {
-      const t = list.at(i);
+      const t = list[i];
       sum += t.name.length + t.weight;
     }
     r.dispose();

@@ -45,7 +45,7 @@ before(async () => {
 // pragmatic alternative is to construct the bytes by hand. We hand-craft
 // a Post with a List<UInt32> via the capnp wire format directly.
 
-test("List<UInt32>: length + at(i) + iteration over a hand-crafted message", () => {
+test("List<UInt32>: length + view() + iteration over a hand-crafted message", () => {
   // Construct a Post message with scores=[10, 20, 30] via raw bytes.
   // Layout (Cap'n Proto wire):
   //   segment 0 word 0: root pointer → struct {dataWords:0, ptrWords:4} at +0
@@ -117,21 +117,19 @@ test("List<UInt32>: length + at(i) + iteration over a hand-crafted message", () 
   const r = gen.openPost(cpp, bytes);
   const scores = r.scores;
   assert.equal(scores.length, 3);
-  assert.equal(scores.at(0), 10);
-  assert.equal(scores.at(1), 20);
-  assert.equal(scores.at(2), 30);
+  assert.deepEqual(Array.from(scores.view()), [10, 20, 30]);
   // iteration
   const collected = [];
   for (const s of scores) collected.push(s);
   assert.deepEqual(collected, [10, 20, 30]);
 });
 
-test("List<Struct>: length + at(i) returns typed Reader", async () => {
+test("List<Struct>: empty list reports length", async () => {
   // Use the capnp compiler in wasm to produce a real Post with tags.
   // We don't have a list-Builder yet, so we produce the bytes via
   // cpp_conformance_serialize style. But conformance schema isn't ours.
   // Instead, we just verify that the empty-list case works correctly
-  // (length === 0, at(0) returns undefined). Real list-of-struct
+  // (length === 0). Real list-of-struct
   // construction comes online with the list-Builder follow-up.
   const empty = new Uint8Array(16);
   new DataView(empty.buffer).setUint32(0, 0, true);
@@ -141,18 +139,9 @@ test("List<Struct>: length + at(i) returns typed Reader", async () => {
   const r = gen.openPost(cpp, empty);
   const tags = r.tags;
   assert.equal(tags.length, 0);
-  assert.equal(tags.at(0), undefined);
 });
 
-test("List<Struct>: at(i) reads correct fields for every element, not just at(0)", async () => {
-  // Regression for a codegen bug where at(0) worked but at(1+) returned
-  // zeros. Cause: at() called cpp_any_open_list relative to whatever
-  // happened to be on top of the any_stack; the previous at() call had
-  // pushed an element, so the second at() opened the list relative to
-  // that element instead of the parent. Fix: track per-wrapper "have I
-  // pushed?" flag and pop only when needed (so the first at() doesn't
-  // over-pop the parent in nested-struct cases).
-  //
+test("List<Struct>: draft map reads correct fields for every element", async () => {
   // Build a Post with tags = [{name:"alpha", weight:10}, {name:"beta",
   // weight:20}, {name:"gamma", weight:30}] via the dynamic builder, then
   // walk all three elements via the codegen Reader.
@@ -179,16 +168,7 @@ test("List<Struct>: at(i) reads correct fields for every element, not just at(0)
   const r = gen.openPost(cpp, bytes);
   const tags = r.tags;
   assert.equal(tags.length, 3);
-
-  // Walk each element, checking BOTH fields each time. If at(i) leaks
-  // cursor depth across calls, at(1+) will return empty/zero values.
-  const t0 = tags.at(0); assert.equal(t0.name, "alpha"); assert.equal(t0.weight, 10);
-  const t1 = tags.at(1); assert.equal(t1.name, "beta");  assert.equal(t1.weight, 20);
-  const t2 = tags.at(2); assert.equal(t2.name, "gamma"); assert.equal(t2.weight, 30);
-
-  // for..of iteration uses the same at(). Should also walk correctly.
-  const collected = [];
-  for (const t of tags) collected.push({ name: t.name, weight: t.weight });
+  const collected = r.draft((p) => p.tags.map((t) => ({ name: t.name, weight: t.weight })));
   assert.deepEqual(collected, [
     { name: "alpha", weight: 10 },
     { name: "beta",  weight: 20 },
@@ -196,7 +176,7 @@ test("List<Struct>: at(i) reads correct fields for every element, not just at(0)
   ]);
 });
 
-test("List<Text>: at(i) walks large lists without cursor growth", async () => {
+test("List<Text>: iterator walks large lists without cursor growth", async () => {
   const { defineSchema, buildDynamic } = await import(
     pathToFileURL(resolve(ROOT, "js", "dynamic.mjs")).href);
   const POST = defineSchema({
@@ -216,18 +196,12 @@ test("List<Text>: at(i) walks large lists without cursor growth", async () => {
   const list = r.authors;
   assert.equal(list.length, authors.length);
   let total = 0;
-  for (let i = 0; i < list.length; i++) total += list.at(i).length;
+  for (const author of list) total += author.length;
   assert.equal(total, authors.reduce((n, s) => n + s.length, 0));
   r.dispose();
 });
 
-test("List<Struct>: element reader survives another open on the same CapnCpp", async () => {
-  // The whole point of safe-by-default readers: a reader handed to user code
-  // must keep returning the same fields even if the runtime is asked to open
-  // another message in between. For list-element readers fetched via
-  // list.at(i), this requires the element reader's rebind closure to
-  // re-position the cursor onto the correct list element after the parent
-  // message is reopened. Regression for the inner-list rebind hazard.
+test("List<Struct>: draft projection survives another open on the same CapnCpp", async () => {
   const { defineSchema, buildDynamic } = await import(
     pathToFileURL(resolve(ROOT, "js", "dynamic.mjs")).href);
   const TAG = defineSchema({
@@ -257,10 +231,9 @@ test("List<Struct>: element reader survives another open on the same CapnCpp", a
   const otherBytes = b2.finalize();
 
   const post = gen.openPost(cpp, firstBytes);
-  const elem = post.tags.at(1);
-  // Capture before any interleave so we know the baseline.
-  assert.equal(elem.name, "beta");
-  assert.equal(elem.weight, 20);
+  const project = (p) => p.tags.map((t) => ({ name: t.name, weight: t.weight }));
+  assert.equal(post.draft(project)[1].name, "beta");
+  assert.equal(post.draft(project)[1].weight, 20);
 
   // Open a different message on the same cpp. This bumps generation and
   // detaches the C++ any_reader from the parent post. A naive
@@ -268,10 +241,8 @@ test("List<Struct>: element reader survives another open on the same CapnCpp", a
   const other = gen.openPost(cpp, otherBytes);
   assert.equal(other.title, "different post");
 
-  // Element reader must still report its original values: rebind closure
-  // re-opens parent's message, re-opens the parent list, re-enters element 1.
-  assert.equal(elem.name, "beta");
-  assert.equal(elem.weight, 20);
+  assert.equal(post.draft(project)[1].name, "beta");
+  assert.equal(post.draft(project)[1].weight, 20);
 
   // And the parent reader (post) is also still readable.
   assert.equal(post.title, "first post");

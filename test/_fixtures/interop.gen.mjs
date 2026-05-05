@@ -275,6 +275,8 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
   // and shaves ~30% off list-1000 materialization.
   const PAYLOAD_BREAK = new Set(["uint64", "int64", "float64", "data"]);
   const isTextRunMember = (i) => descs[i] && descs[i].type === "text";
+  const sharedTextEligible = descs.some((d) => d && d.type === "text") &&
+    descs.every((d) => d && !PAYLOAD_BREAK.has(d.type));
   const textBatch = new Array(cols).fill(null);
   for (let i = 0; i < cols; i++) {
     if (!isTextRunMember(i) || textBatch[i] !== null) continue;
@@ -307,6 +309,23 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
   out.push(`const arr = new Array(limit - start);`);
   if (filter) out.push(`let arrIdx = 0;`);
   out.push(`let readPos = 8 + rows * ${rowStride};`);
+  if (sharedTextEligible) {
+    // If this projection's payload section contains only text bytes (no data
+    // blobs or 64-bit scalar payloads) and those bytes are ASCII, decode the
+    // whole payload once and slice substrings by byte offset. For non-ASCII,
+    // fall back to the existing per-field decode so UTF-8 byte offsets never
+    // get mistaken for JS string indices.
+    out.push(`const _payloadStart = readPos;`);
+    out.push(`let _sharedText = null;`);
+    out.push(`{`);
+    out.push(`  const _payloadEnd = dv.byteLength;`);
+    out.push(`  let _ascii = true;`);
+    out.push(`  for (let _p = _payloadStart; _p < _payloadEnd; _p++) {`);
+    out.push(`    if (u8[out + _p] & 0x80) { _ascii = false; break; }`);
+    out.push(`  }`);
+    out.push(`  if (_ascii) _sharedText = TD.decode(u8.subarray(out + _payloadStart, out + _payloadEnd));`);
+    out.push(`}`);
+  }
   // Skip phase: when start > 0 we walk rows [0, start) advancing readPos by
   // the payload size of each row but never materializing. Each text/data
   // field contributes its header value (or 0 for missing); each
@@ -362,7 +381,15 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
       }
       const totalExpr = batch.members.map((m) => `_b${m}`).join(" + ");
       out.push(`    const _total = ${totalExpr};`);
-      out.push(`    const _blob = _total === 0 ? "" : TD.decode(u8.subarray(out + readPos, out + readPos + _total));`);
+      if (sharedTextEligible) {
+        out.push(`    let _canSlice = _sharedText !== null;`);
+        out.push(`    if (!_canSlice) { _canSlice = true; for (let _p = readPos; _p < readPos + _total; _p++) { if (u8[out + _p] & 0x80) { _canSlice = false; break; } } }`);
+        out.push(`    const _blob = _total === 0 ? "" : (_sharedText !== null ? _sharedText.substring(readPos - _payloadStart, readPos - _payloadStart + _total) : (_canSlice ? TD.decode(u8.subarray(out + readPos, out + readPos + _total)) : ""));`);
+      } else {
+        out.push(`    let _canSlice = true;`);
+        out.push(`    for (let _p = readPos; _p < readPos + _total; _p++) { if (u8[out + _p] & 0x80) { _canSlice = false; break; } }`);
+        out.push(`    const _blob = _total === 0 ? "" : (_canSlice ? TD.decode(u8.subarray(out + readPos, out + readPos + _total)) : "");`);
+      }
       // Walk substrings.
       let cumExpr = "0";
       for (let p = 0; p < batch.total; p++) {
@@ -370,7 +397,7 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
         const startExpr = cumExpr;
         const endExpr = `${cumExpr} + _b${m}`;
         out.push(
-          `    _v${m} = _h${m} === 0xFFFFFFFF ? undefined : _h${m} === 0 ? "" : _blob.substring(${startExpr}, ${endExpr});`,
+          `    _v${m} = _h${m} === 0xFFFFFFFF ? undefined : _h${m} === 0 ? "" : (_canSlice ? _blob.substring(${startExpr}, ${endExpr}) : TD.decode(u8.subarray(out + readPos + ${startExpr}, out + readPos + ${endExpr})));`,
         );
         cumExpr = endExpr;
       }
@@ -389,7 +416,11 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
         out.push(`  { const _h = dv.getUint32(${headerOff}, true);`);
         out.push(`    if (_h === 0xFFFFFFFF) _v${col} = undefined;`);
         out.push(`    else if (_h === 0) _v${col} = "";`);
-        out.push(`    else { _v${col} = TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }`);
+        if (sharedTextEligible) {
+          out.push(`    else { _v${col} = _sharedText !== null ? _sharedText.substring(readPos - _payloadStart, readPos - _payloadStart + _h) : TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }`);
+        } else {
+          out.push(`    else { _v${col} = TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }`);
+        }
         break;
       case "data":
         out.push(`  let _v${col};`);
@@ -1046,13 +1077,13 @@ export class AllTypesReader {
     const size = cpp._exports.cpp_any_open_list(2);
     return {
       length: size,
-      at(i) {
-        if (i < 0 || i >= size) return undefined;
-        _ensureCapnwasmReader(reader);
-        cpp._exports.cpp_any_open_list(2);
-        return cpp._exports.cpp_any_list_get_bool(i) === 1;
+      *[Symbol.iterator]() {
+        for (let i = 0; i < size; i++) {
+          _ensureCapnwasmReader(reader);
+          cpp._exports.cpp_any_open_list(2);
+          yield cpp._exports.cpp_any_list_get_bool(i) === 1;
+        }
       },
-      *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
     };
   }
   get int32List() {
@@ -1070,17 +1101,6 @@ export class AllTypesReader {
       const _baseIdx = _baseByte >>> 2;
       return {
         length: _count,
-        at(i) {
-          if (i < 0 || i >= _count) return undefined;
-          let v = reader._i32[_baseIdx + i];
-          if (v !== undefined) return v;
-          if (reader._i32.buffer !== cpp.memory.buffer) {
-            reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
-            reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
-          }
-          return reader._i32[_baseIdx + i];
-        },
-        *[Symbol.iterator]() { for (let i = 0; i < _count; i++) yield this.at(i); },
         view() {
           if (reader._i32.buffer !== cpp.memory.buffer) {
             reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -1088,19 +1108,20 @@ export class AllTypesReader {
           }
           return reader._i32.subarray(_baseIdx, _baseIdx + _count);
         },
+        *[Symbol.iterator]() { yield* this.view(); },
       };
     }
     // Cursor-based fallback: unsafe reader, no _msgEnd, or pointer decode failed.
     const size = cpp._exports.cpp_any_open_list(3);
     return {
       length: size,
-      at(i) {
-        if (i < 0 || i >= size) return undefined;
-        _ensureCapnwasmReader(reader);
-        cpp._exports.cpp_any_open_list(3);
-        return cpp._exports.cpp_any_list_get_uint32(i) | 0;
+      *[Symbol.iterator]() {
+        for (let i = 0; i < size; i++) {
+          _ensureCapnwasmReader(reader);
+          cpp._exports.cpp_any_open_list(3);
+          yield cpp._exports.cpp_any_list_get_uint32(i) | 0;
+        }
       },
-      *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
       view() { throw new Error("view() requires a slot-pool reader; got an unsafe / cursor-only reader"); },
     };
   }
@@ -1119,15 +1140,6 @@ export class AllTypesReader {
       const _baseIdx = _baseByte >>> 3;
       return {
         length: _count,
-        at(i) {
-          if (i < 0 || i >= _count) return undefined;
-          if (reader._u8.buffer !== cpp.memory.buffer) {
-            reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
-            reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
-          }
-          return new BigUint64Array(reader._u8.buffer, _baseByte, _count)[i];
-        },
-        *[Symbol.iterator]() { for (let i = 0; i < _count; i++) yield this.at(i); },
         view() {
           if (reader._u8.buffer !== cpp.memory.buffer) {
             reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -1135,19 +1147,20 @@ export class AllTypesReader {
           }
           return new BigUint64Array(reader._u8.buffer, _baseByte, _count);
         },
+        *[Symbol.iterator]() { yield* this.view(); },
       };
     }
     // Cursor-based fallback: unsafe reader, no _msgEnd, or pointer decode failed.
     const size = cpp._exports.cpp_any_open_list(4);
     return {
       length: size,
-      at(i) {
-        if (i < 0 || i >= size) return undefined;
-        _ensureCapnwasmReader(reader);
-        cpp._exports.cpp_any_open_list(4);
-        return cpp._exports.cpp_any_list_get_uint64(i);
+      *[Symbol.iterator]() {
+        for (let i = 0; i < size; i++) {
+          _ensureCapnwasmReader(reader);
+          cpp._exports.cpp_any_open_list(4);
+          yield cpp._exports.cpp_any_list_get_uint64(i);
+        }
       },
-      *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
       view() { throw new Error("view() requires a slot-pool reader; got an unsafe / cursor-only reader"); },
     };
   }
@@ -1166,17 +1179,6 @@ export class AllTypesReader {
       const _baseIdx = _baseByte >>> 3;
       return {
         length: _count,
-        at(i) {
-          if (i < 0 || i >= _count) return undefined;
-          let v = reader._f64[_baseIdx + i];
-          if (v !== undefined) return v;
-          if (reader._f64.buffer !== cpp.memory.buffer) {
-            reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
-            reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
-          }
-          return reader._f64[_baseIdx + i];
-        },
-        *[Symbol.iterator]() { for (let i = 0; i < _count; i++) yield this.at(i); },
         view() {
           if (reader._f64.buffer !== cpp.memory.buffer) {
             reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
@@ -1184,19 +1186,20 @@ export class AllTypesReader {
           }
           return reader._f64.subarray(_baseIdx, _baseIdx + _count);
         },
+        *[Symbol.iterator]() { yield* this.view(); },
       };
     }
     // Cursor-based fallback: unsafe reader, no _msgEnd, or pointer decode failed.
     const size = cpp._exports.cpp_any_open_list(5);
     return {
       length: size,
-      at(i) {
-        if (i < 0 || i >= size) return undefined;
-        _ensureCapnwasmReader(reader);
-        cpp._exports.cpp_any_open_list(5);
-        return ((bits) => { _F64_VIEW_U32[0] = Number(bits & 0xFFFFFFFFn) >>> 0; _F64_VIEW_U32[1] = Number(bits >> 32n) >>> 0; return _F64_VIEW_F64[0]; })(cpp._exports.cpp_any_list_get_float64_bits(i));
+      *[Symbol.iterator]() {
+        for (let i = 0; i < size; i++) {
+          _ensureCapnwasmReader(reader);
+          cpp._exports.cpp_any_open_list(5);
+          yield ((bits) => { _F64_VIEW_U32[0] = Number(bits & 0xFFFFFFFFn) >>> 0; _F64_VIEW_U32[1] = Number(bits >> 32n) >>> 0; return _F64_VIEW_F64[0]; })(cpp._exports.cpp_any_list_get_float64_bits(i));
+        }
       },
-      *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
       view() { throw new Error("view() requires a slot-pool reader; got an unsafe / cursor-only reader"); },
     };
   }
@@ -1218,37 +1221,37 @@ export class AllTypesReader {
       const _baseByte = _desc.elementsBase;
       return {
         length: _count,
-        at(i) {
-          if (i < 0 || i >= _count) return undefined;
+        *[Symbol.iterator]() {
+          for (let i = 0; i < _count; i++) {
           if (reader._u8.buffer !== cpp.memory.buffer) {
             reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
             reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
           }
           const v = _jsReadTextPtrAt(reader._u8, reader._dv, _baseByte + i * 8, _msgStart, _msgEnd);
-          if (v !== undefined) return v ?? "";
+          if (v !== undefined) { yield v ?? ""; continue; }
           _ensureCapnwasmReader(reader);
           cpp._exports.cpp_any_open_list(6);
           const len = cpp._exports.cpp_any_list_get_text(i);
-          if (len === 0) return "";
+          if (len === 0) { yield ""; continue; }
           const out = cpp._outPtr;
-          return decodeAscii(cpp._u8.subarray(out, out + len));
+          yield decodeAscii(cpp._u8.subarray(out, out + len));
+          }
         },
-        *[Symbol.iterator]() { for (let i = 0; i < _count; i++) yield this.at(i); },
       };
     }
     const size = cpp._exports.cpp_any_open_list(6);
     return {
       length: size,
-      at(i) {
-        if (i < 0 || i >= size) return undefined;
-        _ensureCapnwasmReader(reader);
-        cpp._exports.cpp_any_open_list(6);
+      *[Symbol.iterator]() {
+        for (let i = 0; i < size; i++) {
+          _ensureCapnwasmReader(reader);
+          cpp._exports.cpp_any_open_list(6);
         const len = cpp._exports.cpp_any_list_get_text(i);
-        if (len === 0) return "";
+          if (len === 0) { yield ""; continue; }
         const out = cpp._outPtr;
-        return decodeAscii(cpp._u8.subarray(out, out + len));
+          yield decodeAscii(cpp._u8.subarray(out, out + len));
+        }
       },
-      *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
     };
   }
   get nested() {
@@ -1308,37 +1311,12 @@ export class AllTypesReader {
     if (_listDesc && _listDesc !== undefined) {
       return {
         length: _listDesc.count,
-        at(i) {
-          if (i < 0 || i >= _listDesc.count) return undefined;
-          const elemDataPtr = _listDesc.elementsBase + i * (_listDesc.dataWords + _listDesc.ptrWords) * 8;
-          return new TagReader(cpp, elemDataPtr, {
-            slotIdx: reader._slotIdx,
-            msgStart: _msgStart,
-            msgEnd: _msgEnd,
-            gen: cpp._generation ?? 0,
-            parent: reader,
-            rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(8); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); },
-          });
-        },
-        *[Symbol.iterator]() { for (let i = 0; i < this.length; i++) yield this.at(i); },
       };
     }
     const size = cpp._exports.cpp_any_open_list(8);
     let pushed = false;
     return {
       length: size,
-      at(i) {
-        if (i < 0 || i >= size) return undefined;
-        _ensureCapnwasmReader(reader);
-        if (pushed) cpp._exports.cpp_any_leave_struct();
-        cpp._exports.cpp_any_open_list(8);
-        cpp._exports.cpp_any_enter_list_at(i);
-        cpp._bumpGeneration();
-        pushed = true;
-        const r = new TagReader(cpp, 0, { msg: reader._msg, slotIdx: reader._slotIdx, gen: cpp._generation ?? 0, rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(8); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); } });
-        return r;
-      },
-      *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
     };
   }
 
@@ -2001,3 +1979,4 @@ export function openInteropMessageUnsafe(cpp, bytes) {
 export function buildInteropMessage(cpp) {
   return new InteropMessageBuilder(cpp);
 }
+

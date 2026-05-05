@@ -122,6 +122,36 @@ struct UserList {
   });
 });
 
+test("draft: list projection keeps non-ASCII text correct", async () => {
+  const mod = await compile(`@0xb1f7c5e9c4e0214b;
+struct User {
+  name @0 :Text;
+  email @1 :Text;
+}
+struct UserList {
+  users @0 :List(User);
+}`);
+  const cpp = await load();
+  const User = defineSchema({
+    name: { kind: "text", slot: 0 },
+    email: { kind: "text", slot: 1 },
+  }, { dataWords: 0, ptrWords: 2 });
+  const UserList = defineSchema({
+    users: { kind: "listStruct", slot: 0, element: User },
+  }, { dataWords: 0, ptrWords: 1 });
+  const rows = [
+    { name: "Zoë", email: "zoe@example.com" },
+    { name: "李雷", email: "li@example.com" },
+  ];
+  const bytes = buildDynamic(cpp, UserList).fromObject({ users: rows }).finalize();
+
+  const projected = mod.openUserList(cpp, bytes).draft((r) => ({
+    rows: r.users.map((u) => ({ name: u.name, email: u.email })),
+  }));
+
+  assert.deepEqual(projected, { rows });
+});
+
 test("draft: supports nested list projection with normal map syntax", async () => {
   const mod = await compile(`@0xb1f7c5e9c4e02138;
 struct Comment {
@@ -476,9 +506,9 @@ struct Triple {
   assert.deepEqual(c, { c: 3 });
 });
 
-// ---- list element entry points ------------------------------------------
+// ---- list single-row projections ----------------------------------------
 
-test("draft: works on a list element reader fetched via list.at(i)", async () => {
+test("draft: single list row can be projected via map().slice()", async () => {
   const mod = await compile(`@0xb1f7c5e9c4e02141;
 struct User {
   id @0 :UInt64;
@@ -504,10 +534,8 @@ struct UserList {
     ],
   }).finalize();
 
-  // .at(i) returns a reader for that element. Calling .draft(...) directly
-  // on it (outside of a parent's .map()) is the same code path generated for
-  // every Reader class, so the element reader's draft() must work too.
-  const second = mod.openUserList(cpp, bytes).users.at(1);
-  const projected = second.draft((u) => ({ id: u.id, name: u.name }));
-  assert.deepEqual(projected, { id: 11, name: "Grace" });
+  const projected = mod.openUserList(cpp, bytes).draft((r) =>
+    r.users.map((u) => ({ id: u.id, name: u.name })).slice(1, 2),
+  );
+  assert.deepEqual(projected, [{ id: 11, name: "Grace" }]);
 });

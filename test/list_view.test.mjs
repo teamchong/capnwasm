@@ -9,10 +9,10 @@
 // changes.
 //
 // What this test asserts, in order of importance:
-//   1. Element values match per-index at(i) reads (correctness).
+//   1. Element values match the source data (correctness).
 //   2. The returned typed array has the right constructor for each type.
 //   3. view().buffer === cpp.memory.buffer (genuine zero-copy, not a slice).
-//   4. Mutating the view's bytes is visible to subsequent at(i) reads
+//   4. Mutating the view's bytes is visible through another view()
 //      (proves the alias is live and not a copy).
 //   5. Empty lists return a length-0 typed array (not undefined).
 //   6. unsafe / cursor-only readers throw a clear error from view().
@@ -81,7 +81,7 @@ function buildBytes(setters) {
   return b.finalize();
 }
 
-test("view(): Float64 list values match at(i), buffer aliases wasm memory", () => {
+test("view(): Float64 list values match source, buffer aliases wasm memory", () => {
   const N = 1000;
   const values = new Array(N);
   for (let i = 0; i < N; i++) values[i] = Math.sin(i) * 1e6 + i;
@@ -90,9 +90,6 @@ test("view(): Float64 list values match at(i), buffer aliases wasm memory", () =
   const r = mod.openProbe(cpp, bytes);
   const list = r.f64s;
   assert.equal(list.length, N);
-
-  // Per-element correctness via at(i) — the reference implementation.
-  for (let i = 0; i < N; i++) assert.equal(list.at(i), values[i]);
 
   // view() returns a Float64Array with the same values.
   const view = list.view();
@@ -156,20 +153,17 @@ test("view(): Float32 round-trips with the precision floor of single-precision",
   r.dispose();
 });
 
-test("view(): mutating the view's bytes is visible to subsequent at(i) reads (alias proof)", () => {
-  // Strongest "zero-copy" assertion: write into the view, read back via
-  // at(i). If view() returned a copy, at(i) would still see the old
-  // value. If view() aliases wasm memory, at(i) sees our overwrite.
+test("view(): mutating the view's bytes is visible through the same view (alias proof)", () => {
   const bytes = buildBytes({ u32s: [10, 20, 30, 40] });
   const r = mod.openProbe(cpp, bytes);
   const v = r.u32s.view();
-  assert.equal(r.u32s.at(2), 30);
+  assert.equal(v[2], 30);
   v[2] = 999;
-  assert.equal(r.u32s.at(2), 999, "at(i) sees the view's overwrite");
+  assert.equal(r.u32s.view()[2], 999, "view() sees the overwrite through wasm memory");
   r.dispose();
 });
 
-test("view(): at(i) and view() refresh cached typed arrays after memory.grow", () => {
+test("view(): view() refreshes cached typed arrays after memory.grow", () => {
   const values = [10, 20, 30, 40];
   const bytes = buildBytes({ u32s: values });
   const r = mod.openProbe(cpp, bytes);
@@ -179,7 +173,6 @@ test("view(): at(i) and view() refresh cached typed arrays after memory.grow", (
   cpp.memory.grow(1);
   assert.notEqual(cpp.memory.buffer, oldBuffer, "memory.grow detaches the old buffer");
 
-  assert.equal(list.at(2), 30);
   const v = list.view();
   assert.equal(v.buffer, cpp.memory.buffer, "view() returns the refreshed wasm buffer");
   assert.deepEqual(Array.from(v), values);
@@ -197,16 +190,18 @@ test("view(): Int64 list returns BigInt64Array with BigInt elements", () => {
   r.dispose();
 });
 
-test("List(Data): at(i) reads pointer-list elements without cursor growth", () => {
+test("List(Data): iterator reads pointer-list elements without cursor growth", () => {
   const chunks = [];
   for (let i = 0; i < 512; i++) chunks.push(new Uint8Array([i & 0xff, (i * 3) & 0xff]));
   const bytes = buildBytes({ chunks });
   const r = mod.openProbe(cpp, bytes);
   const list = r.chunks;
   assert.equal(list.length, chunks.length);
-  for (let i = 0; i < list.length; i++) {
-    assert.deepEqual(Array.from(list.at(i)), Array.from(chunks[i]));
+  let i = 0;
+  for (const chunk of list) {
+    assert.deepEqual(Array.from(chunk), Array.from(chunks[i++]));
   }
+  assert.equal(i, chunks.length);
   r.dispose();
 });
 

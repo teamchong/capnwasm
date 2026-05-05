@@ -187,8 +187,8 @@ async function renderLiveMetrics() {
     }
     const wasmMs = median(blobWasm.map((x) => x.ms));
     const webMs = median(blobWeb.map((x) => x.ms));
-    const wasmWire = blobWasm.at(-1)!.wire;
-    const webWire = blobWeb.at(-1)!.wire;
+    const wasmWire = blobWasm[blobWasm.length - 1]!.wire;
+    const webWire = blobWeb[blobWeb.length - 1]!.wire;
     const speedRatio = webMs / wasmMs;
     const wireSaving = 1 - wasmWire / webWire;
     setMetric(

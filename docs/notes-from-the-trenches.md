@@ -218,7 +218,7 @@ Everything that *would* benefit from SIMD is **already SIMD-accelerated by V8 in
 
 Dense-iteration: 67 µs vs JSON.parse 43 µs. Every primitive field went through `DataView.getXxx(off, true)` (~7 ns) when the wire is LE-aligned and `_u32[i]` (~1 ns) is the natural primitive.
 
-First attempt: cache typed views on every Reader. **2× worse.** `list.at(i)` was paying 6 typed-view getter chains per element; each does a `buffer.detached` check V8 doesn't inline.
+First attempt: cache typed views on every Reader. **2× worse.** Per-element list readers were paying 6 typed-view getter chains per element; each does a `buffer.detached` check V8 doesn't inline.
 
 Fix: element constructor copies views off the parent reader, not from the cpp getters. Hot path: `this._u32 = parent._u32`.
 
@@ -228,9 +228,9 @@ Hoist views to the long-lived owner; copy down to short-lived children. The read
 
 ## Trap 8: `list.view()` returns wasm memory directly
 
-`list.view()` on a `List(Float64)` returns a `Float64Array` over `wasm.memory.buffer`. `view().buffer === cpp.memory.buffer`; writes through the view show up in `at(i)`. Codegen emits the precise typed-array return type per field, with TypeScript hints.
+`list.view()` on a `List(Float64)` returns a `Float64Array` over `wasm.memory.buffer`. `view().buffer === cpp.memory.buffer`; writes through the view show up through subsequent `view()` calls. Codegen emits the precise typed-array return type per field, with TypeScript hints.
 
-Sum 1000 Float64s: **view() 1.3 µs vs JSON.parse 24 µs (18×) vs at(i) 63 µs (48×).**
+Sum 1000 Float64s: **view() 1.3 µs vs JSON.parse 24 µs (18×).**
 
 Same property unlocks GPU upload (`device.queue.writeBuffer(buf, 0, view)`), SharedArrayBuffer hand-off across Workers, byte-compare against tag strings without decoding, read-while-receiving. Not shipped yet, but the wire-on-wasm-memory model makes them mechanical.
 
@@ -238,11 +238,11 @@ JSON.parse can't do any of these because it materializes a JS object graph; the 
 
 ## Trap 9: a fast path found an old bug
 
-The `view()` bench summed 8000 Float64s. The `at(i)` baseline trapped (`RuntimeError: unreachable`) on the third repeat. Primitive-list `at(i)` codegen reopened the list per element via `cpp_any_open_list(ptrIndex)`; struct lists had already been moved to a single open + cached descriptor in M5.5, primitive lists hadn't.
+The `view()` bench summed 8000 Float64s. The older per-element accessor baseline trapped (`RuntimeError: unreachable`) on the third repeat. Primitive-list codegen reopened the list per element via `cpp_any_open_list(ptrIndex)`; struct lists had already been moved to a single open + cached descriptor in M5.5, primitive lists hadn't.
 
-Fix: same JS-pointer-decode path `view()` uses. Eager wasm open removed for typed-array-able primitive lists. `at(i)` reads through the parent reader's typed-array view at the cached `_baseIdx + i`. No wasm boundary call per element.
+Fix: use the same JS-pointer-decode path `view()` uses. Eager wasm open removed for typed-array-able primitive lists. No wasm boundary call per element.
 
-At N=8000: `at(i)` 24 µs (was trapping), `view()` 12 µs, JSON.parse 220 µs. Both forms now beat JSON by 9-19×.
+At N=8000: `view()` 12 µs, JSON.parse 220 µs. The memory-mapped form beats JSON by ~19×.
 
 Bench at adversarial sizes. N=10 would have hidden this forever.
 

@@ -1,23 +1,18 @@
 // M5.5: Pure-JS Cap'n Proto List<Struct> (INLINE_COMPOSITE) decoder.
 //
-// Pre-M5.5, every List<Struct> at(i) crossed into wasm via
-// cpp_any_open_list + cpp_any_enter_list_at to position the C++
-// any_stack cursor on the i-th element. That meant element readers
-// shared one cursor and could not coexist (calling at(j) invalidated
-// the previous at(i) reader's view).
+// Pre-M5.5, List<Struct> access crossed into wasm via cpp_any_open_list +
+// cpp_any_enter_list_at to position the C++ any_stack cursor on the i-th
+// element. That made row-reader APIs expensive and cursor-sensitive.
 //
 // M5.5 decodes the INLINE_COMPOSITE pointer in JS, computes each
-// element's data section pointer arithmetically, and constructs an
-// independent typed Reader per element. Element readers do not share
-// a cursor, so multiple at(i) calls return readers that all stay
-// valid in parallel. The C++ path is still kept as a fallback for
-// unsafe-path readers and for aggregate methods (draft / toObject /
-// pick) which still go through cpp_any_batch_read.
+// element's data section pointer arithmetically. Generated list views now
+// expose length only for List(Struct); row materialization goes through
+// draft(), which maps selected fields to plain JS objects without exposing
+// stable per-row Reader objects.
 //
 // These tests exercise the wire shape directly and verify the JS
-// path stays coherent under conditions that pre-M5.5 had to defend
-// against (parallel element readers, deep iteration, mixing field
-// reads with aggregate calls).
+// path stays coherent under conditions that pre-M5.5 had to defend against
+// (deep iteration and mixing root reads with list projection).
 
 import { test, before } from "node:test";
 import { strict as assert } from "node:assert";
@@ -92,51 +87,36 @@ test("readListStructPtr returns null for a null List<Struct> pointer", () => {
 
 // ---- Codegen integration: JS path is exercised --------------------------
 
-test("List<Struct> at(i) returns correct field values via the JS path", () => {
+test("List<Struct> draft projection returns correct field values", () => {
   const bytes = build("codegen", 5);
   const r = openPost(cpp, bytes);
-  const tags = r.tags;
-  assert.equal(tags.length, 5);
-  for (let i = 0; i < 5; i++) {
-    const t = tags.at(i);
-    assert.equal(t.name, `tag${i}`, `tag[${i}].name`);
-    assert.equal(t.weight, i * 10, `tag[${i}].weight`);
-  }
+  const tags = r.draft((p) => p.tags.map((t) => ({ name: t.name, weight: t.weight })));
+  assert.deepEqual(tags, [
+    { name: "tag0", weight: 0 },
+    { name: "tag1", weight: 10 },
+    { name: "tag2", weight: 20 },
+    { name: "tag3", weight: 30 },
+    { name: "tag4", weight: 40 },
+  ]);
   r.dispose();
 });
 
-test("M5.5: parallel element readers (the architectural win)", () => {
-  // Pre-M5.5, calling tags.at(j) invalidated the cursor on tags.at(i)
-  // because both shared the C++ any_stack[top]. M5.5 element readers
-  // own independent _dataPtr values, so multiple at() returns can
-  // coexist freely.
+test("M5.5: repeated draft projections are stable", () => {
   const bytes = build("parallel", 5);
   const r = openPost(cpp, bytes);
-  const tags = r.tags;
-  // Hold all five element readers simultaneously.
-  const t0 = tags.at(0);
-  const t1 = tags.at(1);
-  const t2 = tags.at(2);
-  const t3 = tags.at(3);
-  const t4 = tags.at(4);
-  // Read them out of order. Pre-M5.5, only the last-fetched would
-  // return correct data; earlier ones would be stale.
-  assert.equal(t4.name, "tag4");
-  assert.equal(t0.name, "tag0");
-  assert.equal(t2.weight, 20);
-  assert.equal(t1.name, "tag1");
-  assert.equal(t3.weight, 30);
-  assert.equal(t0.weight, 0);
+  const project = (p) => p.tags.map((t) => ({ name: t.name, weight: t.weight }));
+  const a = r.draft(project);
+  const b = r.draft(project);
+  assert.deepEqual(a, b);
+  assert.equal(a[4].name, "tag4");
+  assert.equal(a[0].weight, 0);
   r.dispose();
 });
 
-test("Iteration via Symbol.iterator yields correct rows in order", () => {
+test("draft map yields correct rows in order", () => {
   const bytes = build("iter", 4);
   const r = openPost(cpp, bytes);
-  const collected = [];
-  for (const tag of r.tags) {
-    collected.push({ name: tag.name, weight: tag.weight });
-  }
+  const collected = r.draft((p) => p.tags.map((tag) => ({ name: tag.name, weight: tag.weight })));
   assert.deepEqual(collected, [
     { name: "tag0", weight: 0 },
     { name: "tag1", weight: 10 },
@@ -146,7 +126,7 @@ test("Iteration via Symbol.iterator yields correct rows in order", () => {
   r.dispose();
 });
 
-test("Empty List<Struct> reports length 0 and at(0) === undefined", () => {
+test("Empty List<Struct> reports length 0", () => {
   const b = buildDynamic(cpp, POST);
   b.set("title", "empty");
   b.set("author", "alice");
@@ -154,8 +134,6 @@ test("Empty List<Struct> reports length 0 and at(0) === undefined", () => {
   const bytes = b.finalize();
   const r = openPost(cpp, bytes);
   assert.equal(r.tags.length, 0);
-  assert.equal(r.tags.at(0), undefined);
-  assert.equal(r.tags.at(-1), undefined);
   r.dispose();
 });
 
@@ -197,64 +175,19 @@ test("M5.5 JS path produces values matching the standalone pointer decoder", () 
     const name = new TextDecoder().decode(u8.subarray(target, target + count - 1));
     ref.push({ name, weight });
   }
-  // Codegen path: iterate via the M5.5 JS list view.
+  // Codegen path: project via generated draft().
   const r = openPost(cpp, bytes);
-  const jsOut = [];
-  for (let i = 0; i < r.tags.length; i++) {
-    const t = r.tags.at(i);
-    jsOut.push({ name: t.name, weight: t.weight });
-  }
+  const jsOut = r.draft((p) => p.tags.map((t) => ({ name: t.name, weight: t.weight })));
   r.dispose();
   assert.deepEqual(jsOut, ref, "M5.5 codegen path must match standalone decoder");
 });
 
-// ---- Aggregate methods still work via C++ rebind ------------------------
+// ---- Draft slicing -------------------------------------------------------
 
-test("element reader.draft() works (uses C++ batch read via _rebind)", () => {
+test("draft list projection supports slice for single-row access", () => {
   const bytes = build("draft", 3);
   const r = openPost(cpp, bytes);
-  const tag = r.tags.at(1);
-  // draft() on an element reader reads via cpp_any_batch_read; M5.5
-  // explicitly fires the rebind closure before the C++ call so the
-  // batch reads from the right element.
-  const got = tag.draft((t) => ({ name: t.name, weight: t.weight }));
-  assert.deepEqual(got, { name: "tag1", weight: 10 });
-  r.dispose();
-});
-
-test("element reader.toObject() works (uses C++ batch read via _rebind)", () => {
-  const bytes = build("toObj", 3);
-  const r = openPost(cpp, bytes);
-  const tag = r.tags.at(2);
-  const got = tag.toObject();
-  assert.equal(got.name, "tag2");
-  assert.equal(got.weight, 20);
-  r.dispose();
-});
-
-// ---- Confirm zero wasm boundary calls on the JS hot path ----------------
-
-test("M5.5 JS path keeps generation/active-slot stable through the hot loop", () => {
-  // Indirect "no boundary call" check. Wasm exports are sealed
-  // (configurable=false, writable=false) so we cannot wrap them with
-  // throwing sentinels in strict-mode test files. Instead we observe
-  // the side effects: any call into cpp_any_open_list /
-  // enter_list_at / cpp_any_*_at would advance cpp._generation (via
-  // _bumpGeneration in our codegen). The M5.5 JS hot loop reads only
-  // through DataView / Uint8Array views, so generation must stay
-  // constant across the inner for-loop.
-  const bytes = build("sentinel", 4);
-  const r = openPost(cpp, bytes);
-  // Force one initial _useSlot/rebind so we are at a stable baseline.
-  const tags = r.tags;
-  const gen0 = cpp._generation;
-  const slot0 = cpp._activeSlot;
-  for (let i = 0; i < tags.length; i++) {
-    const t = tags.at(i);
-    assert.equal(t.name, `tag${i}`);
-    assert.equal(t.weight, i * 10);
-  }
-  assert.equal(cpp._generation, gen0, "JS hot loop must not bump generation");
-  assert.equal(cpp._activeSlot, slot0, "JS hot loop must not switch active slot");
+  const got = r.draft((p) => p.tags.map((t) => ({ name: t.name, weight: t.weight })).slice(1, 2));
+  assert.deepEqual(got, [{ name: "tag1", weight: 10 }]);
   r.dispose();
 });

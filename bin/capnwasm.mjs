@@ -1139,6 +1139,8 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
   // and shaves ~30% off list-1000 materialization.
   const PAYLOAD_BREAK = new Set(["uint64", "int64", "float64", "data"]);
   const isTextRunMember = (i) => descs[i] && descs[i].type === "text";
+  const sharedTextEligible = descs.some((d) => d && d.type === "text") &&
+    descs.every((d) => d && !PAYLOAD_BREAK.has(d.type));
   const textBatch = new Array(cols).fill(null);
   for (let i = 0; i < cols; i++) {
     if (!isTextRunMember(i) || textBatch[i] !== null) continue;
@@ -1171,6 +1173,23 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
   out.push(\`const arr = new Array(limit - start);\`);
   if (filter) out.push(\`let arrIdx = 0;\`);
   out.push(\`let readPos = 8 + rows * \${rowStride};\`);
+  if (sharedTextEligible) {
+    // If this projection's payload section contains only text bytes (no data
+    // blobs or 64-bit scalar payloads) and those bytes are ASCII, decode the
+    // whole payload once and slice substrings by byte offset. For non-ASCII,
+    // fall back to the existing per-field decode so UTF-8 byte offsets never
+    // get mistaken for JS string indices.
+    out.push(\`const _payloadStart = readPos;\`);
+    out.push(\`let _sharedText = null;\`);
+    out.push(\`{\`);
+    out.push(\`  const _payloadEnd = dv.byteLength;\`);
+    out.push(\`  let _ascii = true;\`);
+    out.push(\`  for (let _p = _payloadStart; _p < _payloadEnd; _p++) {\`);
+    out.push(\`    if (u8[out + _p] & 0x80) { _ascii = false; break; }\`);
+    out.push(\`  }\`);
+    out.push(\`  if (_ascii) _sharedText = TD.decode(u8.subarray(out + _payloadStart, out + _payloadEnd));\`);
+    out.push(\`}\`);
+  }
   // Skip phase: when start > 0 we walk rows [0, start) advancing readPos by
   // the payload size of each row but never materializing. Each text/data
   // field contributes its header value (or 0 for missing); each
@@ -1226,7 +1245,15 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
       }
       const totalExpr = batch.members.map((m) => \`_b\${m}\`).join(" + ");
       out.push(\`    const _total = \${totalExpr};\`);
-      out.push(\`    const _blob = _total === 0 ? "" : TD.decode(u8.subarray(out + readPos, out + readPos + _total));\`);
+      if (sharedTextEligible) {
+        out.push(\`    let _canSlice = _sharedText !== null;\`);
+        out.push(\`    if (!_canSlice) { _canSlice = true; for (let _p = readPos; _p < readPos + _total; _p++) { if (u8[out + _p] & 0x80) { _canSlice = false; break; } } }\`);
+        out.push(\`    const _blob = _total === 0 ? "" : (_sharedText !== null ? _sharedText.substring(readPos - _payloadStart, readPos - _payloadStart + _total) : (_canSlice ? TD.decode(u8.subarray(out + readPos, out + readPos + _total)) : ""));\`);
+      } else {
+        out.push(\`    let _canSlice = true;\`);
+        out.push(\`    for (let _p = readPos; _p < readPos + _total; _p++) { if (u8[out + _p] & 0x80) { _canSlice = false; break; } }\`);
+        out.push(\`    const _blob = _total === 0 ? "" : (_canSlice ? TD.decode(u8.subarray(out + readPos, out + readPos + _total)) : "");\`);
+      }
       // Walk substrings.
       let cumExpr = "0";
       for (let p = 0; p < batch.total; p++) {
@@ -1234,7 +1261,7 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
         const startExpr = cumExpr;
         const endExpr = \`\${cumExpr} + _b\${m}\`;
         out.push(
-          \`    _v\${m} = _h\${m} === 0xFFFFFFFF ? undefined : _h\${m} === 0 ? "" : _blob.substring(\${startExpr}, \${endExpr});\`,
+          \`    _v\${m} = _h\${m} === 0xFFFFFFFF ? undefined : _h\${m} === 0 ? "" : (_canSlice ? _blob.substring(\${startExpr}, \${endExpr}) : TD.decode(u8.subarray(out + readPos + \${startExpr}, out + readPos + \${endExpr})));\`,
         );
         cumExpr = endExpr;
       }
@@ -1253,7 +1280,11 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
         out.push(\`  { const _h = dv.getUint32(\${headerOff}, true);\`);
         out.push(\`    if (_h === 0xFFFFFFFF) _v\${col} = undefined;\`);
         out.push(\`    else if (_h === 0) _v\${col} = "";\`);
-        out.push(\`    else { _v\${col} = TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }\`);
+        if (sharedTextEligible) {
+          out.push(\`    else { _v\${col} = _sharedText !== null ? _sharedText.substring(readPos - _payloadStart, readPos - _payloadStart + _h) : TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }\`);
+        } else {
+          out.push(\`    else { _v\${col} = TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }\`);
+        }
         break;
       case "data":
         out.push(\`  let _v\${col};\`);
@@ -1508,10 +1539,9 @@ function _capnwasmPick(cpp, fields, names) {`);
   // the slot is already active (the common case in tight loops on a
   // single reader).
   //
-  // Pre-M3 fallback: managed-message readers re-bind via
-  // _openAnyMessage; element readers (from list.at(i)) use _rebind
-  // closures. Both paths bump generation as a side effect so peer
-  // readers know to re-bind too.
+  // Pre-M3 fallback: managed-message readers re-bind via _openAnyMessage.
+  // Rebinding bumps generation as a side effect so peer readers know to
+  // re-bind too.
   lines.push(`function _ensureCapnwasmReader(reader) {`);
   // M4: Disposed-reader guard. Runs before any work so a use-after-
   // dispose() bug surfaces immediately rather than reading garbage
@@ -1870,7 +1900,6 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`  return fn(_materializeDraft(cpp, fields, plan));`);
   lines.push(`}`);
   lines.push("");
-
   const declaredStructs = new Set(structs.map((s) => s.name));
   const structByName = new Map(structs.map((s) => [s.name, s]));
   for (const s of structs) {
@@ -1896,8 +1925,6 @@ function _capnwasmPick(cpp, fields, names) {`);
     // and _ensureCapnwasmReader uses cpp._useSlot() to switch to it.
     // _slotHandle is the registration object the slot finalizer holds;
     // dispose() releases it explicitly (M4) instead of waiting for GC.
-    // Element readers (from list.at(i)) inherit the parent's slot but
-    // pass _rebind to position the cursor inside it.
     lines.push(`    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;`);
     lines.push(`    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;`);
     // M5: Pure-JS pointer decoder bounds. msgStart/msgEnd come from the
@@ -2859,14 +2886,14 @@ function capnpToTs(capnpType, declaredStructs) {
     const inner = listMatch[1];
     const innerTs = capnpToTs(inner, declaredStructs);
     // Primitive-element lists expose view() with a precise typed-array
-    // return type. Non-primitive lists (Text, Data, Struct, Bool, nested
-    // List) only expose length + at(i) — accessing .view() on those is a
-    // TS error, exactly as the runtime contract.
+    // return type. Struct-element lists intentionally expose length only;
+    // project rows through draft() instead of allocating stable row readers.
     const viewCtor = PRIMITIVE_TYPED_ARRAY[inner];
     if (viewCtor) {
-      return `{ readonly length: number; at(i: number): ${innerTs} | undefined; view(): ${viewCtor}; [Symbol.iterator](): IterableIterator<${innerTs}> }`;
+      return `{ readonly length: number; view(): ${viewCtor}; [Symbol.iterator](): IterableIterator<${innerTs}> }`;
     }
-    return `{ readonly length: number; at(i: number): ${innerTs} | undefined; [Symbol.iterator](): IterableIterator<${innerTs}> }`;
+    if (declaredStructs.has(inner)) return `{ readonly length: number }`;
+    return `{ readonly length: number; [Symbol.iterator](): IterableIterator<${innerTs}> }`;
   }
   if (declaredStructs.has(capnpType)) return capnpType + "Reader";
   // Capability(<Iface>) — null today (real cap-table-backed proxies are
@@ -2913,13 +2940,10 @@ function fieldDescriptor(f) {
   }
 }
 
-// Emit JS for a List<X> getter. Returns a list-view with .length, .at(i),
-// and Symbol.iterator. The element type drives at(i)'s return shape.
-//
-// For struct element lists, at(i) navigates the wasm reader stack and
-// constructs a typed Reader. The reader is "live". It shares the wasm
-// any_stack[top] slot, so accessing fields on it after another at(i) call
-// would read the new element. Treat at(i) as "open one element at a time."
+// Emit JS for a List<X> getter. Value lists expose length plus iteration
+// (and view() for typed-array-compatible primitive lists). Struct lists expose
+// length only; project rows through draft() so generated code can plan the
+// object shape without allocating stable row-reader objects.
 function generateListGetter(ptrIndex, innerType, parentDataWords) {
   const lines = [];
   lines.push(`const reader = this;`);
@@ -2938,33 +2962,27 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
     lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
   }
   // The wrapper closes over `cpp` (and `size` when eagerly opened).
-  // Each .at(i) re-opens the list (since other readers may have
-  // changed any_list_reader state) and either reads a primitive or
-  // pushes the element struct on the stack and constructs a typed
-  // Reader.
   if (PRIMITIVE_LIST_GETTERS[innerType]) {
     const primFn = PRIMITIVE_LIST_GETTERS[innerType];
     const viewSpec = PRIMITIVE_LIST_VIEWS[innerType];
     // For typed-array-mappable element types (everything except Bool):
     //   1. Decode the list pointer once via _jsReadListPrimPtr (pure JS).
-    //   2. Cache {elementsBase, count}. at(i) reads directly from
-    //      reader._u32[i] etc. — no per-element wasm boundary call.
+    //   2. Cache {elementsBase, count}.
     //   3. view() returns a typed-array subarray over the cached range.
     //
     // The cursor-based fallback (cpp_any_open_list per element) is kept
     // for unsafe / no-_msgEnd readers and for Bool (bit-packed, no view).
     //
-    // The previous code reopened the list inside at(i) on every iteration.
-    // That mutated the C++ any_list_reader cursor every element and at
-    // large N (8000+) traps after enough opens — see Trap 9 in the notes.
-    // The single-decode + typed-array path eliminates the boundary call
-    // and the latent state corruption at the same time.
+    // The previous element accessor reopened the list on every iteration.
+    // That mutated the C++ any_list_reader cursor every element and at large
+    // N (8000+) traps after enough opens — see Trap 9 in the notes. The
+    // single-decode + typed-array path eliminates the boundary call and the
+    // latent state corruption at the same time.
     if (viewSpec) {
       // Captured once at getter time: the parent's _u8 plus the decoded
-      // {elementsBase, count}. The hot at(i) path reads through
-      // reader._<view> (refreshed on memory growth by _ensureCapnwasmReader
-      // — same plumbing as primitive struct-field reads). No wasm boundary
-      // call per element.
+      // {elementsBase, count}. view() reads through reader._<view> (refreshed
+      // on memory growth by _ensureCapnwasmReader — same plumbing as primitive
+      // struct-field reads). No wasm boundary call per element.
       lines.push(`const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;`);
       lines.push(`let _desc = null;`);
       lines.push(`if (_msgEnd) {`);
@@ -2976,33 +2994,6 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
       lines.push(`  const _baseIdx = _baseByte >>> ${viewSpec.shift};`);
       lines.push(`  return {`);
       lines.push(`    length: _count,`);
-      lines.push(`    at(i) {`);
-      lines.push(`      if (i < 0 || i >= _count) return undefined;`);
-      // Read through the parent reader's cached typed-array view when
-      // available. _ensureCapnwasmReader refreshes the parent's view on
-      // memory growth; we trust it here. Skip _ensureCapnwasmReader in the
-      // hot path — primitive list reads don't move the cursor and the
-      // parent view is current as long as the caller is holding the
-      // reader. For UInt64/Int64/Int8 we don't cache a typed-array field
-      // on the reader, so construct the view inline; that's still much
-      // faster than the wasm-cursor reopen-per-element path.
-      if (viewSpec.field) {
-        lines.push(`      let v = reader.${viewSpec.field}[_baseIdx + i];`);
-        lines.push(`      if (v !== undefined) return v;`);
-        lines.push(`      if (reader.${viewSpec.field}.buffer !== cpp.memory.buffer) {`);
-        lines.push(`        reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
-        lines.push(`        reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
-        lines.push(`      }`);
-        lines.push(`      return reader.${viewSpec.field}[_baseIdx + i];`);
-      } else {
-        lines.push(`      if (reader._u8.buffer !== cpp.memory.buffer) {`);
-        lines.push(`        reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
-        lines.push(`        reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
-        lines.push(`      }`);
-        lines.push(`      return new ${viewSpec.ctor}(reader._u8.buffer, _baseByte, _count)[i];`);
-      }
-      lines.push(`    },`);
-      lines.push(`    *[Symbol.iterator]() { for (let i = 0; i < _count; i++) yield this.at(i); },`);
       lines.push(`    view() {`);
       // Subarray of the parent's cached view (when present) is the cheapest
       // form: zero allocation beyond the subarray descriptor. Otherwise
@@ -3021,6 +3012,7 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
         lines.push(`      return new ${viewSpec.ctor}(reader._u8.buffer, _baseByte, _count);`);
       }
       lines.push(`    },`);
+      lines.push(`    *[Symbol.iterator]() { yield* this.view(); },`);
       lines.push(`  };`);
       lines.push(`}`);
       lines.push(`// Cursor-based fallback: unsafe reader, no _msgEnd, or pointer decode failed.`);
@@ -3036,13 +3028,13 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
     }
     lines.push(`return {`);
     lines.push(`  length: size,`);
-  lines.push(`  at(i) {`);
-  lines.push(`    if (i < 0 || i >= size) return undefined;`);
-  lines.push(`    _ensureCapnwasmReader(reader);`);
-  lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
-    lines.push(`    return ${primFn};`);
+    lines.push(`  *[Symbol.iterator]() {`);
+    lines.push(`    for (let i = 0; i < size; i++) {`);
+    lines.push(`      _ensureCapnwasmReader(reader);`);
+    lines.push(`      cpp._exports.cpp_any_open_list(${ptrIndex});`);
+    lines.push(`      yield ${primFn};`);
+    lines.push(`    }`);
     lines.push(`  },`);
-    lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);
     if (viewSpec) {
       // Cursor-based readers can't safely return an aliased view (the
       // bytes aren't pinned to a known address). Throw cleanly.
@@ -3066,37 +3058,37 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
     lines.push(`  const _baseByte = _desc.elementsBase;`);
     lines.push(`  return {`);
     lines.push(`    length: _count,`);
-    lines.push(`    at(i) {`);
-    lines.push(`      if (i < 0 || i >= _count) return undefined;`);
+    lines.push(`    *[Symbol.iterator]() {`);
+    lines.push(`      for (let i = 0; i < _count; i++) {`);
     lines.push(`      if (reader._u8.buffer !== cpp.memory.buffer) {`);
     lines.push(`        reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
     lines.push(`        reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
     lines.push(`      }`);
     lines.push(`      const v = _jsReadTextPtrAt(reader._u8, reader._dv, _baseByte + i * 8, _msgStart, _msgEnd);`);
-    lines.push(`      if (v !== undefined) return v ?? "";`);
+    lines.push(`      if (v !== undefined) { yield v ?? ""; continue; }`);
     lines.push(`      _ensureCapnwasmReader(reader);`);
     lines.push(`      cpp._exports.cpp_any_open_list(${ptrIndex});`);
     lines.push(`      const len = cpp._exports.cpp_any_list_get_text(i);`);
-    lines.push(`      if (len === 0) return "";`);
+    lines.push(`      if (len === 0) { yield ""; continue; }`);
     lines.push(`      const out = cpp._outPtr;`);
-    lines.push(`      return decodeAscii(cpp._u8.subarray(out, out + len));`);
+    lines.push(`      yield decodeAscii(cpp._u8.subarray(out, out + len));`);
+    lines.push(`      }`);
     lines.push(`    },`);
-    lines.push(`    *[Symbol.iterator]() { for (let i = 0; i < _count; i++) yield this.at(i); },`);
     lines.push(`  };`);
     lines.push(`}`);
     lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
     lines.push(`return {`);
     lines.push(`  length: size,`);
-  lines.push(`  at(i) {`);
-  lines.push(`    if (i < 0 || i >= size) return undefined;`);
-  lines.push(`    _ensureCapnwasmReader(reader);`);
-  lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
+    lines.push(`  *[Symbol.iterator]() {`);
+    lines.push(`    for (let i = 0; i < size; i++) {`);
+    lines.push(`      _ensureCapnwasmReader(reader);`);
+    lines.push(`      cpp._exports.cpp_any_open_list(${ptrIndex});`);
     lines.push(`    const len = cpp._exports.cpp_any_list_get_text(i);`);
-    lines.push(`    if (len === 0) return "";`);
+    lines.push(`      if (len === 0) { yield ""; continue; }`);
     lines.push(`    const out = cpp._outPtr;`);
-    lines.push(`    return decodeAscii(cpp._u8.subarray(out, out + len));`);
+    lines.push(`      yield decodeAscii(cpp._u8.subarray(out, out + len));`);
+    lines.push(`    }`);
     lines.push(`  },`);
-    lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);
     lines.push(`};`);
     return lines;
   }
@@ -3115,56 +3107,46 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
     lines.push(`  const _baseByte = _desc.elementsBase;`);
     lines.push(`  return {`);
     lines.push(`    length: _count,`);
-    lines.push(`    at(i) {`);
-    lines.push(`      if (i < 0 || i >= _count) return undefined;`);
+    lines.push(`    *[Symbol.iterator]() {`);
+    lines.push(`      for (let i = 0; i < _count; i++) {`);
     lines.push(`      if (reader._u8.buffer !== cpp.memory.buffer) {`);
     lines.push(`        reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
     lines.push(`        reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
     lines.push(`      }`);
     lines.push(`      const v = _jsReadDataPtrAt(reader._u8, reader._dv, _baseByte + i * 8, _msgStart, _msgEnd);`);
-    lines.push(`      if (v !== undefined) return v ?? new Uint8Array(0);`);
+    lines.push(`      if (v !== undefined) { yield v ?? new Uint8Array(0); continue; }`);
     lines.push(`      _ensureCapnwasmReader(reader);`);
     lines.push(`      cpp._exports.cpp_any_open_list(${ptrIndex});`);
     lines.push(`      const len = cpp._exports.cpp_any_list_get_data(i);`);
     lines.push(`      const out = cpp._outPtr;`);
-    lines.push(`      return cpp._u8.slice(out, out + len);`);
+    lines.push(`      yield cpp._u8.slice(out, out + len);`);
+    lines.push(`      }`);
     lines.push(`    },`);
-    lines.push(`    *[Symbol.iterator]() { for (let i = 0; i < _count; i++) yield this.at(i); },`);
     lines.push(`  };`);
     lines.push(`}`);
     lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
     lines.push(`return {`);
     lines.push(`  length: size,`);
-  lines.push(`  at(i) {`);
-  lines.push(`    if (i < 0 || i >= size) return undefined;`);
-  lines.push(`    _ensureCapnwasmReader(reader);`);
-  lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
+    lines.push(`  *[Symbol.iterator]() {`);
+    lines.push(`    for (let i = 0; i < size; i++) {`);
+    lines.push(`      _ensureCapnwasmReader(reader);`);
+    lines.push(`      cpp._exports.cpp_any_open_list(${ptrIndex});`);
     lines.push(`    const len = cpp._exports.cpp_any_list_get_data(i);`);
     lines.push(`    const out = cpp._outPtr;`);
-    lines.push(`    return cpp._u8.slice(out, out + len);`);
+    lines.push(`      yield cpp._u8.slice(out, out + len);`);
+    lines.push(`    }`);
     lines.push(`  },`);
-    lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);
     lines.push(`};`);
     return lines;
   }
   // Struct element list. M5.5: when the parent reader carries
   // _msgStart/_msgEnd (slot-pool path), decode the List<Struct>
-  // pointer in pure JS. Each element gets its own static _dataPtr =
-  // elementsBase + i * (dataWords + ptrWords) * 8, so element readers
-  // stay independent: no cursor share, no rebind, no `pushed` flag,
-  // multiple at(i) calls return readers that all stay valid in
-  // parallel. The pre-M5.5 C++ path is kept as a fallback for unsafe-
-  // path readers and any case the JS decoder can't handle.
-  //
-  // The pre-M5.5 path: at(i) navigates the wasm any_stack and
-  // constructs a Reader that shares the cursor. `pushed` tracks
-  // whether this wrapper previously pushed an element so we pop
-  // before re-opening the list.
+  // pointer in pure JS. Generated public List(Struct) views expose length
+  // only; use draft() for row projection/materialization.
   lines.push(`const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;`);
   lines.push(`const _u8 = reader._u8, _dv = reader._dv;`);
-  // Decode the List<Struct> pointer once at .tags getter time. Stash
-  // the descriptor on the closure so .at(i) is just an arithmetic
-  // step. Falls back to the C++ path on undefined.
+  // Decode the List<Struct> pointer once at getter time to expose length
+  // without crossing into wasm when the safe slot-pool path has bounds.
   lines.push(`let _listDesc = null;`);
   lines.push(`if (_msgEnd) {`);
   lines.push(`  _listDesc = _jsReadListStructPtr(_u8, _dv, reader._dataPtr, ${parentDataWords}, ${ptrIndex}, _msgStart, _msgEnd);`);
@@ -3172,37 +3154,6 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
   lines.push(`if (_listDesc && _listDesc !== undefined) {`);
   lines.push(`  return {`);
   lines.push(`    length: _listDesc.count,`);
-  lines.push(`    at(i) {`);
-  lines.push(`      if (i < 0 || i >= _listDesc.count) return undefined;`);
-  // Per-element reader. _dataPtr is the element's data section start
-  // computed in JS from the M5.5 list descriptor. _msgStart/_msgEnd
-  // propagate from the parent so the element's pointer-section getters
-  // (text / data / nested list) decode in JS. _slotIdx propagates so
-  // _ensureCapnwasmReader keeps the parent's slot active for the C++
-  // fallback paths used by aggregate methods (draft, pick, toObject)
-  // which still go through cpp_any_batch_read on the C++ side.
-  //
-  // _rebind kept for that fallback: it positions the C++ any_stack
-  // cursor onto this element by re-opening the parent's list and
-  // entering element i. Per-field JS reads bypass _rebind entirely
-  // (they read directly from _dataPtr) so there's no overhead in the
-  // hot path; the rebind only fires when something calls into C++.
-  lines.push(`      const elemDataPtr = _listDesc.elementsBase + i * (_listDesc.dataWords + _listDesc.ptrWords) * 8;`);
-  // Pass the parent reader directly. The element reader copies typed-array
-  // views off the parent (which already validated they match
-  // cpp.memory.buffer). Avoids 6 typed-view getter calls per element on
-  // dense iteration (parent has cached views; cpp's getters check
-  // buffer detachment on every access, which V8 doesn't fully inline).
-  lines.push(`      return new ${innerType}Reader(cpp, elemDataPtr, {`);
-  lines.push(`        slotIdx: reader._slotIdx,`);
-  lines.push(`        msgStart: _msgStart,`);
-  lines.push(`        msgEnd: _msgEnd,`);
-  lines.push(`        gen: cpp._generation ?? 0,`);
-  lines.push(`        parent: reader,`);
-  lines.push(`        rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(${ptrIndex}); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); },`);
-  lines.push(`      });`);
-  lines.push(`    },`);
-  lines.push(`    *[Symbol.iterator]() { for (let i = 0; i < this.length; i++) yield this.at(i); },`);
   lines.push(`  };`);
   lines.push(`}`);
   // Pre-M5.5 C++ fallback (also used by openFooUnsafe). Open the list
@@ -3212,29 +3163,6 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
   lines.push(`let pushed = false;`);
   lines.push(`return {`);
   lines.push(`  length: size,`);
-  lines.push(`  at(i) {`);
-  lines.push(`    if (i < 0 || i >= size) return undefined;`);
-  lines.push(`    _ensureCapnwasmReader(reader);`);
-  lines.push(`    if (pushed) cpp._exports.cpp_any_leave_struct();`);
-  lines.push(`    cpp._exports.cpp_any_open_list(${ptrIndex});`);
-  lines.push(`    cpp._exports.cpp_any_enter_list_at(i);`);
-  // After moving cursor onto element i, bump generation so the parent
-  // reader knows its own cursor position is no longer authoritative.
-  // The element reader records the post-bump generation as its own _gen.
-  lines.push(`    cpp._bumpGeneration();`);
-  lines.push(`    pushed = true;`);
-  // The element rebind closure: re-bind the parent's message (positioning
-  // cursor at parent root), then descend into the list element. After we
-  // move the cursor away from the parent root, bump generation so peer
-  // readers know their own cursor position is no longer authoritative.
-  // Element reader inherits the parent's slot (slot pool) or message
-  // (legacy) so _ensureCapnwasmReader picks the right path. The rebind
-  // closure runs after _useSlot/use_slot so the parent slot is active
-  // before we open the list and enter the element.
-  lines.push(`    const r = new ${innerType}Reader(cpp, 0, { msg: reader._msg, slotIdx: reader._slotIdx, gen: cpp._generation ?? 0, rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(${ptrIndex}); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); } });`);
-  lines.push(`    return r;`);
-  lines.push(`  },`);
-  lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);
   lines.push(`};`);
   return lines;
 }
@@ -3253,7 +3181,7 @@ const PRIMITIVE_LIST_GETTERS = {
   // shared view so the cost is one typed-array store + load, no per-call
   // ArrayBuffer alloc. Without these entries codegen incorrectly treated
   // List(Float32/Float64) as struct-element lists and produced
-  // "FloatXXReader is not defined" errors at first .at(i) call.
+  // "FloatXXReader is not defined" errors at first list access.
   "Float32": "(_F32_VIEW_U32[0] = (cpp._exports.cpp_any_list_get_float32_bits(i) >>> 0), _F32_VIEW_F32[0])",
   // Single wasm call returns a 64-bit BigInt; split into two u32 halves for
   // the bit-reinterpret without a second boundary crossing.
@@ -3266,8 +3194,8 @@ const PRIMITIVE_LIST_GETTERS = {
 //            offset: idx = byteOffset >>> shift.
 //   field  — the cached typed-array field name on the Reader (`_u8`, `_u32`, ...).
 // Used by list.view() codegen. Bool is omitted: capnp bit-packs bool list
-// elements 8-per-byte, no clean typed-array mapping; we leave that as at(i)
-// over the cursor path.
+  // elements 8-per-byte, no clean typed-array mapping; those value lists use
+  // iterator reads over the cursor path.
 //
 // Int64 / UInt64 use BigInt typed arrays — the view itself is zero-copy,
 // but iterating it allocates a BigInt per element. Still useful for code
@@ -3342,9 +3270,9 @@ function generateGetter(field, declaredStructs) {
         `return u8.slice(out, out + len);`,
       ];
     }
-    // Lists: return a typed list-view object (length + at(i) + iterator).
-    // The element type drives whether at(i) returns a primitive, a string,
-    // a Uint8Array, or a typed Reader for nested struct elements.
+    // Lists: return a typed list-view object. Value lists expose iteration
+    // (and view() for primitive numeric lists); struct lists expose length and
+    // use draft() for row projection.
     const listMatch = /^List\(([^)]+)\)$/.exec(field.type);
     if (listMatch) {
       const inner = listMatch[1];

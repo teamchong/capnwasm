@@ -275,6 +275,8 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
   // and shaves ~30% off list-1000 materialization.
   const PAYLOAD_BREAK = new Set(["uint64", "int64", "float64", "data"]);
   const isTextRunMember = (i) => descs[i] && descs[i].type === "text";
+  const sharedTextEligible = descs.some((d) => d && d.type === "text") &&
+    descs.every((d) => d && !PAYLOAD_BREAK.has(d.type));
   const textBatch = new Array(cols).fill(null);
   for (let i = 0; i < cols; i++) {
     if (!isTextRunMember(i) || textBatch[i] !== null) continue;
@@ -307,6 +309,23 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
   out.push(`const arr = new Array(limit - start);`);
   if (filter) out.push(`let arrIdx = 0;`);
   out.push(`let readPos = 8 + rows * ${rowStride};`);
+  if (sharedTextEligible) {
+    // If this projection's payload section contains only text bytes (no data
+    // blobs or 64-bit scalar payloads) and those bytes are ASCII, decode the
+    // whole payload once and slice substrings by byte offset. For non-ASCII,
+    // fall back to the existing per-field decode so UTF-8 byte offsets never
+    // get mistaken for JS string indices.
+    out.push(`const _payloadStart = readPos;`);
+    out.push(`let _sharedText = null;`);
+    out.push(`{`);
+    out.push(`  const _payloadEnd = dv.byteLength;`);
+    out.push(`  let _ascii = true;`);
+    out.push(`  for (let _p = _payloadStart; _p < _payloadEnd; _p++) {`);
+    out.push(`    if (u8[out + _p] & 0x80) { _ascii = false; break; }`);
+    out.push(`  }`);
+    out.push(`  if (_ascii) _sharedText = TD.decode(u8.subarray(out + _payloadStart, out + _payloadEnd));`);
+    out.push(`}`);
+  }
   // Skip phase: when start > 0 we walk rows [0, start) advancing readPos by
   // the payload size of each row but never materializing. Each text/data
   // field contributes its header value (or 0 for missing); each
@@ -362,7 +381,15 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
       }
       const totalExpr = batch.members.map((m) => `_b${m}`).join(" + ");
       out.push(`    const _total = ${totalExpr};`);
-      out.push(`    const _blob = _total === 0 ? "" : TD.decode(u8.subarray(out + readPos, out + readPos + _total));`);
+      if (sharedTextEligible) {
+        out.push(`    let _canSlice = _sharedText !== null;`);
+        out.push(`    if (!_canSlice) { _canSlice = true; for (let _p = readPos; _p < readPos + _total; _p++) { if (u8[out + _p] & 0x80) { _canSlice = false; break; } } }`);
+        out.push(`    const _blob = _total === 0 ? "" : (_sharedText !== null ? _sharedText.substring(readPos - _payloadStart, readPos - _payloadStart + _total) : (_canSlice ? TD.decode(u8.subarray(out + readPos, out + readPos + _total)) : ""));`);
+      } else {
+        out.push(`    let _canSlice = true;`);
+        out.push(`    for (let _p = readPos; _p < readPos + _total; _p++) { if (u8[out + _p] & 0x80) { _canSlice = false; break; } }`);
+        out.push(`    const _blob = _total === 0 ? "" : (_canSlice ? TD.decode(u8.subarray(out + readPos, out + readPos + _total)) : "");`);
+      }
       // Walk substrings.
       let cumExpr = "0";
       for (let p = 0; p < batch.total; p++) {
@@ -370,7 +397,7 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
         const startExpr = cumExpr;
         const endExpr = `${cumExpr} + _b${m}`;
         out.push(
-          `    _v${m} = _h${m} === 0xFFFFFFFF ? undefined : _h${m} === 0 ? "" : _blob.substring(${startExpr}, ${endExpr});`,
+          `    _v${m} = _h${m} === 0xFFFFFFFF ? undefined : _h${m} === 0 ? "" : (_canSlice ? _blob.substring(${startExpr}, ${endExpr}) : TD.decode(u8.subarray(out + readPos + ${startExpr}, out + readPos + ${endExpr})));`,
         );
         cumExpr = endExpr;
       }
@@ -389,7 +416,11 @@ function _compileListDecoder(descs, names, applyMapFn, filter) {
         out.push(`  { const _h = dv.getUint32(${headerOff}, true);`);
         out.push(`    if (_h === 0xFFFFFFFF) _v${col} = undefined;`);
         out.push(`    else if (_h === 0) _v${col} = "";`);
-        out.push(`    else { _v${col} = TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }`);
+        if (sharedTextEligible) {
+          out.push(`    else { _v${col} = _sharedText !== null ? _sharedText.substring(readPos - _payloadStart, readPos - _payloadStart + _h) : TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }`);
+        } else {
+          out.push(`    else { _v${col} = TD.decode(u8.subarray(out + readPos, out + readPos + _h)); readPos += _h; } }`);
+        }
         break;
       case "data":
         out.push(`  let _v${col};`);

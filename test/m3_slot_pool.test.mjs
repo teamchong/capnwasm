@@ -113,43 +113,34 @@ test("readers alive concurrently keep returning their own data", () => {
   assert.equal(rb.title, "B with 5 tags");
 });
 
-// ---- Deep nesting: root <-> element interleave -----------------------------
+// ---- Deep nesting: root <-> list projection interleave ----------------------
 
-test("element reader from List<Struct>: root reader still reads root after element read", () => {
+test("List<Struct> draft projection leaves root reader coherent", () => {
   const bytes = buildSample({ tagCount: 3 });
   const post = openPost(cpp, bytes);
-  // Read parent root: ok.
   assert.equal(post.title, "sample with 3 tags");
-  // Get an element reader and read from it. C++ any_stack pushes a
-  // depth-1 entry for the element. Pre-M3 fix this would leave the
-  // stack pushed; subsequent post.title would read from the element.
-  const tag = post.tags.at(1);
-  assert.equal(tag.name, "tag1");
-  assert.equal(tag.weight, 10);
-  // Root reader must reset the slot's stack back to depth 0 before
-  // its pointer-section getters re-read.
+  const tags = post.draft((p) => p.tags.map((t) => ({ name: t.name, weight: t.weight })));
+  assert.equal(tags[1].name, "tag1");
+  assert.equal(tags[1].weight, 10);
   assert.equal(post.title, "sample with 3 tags");
   assert.equal(post.author, "alice");
 });
 
-test("element reader survives interleaved root reader access", () => {
+test("repeated list projections survive interleaved root reader access", () => {
   const bytes = buildSample({ tagCount: 4 });
   const post = openPost(cpp, bytes);
-  const tag2 = post.tags.at(2);
-  assert.equal(tag2.name, "tag2");
-  // Read from root: this resets stack to depth 0.
+  const project = (p) => p.tags.map((t) => ({ name: t.name, weight: t.weight }));
+  assert.equal(post.draft(project)[2].name, "tag2");
   assert.equal(post.title, "sample with 4 tags");
-  // Element reader's _rebind closure walks parent root -> list -> elem
-  // again. Should still report tag2's fields.
-  assert.equal(tag2.name, "tag2");
-  assert.equal(tag2.weight, 20);
+  assert.equal(post.draft(project)[2].weight, 20);
 });
 
-test("alternating root and element reads stay coherent over many iterations", () => {
+test("alternating root and list projections stay coherent over many iterations", () => {
   const bytes = buildSample({ tagCount: 5 });
   const post = openPost(cpp, bytes);
+  const project = (p) => p.tags.map((t) => ({ name: t.name, weight: t.weight }));
   for (let i = 0; i < 50; i++) {
-    const t = post.tags.at(i % 5);
+    const t = post.draft(project)[i % 5];
     assert.equal(t.name, `tag${i % 5}`);
     assert.equal(post.title, "sample with 5 tags");
     assert.equal(t.weight, (i % 5) * 10);
@@ -158,17 +149,15 @@ test("alternating root and element reads stay coherent over many iterations", ()
 
 // ---- Cross-message interleave -----------------------------------------------
 
-test("element reader survives another open on the same CapnCpp", () => {
+test("list projection survives another open on the same CapnCpp", () => {
   const a = buildSample({ tagCount: 3, label: "A" });
   const b = buildSample({ tagCount: 1, label: "B" });
   const postA = openPost(cpp, a);
-  const tagA1 = postA.tags.at(1);
-  assert.equal(tagA1.name, "tag1");
-  // Open a different message; both root and element reader of postA
-  // must still read postA's data after we read from postB.
+  const project = (p) => p.tags.map((t) => ({ name: t.name, weight: t.weight }));
+  assert.equal(postA.draft(project)[1].name, "tag1");
   const postB = openPost(cpp, b);
   assert.equal(postB.title, "B with 1 tags");
-  assert.equal(tagA1.name, "tag1", "element reader must survive another open");
+  assert.equal(postA.draft(project)[1].name, "tag1", "projection must survive another open");
   assert.equal(postA.title, "A with 3 tags", "root reader must survive another open");
 });
 
