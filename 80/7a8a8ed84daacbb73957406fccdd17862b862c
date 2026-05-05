@@ -1,0 +1,49 @@
+web/dist/assets/dynamic-D4jjy1bG.js
+  a40863a2008f4bc3 1
+web/dist/assets/typed_schema.gen-CpJCV_Ls.js
+  a40863a2008f4bc3 1-2
+web/dist/index.html
+  a40863a2008f4bc3 17,21
+web/dist/editor.html
+  a40863a2008f4bc3 9,12
+dist/dynamic.mjs
+  a40863a2008f4bc3 1
+web/dist/playground.html
+  a40863a2008f4bc3 17,20-21
+web/dist/vs-capnweb.html
+  a40863a2008f4bc3 17,21-22
+web/dist/dynamic.html
+  a40863a2008f4bc3 20,23
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+bin/capnwasm.mjs
+  a40863a2008f4bc3 1465-1468
+web/dist/render-bench.html
+  a40863a2008f4bc3 9,12-13
+web/dist/assets/chat-JFvA9TL1.js
+  a40863a2008f4bc3 1-5,7-8
+web/dist/assets/users.capnp.gen-BrBI_HQ4.js
+  a40863a2008f4bc3 1-2
+web/dist/chat.html
+  a40863a2008f4bc3 64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "807a8a8ed84daacbb73957406fccdd17862b862c",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 41,
+      "total_deletions": 46,
+      "accepted_lines": 41,
+      "overriden_lines": 0
+    }
+  }
+}
