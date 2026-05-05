@@ -37,14 +37,11 @@ const SCHEMA = defineSchema({
   values: { kind: "listFloat64", slot: 0 },
 }, { dataWords: 0, ptrWords: 1 });
 
-// 1000 elements × 8 bytes = 8 KB. We use a smaller N than the segment
-// ceiling because the existing at(i) codegen for primitive lists has a
-// pre-existing bug with repeated open+iterate at very large N
-// (cpp_any_open_list state corruption ~pass 3 at N=8000). That bug is
-// independent of view(); view() takes the M5.5 pure-JS pointer-decode
-// path and isn't affected. We benchmark at(i) at a size where it works
-// to make the comparison apples-to-apples.
-const N = 1000;
+// 8000 elements × 8 bytes = 64 KB, the M1 single-segment ceiling. Both
+// at(i) and view() share the same JS pointer-decode + typed-array
+// reads after the Trap 9 fix; bench at the largest payload that fits a
+// single segment so the comparison reflects the realistic upper bound.
+const N = 8000;
 const values = new Array(N);
 for (let i = 0; i < N; i++) values[i] = Math.sin(i) * 1000 + i * 0.5;
 

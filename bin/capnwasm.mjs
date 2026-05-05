@@ -2492,14 +2492,17 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
   const lines = [];
   lines.push(`const reader = this;`);
   lines.push(`const cpp = this._cpp;`);
-  // For primitive / Text / Data inner types we still rely on the C++
-  // any_list_reader cursor inside at(i), so open the list eagerly here
-  // so .length is available without a wasm call. The struct branch
-  // below skips the eager open: M5.5 decodes the list pointer in JS
-  // and falls back to C++ only when the JS decoder bails. Doing the
-  // C++ open eagerly for struct lists would push any_stack uselessly
-  // and force every JS-path read to fight cursor state.
-  const eagerOpen = !(innerType !== "Text" && innerType !== "Data" && !PRIMITIVE_LIST_GETTERS[innerType]);
+  // Eager wasm-cursor open. Needed only by Text/Data list getters and by
+  // the cursor-fallback path of primitive lists. For primitive lists with
+  // a typed-array view (everything except Bool), the fast path uses
+  // _jsReadListPrimPtr instead and never needs the wasm cursor — calling
+  // cpp_any_open_list per getter call would push any_list_reader state
+  // and (at large N with repeated opens) walk the cursor stack into a
+  // trap. We delay the wasm open into the cursor-fallback branch only,
+  // matching what the struct-list path already does.
+  const isPrimWithView = PRIMITIVE_LIST_GETTERS[innerType] && PRIMITIVE_LIST_VIEWS[innerType];
+  const eagerOpen = (innerType === "Text" || innerType === "Data" ||
+                     (PRIMITIVE_LIST_GETTERS[innerType] && !isPrimWithView));
   if (eagerOpen) {
     lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
   }
@@ -2511,6 +2514,77 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
   if (PRIMITIVE_LIST_GETTERS[innerType]) {
     const primFn = PRIMITIVE_LIST_GETTERS[innerType];
     const viewSpec = PRIMITIVE_LIST_VIEWS[innerType];
+    // For typed-array-mappable element types (everything except Bool):
+    //   1. Decode the list pointer once via _jsReadListPrimPtr (pure JS).
+    //   2. Cache {elementsBase, count}. at(i) reads directly from
+    //      reader._u32[i] etc. — no per-element wasm boundary call.
+    //   3. view() returns a typed-array subarray over the cached range.
+    //
+    // The cursor-based fallback (cpp_any_open_list per element) is kept
+    // for unsafe / no-_msgEnd readers and for Bool (bit-packed, no view).
+    //
+    // The previous code reopened the list inside at(i) on every iteration.
+    // That mutated the C++ any_list_reader cursor every element and at
+    // large N (8000+) traps after enough opens — see Trap 9 in the notes.
+    // The single-decode + typed-array path eliminates the boundary call
+    // and the latent state corruption at the same time.
+    if (viewSpec) {
+      // Captured once at getter time: the parent's _u8 plus the decoded
+      // {elementsBase, count}. The hot at(i) path reads through
+      // reader._<view> (refreshed on memory growth by _ensureCapnwasmReader
+      // — same plumbing as primitive struct-field reads). No wasm boundary
+      // call per element.
+      lines.push(`const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;`);
+      lines.push(`let _desc = null;`);
+      lines.push(`if (_msgEnd) {`);
+      lines.push(`  _desc = _jsReadListPrimPtr(reader._u8, reader._dv, reader._dataPtr, ${parentDataWords}, ${ptrIndex}, _msgStart, _msgEnd, ${1 << viewSpec.shift});`);
+      lines.push(`}`);
+      lines.push(`if (_desc) {`);
+      lines.push(`  const _count = _desc.count;`);
+      lines.push(`  const _baseByte = _desc.elementsBase;`);
+      lines.push(`  const _baseIdx = _baseByte >>> ${viewSpec.shift};`);
+      lines.push(`  return {`);
+      lines.push(`    length: _count,`);
+      lines.push(`    at(i) {`);
+      lines.push(`      if (i < 0 || i >= _count) return undefined;`);
+      // Read through the parent reader's cached typed-array view when
+      // available. _ensureCapnwasmReader refreshes the parent's view on
+      // memory growth; we trust it here. Skip _ensureCapnwasmReader in the
+      // hot path — primitive list reads don't move the cursor and the
+      // parent view is current as long as the caller is holding the
+      // reader. For UInt64/Int64/Int8 we don't cache a typed-array field
+      // on the reader, so construct the view inline; that's still much
+      // faster than the wasm-cursor reopen-per-element path.
+      if (viewSpec.field) {
+        lines.push(`      return reader.${viewSpec.field}[_baseIdx + i];`);
+      } else {
+        lines.push(`      return new ${viewSpec.ctor}(reader._u8.buffer, _baseByte, _count)[i];`);
+      }
+      lines.push(`    },`);
+      lines.push(`    *[Symbol.iterator]() { for (let i = 0; i < _count; i++) yield this.at(i); },`);
+      lines.push(`    view() {`);
+      // Subarray of the parent's cached view (when present) is the cheapest
+      // form: zero allocation beyond the subarray descriptor. Otherwise
+      // construct a fresh typed array; still O(1) and zero-copy.
+      if (viewSpec.field) {
+        lines.push(`      return reader.${viewSpec.field}.subarray(_baseIdx, _baseIdx + _count);`);
+      } else {
+        lines.push(`      return new ${viewSpec.ctor}(reader._u8.buffer, _baseByte, _count);`);
+      }
+      lines.push(`    },`);
+      lines.push(`  };`);
+      lines.push(`}`);
+      lines.push(`// Cursor-based fallback: unsafe reader, no _msgEnd, or pointer decode failed.`);
+    }
+    // Cursor-based path. Used by:
+    //   - Bool lists (no typed-array mapping, bit-packed)
+    //   - Unsafe / cursor-only readers (no _msgEnd) when the fast path
+    //     above couldn't decode the pointer in JS
+    // Open the list now (the eager open at the top was skipped for
+    // typed-array-able primitive lists to avoid trapping at large N).
+    if (!eagerOpen) {
+      lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
+    }
     lines.push(`return {`);
     lines.push(`  length: size,`);
   lines.push(`  at(i) {`);
@@ -2521,29 +2595,9 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
     lines.push(`  },`);
     lines.push(`  *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },`);
     if (viewSpec) {
-      // Direct typed-array view over wasm.memory.buffer at the list's element
-      // bytes. Zero copy. The view aliases wasm linear memory, so:
-      //  - reads see the same bytes capnwasm wrote on encode
-      //  - the view is invalidated if wasm.memory grows (the underlying
-      //    ArrayBuffer detaches; reads throw TypeError per spec)
-      //  - the view is invalidated if the parent reader is disposed and
-      //    its slot is reused by a subsequent open
-      // Caller owns lifetime: don't retain past reader.dispose() / next open.
-      // Bool is intentionally absent (bit-packed, not array-mappable cleanly).
-      lines.push(`  view() {`);
-      lines.push(`    _ensureCapnwasmReader(reader);`);
-      // M5.5: decode the list pointer in pure JS to find the element byte
-      // range. Falls back to the wasm any_list path on undefined (e.g.
-      // the unsafe / no-msgEnd reader), where we can't safely return a
-      // view because the cursor-based path doesn't expose stable bytes.
-      lines.push(`    const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;`);
-      lines.push(`    if (!_msgEnd) {`);
-      lines.push(`      throw new Error("view() requires a slot-pool reader; got an unsafe / cursor-only reader");`);
-      lines.push(`    }`);
-      lines.push(`    const desc = _jsReadListPrimPtr(reader._u8, reader._dv, reader._dataPtr, ${parentDataWords}, ${ptrIndex}, _msgStart, _msgEnd, ${1 << viewSpec.shift});`);
-      lines.push(`    if (!desc) throw new Error("view(): list pointer decode failed");`);
-      lines.push(`    return new ${viewSpec.ctor}(reader._u8.buffer, desc.elementsBase, desc.count);`);
-      lines.push(`  },`);
+      // Cursor-based readers can't safely return an aliased view (the
+      // bytes aren't pinned to a known address). Throw cleanly.
+      lines.push(`  view() { throw new Error("view() requires a slot-pool reader; got an unsafe / cursor-only reader"); },`);
     }
     lines.push(`};`);
     return lines;
@@ -2693,26 +2747,36 @@ const PRIMITIVE_LIST_GETTERS = {
   "Float64": "((bits) => { _F64_VIEW_U32[0] = Number(bits & 0xFFFFFFFFn) >>> 0; _F64_VIEW_U32[1] = Number(bits >> 32n) >>> 0; return _F64_VIEW_F64[0]; })(cpp._exports.cpp_any_list_get_float64_bits(i))",
 };
 
-// Maps a capnp primitive type to: { ctor, shift } where ctor is the JS
-// typed-array constructor name and shift is log2(elementSize). Used by
-// list.view() codegen. Bool is omitted on purpose: capnp bit-packs bool
-// list elements 8-per-byte, which doesn't map cleanly to a typed array
-// without bit decoding; we leave that as `at(i)` only.
+// Maps a capnp primitive type to:
+//   ctor   — the JS typed-array constructor name (Float64Array, Uint32Array...)
+//   shift  — log2(elementSize). For computing typed-array index from a byte
+//            offset: idx = byteOffset >>> shift.
+//   field  — the cached typed-array field name on the Reader (`_u8`, `_u32`, ...).
+// Used by list.view() codegen. Bool is omitted: capnp bit-packs bool list
+// elements 8-per-byte, no clean typed-array mapping; we leave that as at(i)
+// over the cursor path.
 //
 // Int64 / UInt64 use BigInt typed arrays — the view itself is zero-copy,
 // but iterating it allocates a BigInt per element. Still useful for code
 // that stays in BigInt land or hands the view to a typed consumer.
+//
+// The Reader doesn't currently cache _u8/_i8/_u64/_i64 typed-array fields
+// (they aren't used in struct-field reads). For UInt8/Int8 lists we use
+// _u8 — that field IS cached. For UInt64/Int64 we cache lazily on first
+// access via the cpp's _u64()/_i64() getters; for the list-view fast path,
+// the BigInt typed arrays aren't on the parent reader, so we construct
+// them inline (cheap; new TypedArray(buffer, byteOffset, count) is O(1)).
 const PRIMITIVE_LIST_VIEWS = {
-  "UInt8":   { ctor: "Uint8Array",        shift: 0 },
-  "Int8":    { ctor: "Int8Array",         shift: 0 },
-  "UInt16":  { ctor: "Uint16Array",       shift: 1 },
-  "Int16":   { ctor: "Int16Array",        shift: 1 },
-  "UInt32":  { ctor: "Uint32Array",       shift: 2 },
-  "Int32":   { ctor: "Int32Array",        shift: 2 },
-  "UInt64":  { ctor: "BigUint64Array",    shift: 3 },
-  "Int64":   { ctor: "BigInt64Array",     shift: 3 },
-  "Float32": { ctor: "Float32Array",      shift: 2 },
-  "Float64": { ctor: "Float64Array",      shift: 3 },
+  "UInt8":   { ctor: "Uint8Array",     shift: 0, field: "_u8"  },
+  "Int8":    { ctor: "Int8Array",      shift: 0, field: null   },
+  "UInt16":  { ctor: "Uint16Array",    shift: 1, field: "_u16" },
+  "Int16":   { ctor: "Int16Array",     shift: 1, field: "_i16" },
+  "UInt32":  { ctor: "Uint32Array",    shift: 2, field: "_u32" },
+  "Int32":   { ctor: "Int32Array",     shift: 2, field: "_i32" },
+  "UInt64":  { ctor: "BigUint64Array", shift: 3, field: null   },
+  "Int64":   { ctor: "BigInt64Array",  shift: 3, field: null   },
+  "Float32": { ctor: "Float32Array",   shift: 2, field: "_f32" },
+  "Float64": { ctor: "Float64Array",   shift: 3, field: "_f64" },
 };
 
 function generateGetter(field) {

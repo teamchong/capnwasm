@@ -238,9 +238,11 @@ JSON.parse can't do any of these because it materializes a JS object graph; the 
 
 ## Trap 9: a fast path found an old bug
 
-The `view()` bench summed 8000 Float64s. The `at(i)` baseline trapped on the third repeat. Primitive-list `at(i)` codegen reopens the list per element via `cpp_any_open_list(ptrIndex)`; struct lists were already moved to a single open + cached descriptor in M5.5, primitive lists were not.
+The `view()` bench summed 8000 Float64s. The `at(i)` baseline trapped (`RuntimeError: unreachable`) on the third repeat. Primitive-list `at(i)` codegen reopened the list per element via `cpp_any_open_list(ptrIndex)`; struct lists had already been moved to a single open + cached descriptor in M5.5, primitive lists hadn't.
 
-Workload that needs `at(i)` over thousands of primitives is exactly what `view()` is for. Filed; not fixing today.
+Fix: same JS-pointer-decode path `view()` uses. Eager wasm open removed for typed-array-able primitive lists. `at(i)` reads through the parent reader's typed-array view at the cached `_baseIdx + i`. No wasm boundary call per element.
+
+At N=8000: `at(i)` 24 µs (was trapping), `view()` 12 µs, JSON.parse 220 µs. Both forms now beat JSON by 9-19×.
 
 Bench at adversarial sizes. N=10 would have hidden this forever.
 
