@@ -2,6 +2,24 @@
 
 import type { CapnCpp } from "capnwasm";
 
+export declare class Box$TextReader {
+  constructor(cpp: CapnCpp);
+  readonly value: string;
+  toObject(): {
+    value: string;
+  };
+  draft<T>(fn: (draft: any) => T): T;
+}
+
+export declare class Box$TagReader {
+  constructor(cpp: CapnCpp);
+  readonly value: TagReader;
+  toObject(): {
+    value: TagReader;
+  };
+  draft<T>(fn: (draft: any) => T): T;
+}
+
 export declare class TagReader {
   constructor(cpp: CapnCpp);
   readonly name: string;
@@ -24,14 +42,14 @@ export declare class BoxReader {
 
 export declare class UseBoxReader {
   constructor(cpp: CapnCpp);
-  readonly textBox: BoxReader;
-  readonly tagBox: BoxReader;
+  readonly textBox: Box$TextReader;
+  readonly tagBox: Box$TagReader;
   toObject(): {
-    textBox: BoxReader;
-    tagBox: BoxReader;
+    textBox: Box$TextReader;
+    tagBox: Box$TagReader;
   };
   draft<T>(fn: (draft: any) => T): T;
 }
 
-export declare function openTag(cpp: CapnCpp, bytes: Uint8Array): TagReader;
-export declare function openTagUnsafe(cpp: CapnCpp, bytes: Uint8Array): TagReader;
+export declare function openBox$Text(cpp: CapnCpp, bytes: Uint8Array): Box$TextReader;
+export declare function openBox$TextUnsafe(cpp: CapnCpp, bytes: Uint8Array): Box$TextReader;

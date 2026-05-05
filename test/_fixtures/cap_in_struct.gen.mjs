@@ -1702,6 +1702,26 @@ export class greet$ResultsBuilder {
   }
   set greeting(value) {
     if (value == null) return;
+    if (value && value._cpp && typeof value._slotIdx === "number") {
+      if (this._exp.cpp_any_builder_set_anypointer_from_slot(0, value._slotIdx) !== 1) {
+        throw new Error("orphan/Reader adopt failed for greeting");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (value && value._capnpFrame instanceof Uint8Array) {
+      const _frame = value._capnpFrame;
+      this._cpp._u8.set(_frame, this._exp.cpp_in_ptr());
+      if (this._exp.cpp_any_builder_set_struct_from_bytes(0, _frame.length) !== 1) {
+        throw new Error("orphan/bytes adopt failed for greeting");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
     if (this._exp.cpp_any_builder_enter_struct(0, 0, 2) !== 1) {
       throw new Error("cpp_any_builder_enter_struct failed for greeting");
     }
@@ -1774,6 +1794,26 @@ export class useCap$ParamsBuilder {
   }
   set greeting(value) {
     if (value == null) return;
+    if (value && value._cpp && typeof value._slotIdx === "number") {
+      if (this._exp.cpp_any_builder_set_anypointer_from_slot(0, value._slotIdx) !== 1) {
+        throw new Error("orphan/Reader adopt failed for greeting");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (value && value._capnpFrame instanceof Uint8Array) {
+      const _frame = value._capnpFrame;
+      this._cpp._u8.set(_frame, this._exp.cpp_in_ptr());
+      if (this._exp.cpp_any_builder_set_struct_from_bytes(0, _frame.length) !== 1) {
+        throw new Error("orphan/bytes adopt failed for greeting");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
     if (this._exp.cpp_any_builder_enter_struct(0, 0, 2) !== 1) {
       throw new Error("cpp_any_builder_enter_struct failed for greeting");
     }

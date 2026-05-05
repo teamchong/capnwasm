@@ -129,6 +129,69 @@ function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, ms
   return { elementsBase, count: elementCount, dataWords: tagDataWords, ptrWords: tagPtrWords };
 }
 
+class _AnyPointerReadHandle {
+  constructor(parent, parentDataWords, ptrIndex) {
+    this._parent = parent;
+    this._parentDataWords = parentDataWords;
+    this._ptrIndex = ptrIndex;
+  }
+  /** Returns the AnyPointer slot interpreted as Text, or null when the slot is null. */
+  asText() {
+    _ensureCapnwasmReader(this._parent);
+    const p = this._parent;
+    const v = _jsReadTextPtr(p._u8, p._dv, p._dataPtr, this._parentDataWords, this._ptrIndex, p._msgStart, p._msgEnd);
+    if (v !== undefined) return v ?? "";
+    const len = p._cpp._exports.cpp_any_text_at(this._ptrIndex);
+    if (len === 0) return "";
+    const out = p._cpp._outPtr;
+    return decodeAscii(p._cpp._u8.subarray(out, out + len));
+  }
+  /** Returns the AnyPointer slot as a Uint8Array (Data), or an empty array. */
+  asData() {
+    _ensureCapnwasmReader(this._parent);
+    const p = this._parent;
+    const v = _jsReadDataPtr(p._u8, p._dv, p._dataPtr, this._parentDataWords, this._ptrIndex, p._msgStart, p._msgEnd);
+    if (v !== undefined) return v ?? new Uint8Array(0);
+    const len = p._cpp._exports.cpp_any_data_at(this._ptrIndex);
+    const out = p._cpp._outPtr;
+    return p._cpp._u8.slice(out, out + len);
+  }
+  /** Decode the slot as a struct of the given Reader class. Pass the codegen reader class. */
+  asStruct(ReaderClass) {
+    _ensureCapnwasmReader(this._parent);
+    const p = this._parent;
+    const cpp = p._cpp;
+    const _msgStart = p._msgStart, _msgEnd = p._msgEnd;
+    const rebind = () => {
+      _ensureCapnwasmReader(p);
+      cpp._exports.cpp_any_slot_reset_root?.();
+      cpp._exports.cpp_any_enter_struct(this._ptrIndex);
+      cpp._bumpGeneration();
+    };
+    if (_msgEnd) {
+      const desc = _jsReadStructPtr(p._u8, p._dv, p._dataPtr, this._parentDataWords, this._ptrIndex, _msgStart, _msgEnd);
+      if (desc !== undefined) {
+        const dp = desc === null ? 0 : desc.dataPtr;
+        return new ReaderClass(cpp, dp, {
+          slotIdx: p._slotIdx,
+          msgStart: _msgStart,
+          msgEnd: _msgEnd,
+          gen: -1,
+          parent: p,
+          rebind,
+        });
+      }
+    }
+    rebind();
+    return new ReaderClass(cpp, 0, {
+      msg: p._msg,
+      slotIdx: p._slotIdx,
+      gen: cpp._generation ?? 0,
+      rebind,
+    });
+  }
+}
+
 const _F32_VIEW_BUF = new ArrayBuffer(4);
 const _F32_VIEW_U32 = new Uint32Array(_F32_VIEW_BUF);
 const _F32_VIEW_F32 = new Float32Array(_F32_VIEW_BUF);
@@ -798,6 +861,7 @@ export class TagReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -878,6 +942,7 @@ export class AllTypesReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -1224,12 +1289,14 @@ export class AllTypesReader {
       }
     }
     // Cursor fallback: position the C++ cursor on the nested struct so
-    // subsequent getters read from the right level.
+    // subsequent getters read from the right level. Pass parent so
+    // the nested reader inherits _capTable for cap-typed fields.
     _rebindNested();
     return new TagReader(cpp, 0, {
       msg: reader._msg,
       slotIdx: reader._slotIdx,
       gen: cpp._generation ?? 0,
+      parent: reader,
       rebind: _rebindNested,
     });
   }
@@ -1333,6 +1400,7 @@ export class InteropMessageReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -1394,12 +1462,14 @@ export class InteropMessageReader {
       }
     }
     // Cursor fallback: position the C++ cursor on the nested struct so
-    // subsequent getters read from the right level.
+    // subsequent getters read from the right level. Pass parent so
+    // the nested reader inherits _capTable for cap-typed fields.
     _rebindNested();
     return new AllTypesReader(cpp, 0, {
       msg: reader._msg,
       slotIdx: reader._slotIdx,
       gen: cpp._generation ?? 0,
+      parent: reader,
       rebind: _rebindNested,
     });
   }
@@ -1448,6 +1518,7 @@ export class TagBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set name(value) {
@@ -1511,6 +1582,7 @@ export class AllTypesBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set boolField(value) {
@@ -1667,17 +1739,37 @@ export class AllTypesBuilder {
     if (this._exp.cpp_any_builder_enter_struct(7, 1, 1) !== 1) {
       throw new Error("cpp_any_builder_enter_struct failed for nested");
     }
-    const sub = new TagBuilder(this._cpp, { preinitialized: true });
+    const sub = new TagBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
     sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
     sub._exitOnFinalize = true;
     return sub;
   }
   set nested(value) {
     if (value == null) return;
+    if (value && value._cpp && typeof value._slotIdx === "number") {
+      if (this._exp.cpp_any_builder_set_anypointer_from_slot(7, value._slotIdx) !== 1) {
+        throw new Error("orphan/Reader adopt failed for nested");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (value && value._capnpFrame instanceof Uint8Array) {
+      const _frame = value._capnpFrame;
+      this._cpp._u8.set(_frame, this._exp.cpp_in_ptr());
+      if (this._exp.cpp_any_builder_set_struct_from_bytes(7, _frame.length) !== 1) {
+        throw new Error("orphan/bytes adopt failed for nested");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
     if (this._exp.cpp_any_builder_enter_struct(7, 1, 1) !== 1) {
       throw new Error("cpp_any_builder_enter_struct failed for nested");
     }
-    const sub = new TagBuilder(this._cpp, { preinitialized: true });
+    const sub = new TagBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
     sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
     sub.fromObject(value);
     if (this._exp.cpp_any_builder_exit_struct() !== 1) {
@@ -1698,7 +1790,7 @@ export class AllTypesBuilder {
       if (this._exp.cpp_any_builder_enter_list_element(8, i) !== 1) {
         throw new Error("enter_list_element(" + i + ") failed for tagList");
       }
-      const sub = new TagBuilder(this._cpp, { preinitialized: true });
+      const sub = new TagBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
       sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
       sub.fromObject(item);
       if (this._exp.cpp_any_builder_exit_struct() !== 1) {
@@ -1774,23 +1866,44 @@ export class InteropMessageBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   get payload() {
     if (this._exp.cpp_any_builder_enter_struct(0, 6, 9) !== 1) {
       throw new Error("cpp_any_builder_enter_struct failed for payload");
     }
-    const sub = new AllTypesBuilder(this._cpp, { preinitialized: true });
+    const sub = new AllTypesBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
     sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
     sub._exitOnFinalize = true;
     return sub;
   }
   set payload(value) {
     if (value == null) return;
+    if (value && value._cpp && typeof value._slotIdx === "number") {
+      if (this._exp.cpp_any_builder_set_anypointer_from_slot(0, value._slotIdx) !== 1) {
+        throw new Error("orphan/Reader adopt failed for payload");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (value && value._capnpFrame instanceof Uint8Array) {
+      const _frame = value._capnpFrame;
+      this._cpp._u8.set(_frame, this._exp.cpp_in_ptr());
+      if (this._exp.cpp_any_builder_set_struct_from_bytes(0, _frame.length) !== 1) {
+        throw new Error("orphan/bytes adopt failed for payload");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
     if (this._exp.cpp_any_builder_enter_struct(0, 6, 9) !== 1) {
       throw new Error("cpp_any_builder_enter_struct failed for payload");
     }
-    const sub = new AllTypesBuilder(this._cpp, { preinitialized: true });
+    const sub = new AllTypesBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
     sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
     sub.fromObject(value);
     if (this._exp.cpp_any_builder_exit_struct() !== 1) {

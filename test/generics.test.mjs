@@ -114,3 +114,48 @@ test("AnyPointer setter rejects unsupported value shapes", () => {
   assert.throws(() => { b.value = 42; }, /AnyPointer setter/);
   assert.throws(() => { b.value = { not: "a-reader" }; }, /AnyPointer setter/);
 });
+
+test("generic specialization: Box$Text exposes value as a typed string", async () => {
+  // Codegen synthesized a Box$Text Reader/Builder for the Box(Text)
+  // instantiation seen in UseBox.textBox. The specialized classes have
+  // `value` typed as Text directly — no manual .asText() call needed.
+  const { buildBox$Text, openBox$Text, Box$TextBuilder, Box$TextReader } =
+    await import("./_fixtures/generics.gen.mjs");
+  const b = buildBox$Text(cpp);
+  b.value = "specialized";
+  const bytes = b.toBytes();
+  const r = openBox$Text(cpp, bytes);
+  assert.equal(r.value, "specialized");
+  r.dispose();
+});
+
+test("generic specialization: Box$Tag exposes value as a typed Tag reader", async () => {
+  const { buildBox$Tag, openBox$Tag, Box$TagBuilder, Box$TagReader, TagBuilder, TagReader: _Tr } =
+    await import("./_fixtures/generics.gen.mjs");
+  const b = buildBox$Tag(cpp);
+  // For now the AnyPointer-style setter still works on a specialized
+  // Box$Tag because the underlying field is still a pointer. We accept
+  // a Tag reader and copy it in.
+  const tag = buildTag(cpp).fromObject({ name: "sp", weight: 11 }).toBytes();
+  b.value = openTag(cpp, tag);
+  const bytes = b.toBytes();
+  const r = openBox$Tag(cpp, bytes);
+  assert.equal(r.value.name, "sp");
+  assert.equal(r.value.weight, 11);
+  r.dispose();
+});
+
+test("generic specialization: UseBox.textBox returns Box$TextReader (typed access)", async () => {
+  const { buildUseBox, openUseBox } = await import("./_fixtures/generics.gen.mjs");
+  const b = buildUseBox(cpp);
+  // The UseBox field setter for textBox uses the existing nested-struct
+  // pattern, which routes through enter_struct. Since Box$Text has the
+  // same wire layout as Box (1 ptr field), the bytes are identical.
+  const tb = b.textBox;
+  tb.value = "from-usebox";
+  const bytes = b.toBytes();
+  const r = openUseBox(cpp, bytes);
+  // Typed access — no .asText() call.
+  assert.equal(r.textBox.value, "from-usebox");
+  r.dispose();
+});

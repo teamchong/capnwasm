@@ -2209,6 +2209,32 @@ function _capnwasmPick(cpp, fields, names) {`);
           lines.push(`    this._exp.cpp_any_builder_set_uint16(${discByteOff}, ${f.discriminantValue});`);
         }
         lines.push(`    if (value == null) return;`);
+        // Reader / orphan-adopt fast path: if the user passes another
+        // Cap'n Proto Reader (e.g. one produced from a separately-built
+        // "orphan" message), deep-copy its struct content into this
+        // pointer slot via setAs<AnyPointer>. Same effect as upstream's
+        // `parent.adoptField(orphan)` — gives us orphan ergonomics
+        // without per-orphan slot machinery.
+        lines.push(`    if (value && value._cpp && typeof value._slotIdx === "number") {`);
+        lines.push(`      if (this._exp.cpp_any_builder_set_anypointer_from_slot(${f.ptrIndex}, value._slotIdx) !== 1) {`);
+        lines.push(`        throw new Error("orphan/Reader adopt failed for ${f.name}");`);
+        lines.push(`      }`);
+        lines.push(`      this._u8 = this._cpp._u8;`);
+        lines.push(`      this._dataPtr = this._exp.cpp_any_builder_data_ptr();`);
+        lines.push(`      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`);
+        lines.push(`      return;`);
+        lines.push(`    }`);
+        lines.push(`    if (value && value._capnpFrame instanceof Uint8Array) {`);
+        lines.push(`      const _frame = value._capnpFrame;`);
+        lines.push(`      this._cpp._u8.set(_frame, this._exp.cpp_in_ptr());`);
+        lines.push(`      if (this._exp.cpp_any_builder_set_struct_from_bytes(${f.ptrIndex}, _frame.length) !== 1) {`);
+        lines.push(`        throw new Error("orphan/bytes adopt failed for ${f.name}");`);
+        lines.push(`      }`);
+        lines.push(`      this._u8 = this._cpp._u8;`);
+        lines.push(`      this._dataPtr = this._exp.cpp_any_builder_data_ptr();`);
+        lines.push(`      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`);
+        lines.push(`      return;`);
+        lines.push(`    }`);
         lines.push(`    if (this._exp.cpp_any_builder_enter_struct(${f.ptrIndex}, ${dWords}, ${pWords}) !== 1) {`);
         lines.push(`      throw new Error("cpp_any_builder_enter_struct failed for ${f.name}");`);
         lines.push(`    }`);

@@ -10,6 +10,34 @@ function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) 
   if (!msgEnd) return undefined;
   const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
   if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  return _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);
+}
+
+function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  return _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);
+}
+
+function _jsReadListPointerPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return { elementsBase: 0, count: 0 };
+  if ((word0 & 3) !== 1) return undefined;
+  if ((word1 & 7) !== 6) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const count = word1 >>> 3;
+  const elementsBase = ptrAddr + 8 + offset * 8;
+  if (elementsBase < msgStart || elementsBase + count * 8 > msgEnd) return undefined;
+  return { elementsBase, count };
+}
+
+function _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd) {
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
   const word0 = dv.getUint32(ptrAddr, true);
   const word1 = dv.getUint32(ptrAddr + 4, true);
   if (word0 === 0 && word1 === 0) return null;
@@ -25,9 +53,7 @@ function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) 
   return SHARED_TEXT_DECODER.decode(u8.subarray(target, target + len));
 }
 
-function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
-  if (!msgEnd) return undefined;
-  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+function _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd) {
   if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
   const word0 = dv.getUint32(ptrAddr, true);
   const word1 = dv.getUint32(ptrAddr + 4, true);
@@ -61,6 +87,23 @@ function _jsReadListPrimPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgE
   return { elementsBase, count: elementCount };
 }
 
+function _jsReadStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return null;
+  if ((word0 & 3) !== 0) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const dWords = word1 & 0xffff;
+  const pWords = (word1 >>> 16) & 0xffff;
+  const target = ptrAddr + 8 + offset * 8;
+  const totalBytes = (dWords + pWords) * 8;
+  if (target < msgStart || target + totalBytes > msgEnd) return undefined;
+  return { dataPtr: target, dataWords: dWords, ptrWords: pWords };
+}
+
 function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
   if (!msgEnd) return undefined;
   const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
@@ -84,6 +127,69 @@ function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, ms
   const elementsBase = target + 8;
   if (elementsBase + elementCount * wordsPerElement * 8 > msgEnd) return undefined;
   return { elementsBase, count: elementCount, dataWords: tagDataWords, ptrWords: tagPtrWords };
+}
+
+class _AnyPointerReadHandle {
+  constructor(parent, parentDataWords, ptrIndex) {
+    this._parent = parent;
+    this._parentDataWords = parentDataWords;
+    this._ptrIndex = ptrIndex;
+  }
+  /** Returns the AnyPointer slot interpreted as Text, or null when the slot is null. */
+  asText() {
+    _ensureCapnwasmReader(this._parent);
+    const p = this._parent;
+    const v = _jsReadTextPtr(p._u8, p._dv, p._dataPtr, this._parentDataWords, this._ptrIndex, p._msgStart, p._msgEnd);
+    if (v !== undefined) return v ?? "";
+    const len = p._cpp._exports.cpp_any_text_at(this._ptrIndex);
+    if (len === 0) return "";
+    const out = p._cpp._outPtr;
+    return decodeAscii(p._cpp._u8.subarray(out, out + len));
+  }
+  /** Returns the AnyPointer slot as a Uint8Array (Data), or an empty array. */
+  asData() {
+    _ensureCapnwasmReader(this._parent);
+    const p = this._parent;
+    const v = _jsReadDataPtr(p._u8, p._dv, p._dataPtr, this._parentDataWords, this._ptrIndex, p._msgStart, p._msgEnd);
+    if (v !== undefined) return v ?? new Uint8Array(0);
+    const len = p._cpp._exports.cpp_any_data_at(this._ptrIndex);
+    const out = p._cpp._outPtr;
+    return p._cpp._u8.slice(out, out + len);
+  }
+  /** Decode the slot as a struct of the given Reader class. Pass the codegen reader class. */
+  asStruct(ReaderClass) {
+    _ensureCapnwasmReader(this._parent);
+    const p = this._parent;
+    const cpp = p._cpp;
+    const _msgStart = p._msgStart, _msgEnd = p._msgEnd;
+    const rebind = () => {
+      _ensureCapnwasmReader(p);
+      cpp._exports.cpp_any_slot_reset_root?.();
+      cpp._exports.cpp_any_enter_struct(this._ptrIndex);
+      cpp._bumpGeneration();
+    };
+    if (_msgEnd) {
+      const desc = _jsReadStructPtr(p._u8, p._dv, p._dataPtr, this._parentDataWords, this._ptrIndex, _msgStart, _msgEnd);
+      if (desc !== undefined) {
+        const dp = desc === null ? 0 : desc.dataPtr;
+        return new ReaderClass(cpp, dp, {
+          slotIdx: p._slotIdx,
+          msgStart: _msgStart,
+          msgEnd: _msgEnd,
+          gen: -1,
+          parent: p,
+          rebind,
+        });
+      }
+    }
+    rebind();
+    return new ReaderClass(cpp, 0, {
+      msg: p._msg,
+      slotIdx: p._slotIdx,
+      gen: cpp._generation ?? 0,
+      rebind,
+    });
+  }
 }
 
 const _F32_VIEW_BUF = new ArrayBuffer(4);
@@ -485,13 +591,15 @@ function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
   if (!unsafe && typeof cpp._allocMessage === "function") {
     const msg = cpp._allocMessage(bytes);
     const dataPtr = cpp._openAnyMessage(msg);
-    return { dataPtr, slotIdx: 0, slotHandle: null, msg, gen: cpp._generation };
+    return { dataPtr, slotIdx: 0, slotHandle: null, msg, msgStart: msg.ptr + (msg.segment0Start ?? 8), msgEnd: msg.ptr + (msg.segment0End ?? msg.len), gen: cpp._generation };
   }
   if (bytes.length > cpp._exports.cpp_in_capacity()) throw new Error("input larger than scratch buffer");
   cpp._u8.set(bytes, cpp._exports.cpp_in_ptr());
   const dataPtr = cpp._exports.cpp_any_open(bytes.length);
   if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();
-  return { dataPtr, slotIdx: 0, slotHandle: null, msg: null, gen: cpp._generation ?? 0 };
+  const msgStart = cpp._exports.cpp_any_msg_start?.() >>> 0;
+  const msgEnd = cpp._exports.cpp_any_msg_end?.() >>> 0;
+  return { dataPtr, slotIdx: 0, slotHandle: null, msg: null, msgStart, msgEnd, gen: cpp._generation ?? 0 };
 }
 function _ensureCapnwasmReader(reader) {
   if (reader._disposed) throw new DisposedReaderError();
@@ -753,6 +861,7 @@ export class TagReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -833,6 +942,7 @@ export class CommentReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -969,6 +1079,7 @@ export class PostMetaReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -1016,7 +1127,47 @@ export class PostMetaReader {
   }
   get parent() {
     _ensureCapnwasmReader(this);
-    throw new Error("unsupported pointer type: PostMetaParent");
+    const reader = this;
+    const cpp = this._cpp;
+    const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;
+    // Rebind closure for cursor-only sub-readers: re-position the C++
+    // any_stack onto this nested struct before any boundary call. Used
+    // by paths the JS decoder doesn't cover (Bool list, unsafe readers).
+    const _rebindNested = () => {
+      _ensureCapnwasmReader(reader);
+      cpp._exports.cpp_any_slot_reset_root?.();
+      cpp._exports.cpp_any_enter_struct(1);
+      cpp._bumpGeneration();
+    };
+    if (_msgEnd) {
+      const desc = _jsReadStructPtr(reader._u8, reader._dv, reader._dataPtr, 1, 1, _msgStart, _msgEnd);
+      if (desc !== undefined) {
+        const dp = desc === null ? 0 : desc.dataPtr;
+        // gen=-1 forces _ensureCapnwasmReader to invoke the rebind on the
+        // first cursor-using access, which positions the C++ any_stack
+        // onto this nested struct. Pure-JS reads via _dataPtr never hit
+        // that branch; only Bool list / unsafe paths need the cursor.
+        return new PostMetaParentReader(cpp, dp, {
+          slotIdx: reader._slotIdx,
+          msgStart: _msgStart,
+          msgEnd: _msgEnd,
+          gen: -1,
+          parent: reader,
+          rebind: _rebindNested,
+        });
+      }
+    }
+    // Cursor fallback: position the C++ cursor on the nested struct so
+    // subsequent getters read from the right level. Pass parent so
+    // the nested reader inherits _capTable for cap-typed fields.
+    _rebindNested();
+    return new PostMetaParentReader(cpp, 0, {
+      msg: reader._msg,
+      slotIdx: reader._slotIdx,
+      gen: cpp._generation ?? 0,
+      parent: reader,
+      rebind: _rebindNested,
+    });
   }
 
   static _FIELDS = {
@@ -1054,6 +1205,7 @@ export class PostReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -1202,7 +1354,47 @@ export class PostReader {
   }
   get meta() {
     _ensureCapnwasmReader(this);
-    throw new Error("unsupported pointer type: PostMeta");
+    const reader = this;
+    const cpp = this._cpp;
+    const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;
+    // Rebind closure for cursor-only sub-readers: re-position the C++
+    // any_stack onto this nested struct before any boundary call. Used
+    // by paths the JS decoder doesn't cover (Bool list, unsafe readers).
+    const _rebindNested = () => {
+      _ensureCapnwasmReader(reader);
+      cpp._exports.cpp_any_slot_reset_root?.();
+      cpp._exports.cpp_any_enter_struct(4);
+      cpp._bumpGeneration();
+    };
+    if (_msgEnd) {
+      const desc = _jsReadStructPtr(reader._u8, reader._dv, reader._dataPtr, 0, 4, _msgStart, _msgEnd);
+      if (desc !== undefined) {
+        const dp = desc === null ? 0 : desc.dataPtr;
+        // gen=-1 forces _ensureCapnwasmReader to invoke the rebind on the
+        // first cursor-using access, which positions the C++ any_stack
+        // onto this nested struct. Pure-JS reads via _dataPtr never hit
+        // that branch; only Bool list / unsafe paths need the cursor.
+        return new PostMetaReader(cpp, dp, {
+          slotIdx: reader._slotIdx,
+          msgStart: _msgStart,
+          msgEnd: _msgEnd,
+          gen: -1,
+          parent: reader,
+          rebind: _rebindNested,
+        });
+      }
+    }
+    // Cursor fallback: position the C++ cursor on the nested struct so
+    // subsequent getters read from the right level. Pass parent so
+    // the nested reader inherits _capTable for cap-typed fields.
+    _rebindNested();
+    return new PostMetaReader(cpp, 0, {
+      msg: reader._msg,
+      slotIdx: reader._slotIdx,
+      gen: cpp._generation ?? 0,
+      parent: reader,
+      rebind: _rebindNested,
+    });
   }
 
   static _FIELDS = {
@@ -1242,6 +1434,7 @@ export class PostMetaParentReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -1330,6 +1523,7 @@ export class TagBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set name(value) {
@@ -1393,6 +1587,7 @@ export class CommentBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set author(value) {
@@ -1413,6 +1608,28 @@ export class CommentBuilder {
     this._u8 = this._cpp._u8;
     if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
+  set replies(value) {
+    if (!Array.isArray(value)) throw new TypeError("List(Comment) field expects an array");
+    if (this._exp.cpp_any_builder_init_list_struct(2, value.length, 0, 3) !== 1) {
+      throw new Error("init_list_struct failed for replies");
+    }
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (item == null) continue;
+      if (this._exp.cpp_any_builder_enter_list_element(2, i) !== 1) {
+        throw new Error("enter_list_element(" + i + ") failed for replies");
+      }
+      const sub = new CommentBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+      sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      sub.fromObject(item);
+      if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+        throw new Error("exit_struct(list element) failed for replies");
+      }
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
 
   /**
    * Apply fields from a plain JS object to this builder. Same shape
@@ -1424,7 +1641,7 @@ export class CommentBuilder {
     if (o == null) return this;
     if (o.author !== undefined) this.author = o.author;
     if (o.body !== undefined) this.body = o.body;
-    // replies: List(Comment). No Builder setter yet (list / struct ref); skipped by fromObject
+    if (o.replies !== undefined) this.replies = o.replies;
     return this;
   }
 
@@ -1460,6 +1677,7 @@ export class PostMetaBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set views(value) {
@@ -1477,6 +1695,50 @@ export class PostMetaBuilder {
     this._u8 = this._cpp._u8;
     if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
+  get parent() {
+    if (this._exp.cpp_any_builder_enter_struct(1, 1, 1) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for parent");
+    }
+    const sub = new PostMetaParentBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub._exitOnFinalize = true;
+    return sub;
+  }
+  set parent(value) {
+    if (value == null) return;
+    if (value && value._cpp && typeof value._slotIdx === "number") {
+      if (this._exp.cpp_any_builder_set_anypointer_from_slot(1, value._slotIdx) !== 1) {
+        throw new Error("orphan/Reader adopt failed for parent");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (value && value._capnpFrame instanceof Uint8Array) {
+      const _frame = value._capnpFrame;
+      this._cpp._u8.set(_frame, this._exp.cpp_in_ptr());
+      if (this._exp.cpp_any_builder_set_struct_from_bytes(1, _frame.length) !== 1) {
+        throw new Error("orphan/bytes adopt failed for parent");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (this._exp.cpp_any_builder_enter_struct(1, 1, 1) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for parent");
+    }
+    const sub = new PostMetaParentBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub.fromObject(value);
+    if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+      throw new Error("cpp_any_builder_exit_struct failed for parent");
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
 
   /**
    * Apply fields from a plain JS object to this builder. Same shape
@@ -1488,7 +1750,7 @@ export class PostMetaBuilder {
     if (o == null) return this;
     if (o.views !== undefined) this.views = o.views;
     if (o.category !== undefined) this.category = o.category;
-    // parent: PostMetaParent. No Builder setter yet (list / struct ref); skipped by fromObject
+    if (o.parent !== undefined) this.parent = o.parent;
     return this;
   }
 
@@ -1524,6 +1786,7 @@ export class PostBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set title(value) {
@@ -1544,6 +1807,94 @@ export class PostBuilder {
     this._u8 = this._cpp._u8;
     if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
+  set tags(value) {
+    if (!Array.isArray(value)) throw new TypeError("List(Tag) field expects an array");
+    if (this._exp.cpp_any_builder_init_list_struct(2, value.length, 1, 1) !== 1) {
+      throw new Error("init_list_struct failed for tags");
+    }
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (item == null) continue;
+      if (this._exp.cpp_any_builder_enter_list_element(2, i) !== 1) {
+        throw new Error("enter_list_element(" + i + ") failed for tags");
+      }
+      const sub = new TagBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+      sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      sub.fromObject(item);
+      if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+        throw new Error("exit_struct(list element) failed for tags");
+      }
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+  set comments(value) {
+    if (!Array.isArray(value)) throw new TypeError("List(Comment) field expects an array");
+    if (this._exp.cpp_any_builder_init_list_struct(3, value.length, 0, 3) !== 1) {
+      throw new Error("init_list_struct failed for comments");
+    }
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (item == null) continue;
+      if (this._exp.cpp_any_builder_enter_list_element(3, i) !== 1) {
+        throw new Error("enter_list_element(" + i + ") failed for comments");
+      }
+      const sub = new CommentBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+      sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      sub.fromObject(item);
+      if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+        throw new Error("exit_struct(list element) failed for comments");
+      }
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+  get meta() {
+    if (this._exp.cpp_any_builder_enter_struct(4, 1, 2) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for meta");
+    }
+    const sub = new PostMetaBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub._exitOnFinalize = true;
+    return sub;
+  }
+  set meta(value) {
+    if (value == null) return;
+    if (value && value._cpp && typeof value._slotIdx === "number") {
+      if (this._exp.cpp_any_builder_set_anypointer_from_slot(4, value._slotIdx) !== 1) {
+        throw new Error("orphan/Reader adopt failed for meta");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (value && value._capnpFrame instanceof Uint8Array) {
+      const _frame = value._capnpFrame;
+      this._cpp._u8.set(_frame, this._exp.cpp_in_ptr());
+      if (this._exp.cpp_any_builder_set_struct_from_bytes(4, _frame.length) !== 1) {
+        throw new Error("orphan/bytes adopt failed for meta");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (this._exp.cpp_any_builder_enter_struct(4, 1, 2) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for meta");
+    }
+    const sub = new PostMetaBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub.fromObject(value);
+    if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+      throw new Error("cpp_any_builder_exit_struct failed for meta");
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
 
   /**
    * Apply fields from a plain JS object to this builder. Same shape
@@ -1555,9 +1906,9 @@ export class PostBuilder {
     if (o == null) return this;
     if (o.title !== undefined) this.title = o.title;
     if (o.author !== undefined) this.author = o.author;
-    // tags: List(Tag). No Builder setter yet (list / struct ref); skipped by fromObject
-    // comments: List(Comment). No Builder setter yet (list / struct ref); skipped by fromObject
-    // meta: PostMeta. No Builder setter yet (list / struct ref); skipped by fromObject
+    if (o.tags !== undefined) this.tags = o.tags;
+    if (o.comments !== undefined) this.comments = o.comments;
+    if (o.meta !== undefined) this.meta = o.meta;
     return this;
   }
 
@@ -1593,6 +1944,7 @@ export class PostMetaParentBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set parentId(value) {

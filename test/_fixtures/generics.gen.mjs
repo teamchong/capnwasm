@@ -848,6 +848,189 @@ function _runDraft(cpp, fields, fn) {
   return fn(_materializeDraft(cpp, fields, plan));
 }
 
+export class Box$TextReader {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, dataPtr, opts = undefined) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
+    this._dataPtr = dataPtr | 0;
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
+    this._disposed = false;
+  }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
+
+  get value() {
+    _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 0, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
+    const len = this._exp.cpp_any_text_at(0);
+    if (len === 0) return "";
+    const u8 = this._cpp._u8;
+    const out = this._cpp._outPtr;
+    return decodeAscii(u8.subarray(out, out + len));
+  }
+
+  static _FIELDS = {
+    value: {"kind":0,"off":0,"type":"text"},
+  };
+
+  draft(fn) {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _runDraft(this._cpp, Box$TextReader._FIELDS, fn);
+  }
+
+  toObject() {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _capnwasmPick(this._cpp, Box$TextReader._FIELDS, Object.keys(Box$TextReader._FIELDS));
+  }
+}
+if (typeof Symbol.dispose === "symbol") {
+  Box$TextReader.prototype[Symbol.dispose] = Box$TextReader.prototype.dispose;
+}
+
+export class Box$TagReader {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, dataPtr, opts = undefined) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
+    this._dataPtr = dataPtr | 0;
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
+    this._disposed = false;
+  }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
+
+  get value() {
+    _ensureCapnwasmReader(this);
+    const reader = this;
+    const cpp = this._cpp;
+    const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;
+    // Rebind closure for cursor-only sub-readers: re-position the C++
+    // any_stack onto this nested struct before any boundary call. Used
+    // by paths the JS decoder doesn't cover (Bool list, unsafe readers).
+    const _rebindNested = () => {
+      _ensureCapnwasmReader(reader);
+      cpp._exports.cpp_any_slot_reset_root?.();
+      cpp._exports.cpp_any_enter_struct(0);
+      cpp._bumpGeneration();
+    };
+    if (_msgEnd) {
+      const desc = _jsReadStructPtr(reader._u8, reader._dv, reader._dataPtr, 0, 0, _msgStart, _msgEnd);
+      if (desc !== undefined) {
+        const dp = desc === null ? 0 : desc.dataPtr;
+        // gen=-1 forces _ensureCapnwasmReader to invoke the rebind on the
+        // first cursor-using access, which positions the C++ any_stack
+        // onto this nested struct. Pure-JS reads via _dataPtr never hit
+        // that branch; only Bool list / unsafe paths need the cursor.
+        return new TagReader(cpp, dp, {
+          slotIdx: reader._slotIdx,
+          msgStart: _msgStart,
+          msgEnd: _msgEnd,
+          gen: -1,
+          parent: reader,
+          rebind: _rebindNested,
+        });
+      }
+    }
+    // Cursor fallback: position the C++ cursor on the nested struct so
+    // subsequent getters read from the right level. Pass parent so
+    // the nested reader inherits _capTable for cap-typed fields.
+    _rebindNested();
+    return new TagReader(cpp, 0, {
+      msg: reader._msg,
+      slotIdx: reader._slotIdx,
+      gen: cpp._generation ?? 0,
+      parent: reader,
+      rebind: _rebindNested,
+    });
+  }
+
+  static _FIELDS = {
+    value: {"kind":-1,"off":0,"type":"Tag"},
+  };
+
+  draft(fn) {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _runDraft(this._cpp, Box$TagReader._FIELDS, fn);
+  }
+
+  toObject() {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _capnwasmPick(this._cpp, Box$TagReader._FIELDS, Object.keys(Box$TagReader._FIELDS));
+  }
+}
+if (typeof Symbol.dispose === "symbol") {
+  Box$TagReader.prototype[Symbol.dispose] = Box$TagReader.prototype.dispose;
+}
+
 export class TagReader {
   static _DATA_WORDS = 1;
   static _PTR_WORDS = 1;
@@ -1061,7 +1244,7 @@ export class UseBoxReader {
         // first cursor-using access, which positions the C++ any_stack
         // onto this nested struct. Pure-JS reads via _dataPtr never hit
         // that branch; only Bool list / unsafe paths need the cursor.
-        return new BoxReader(cpp, dp, {
+        return new Box$TextReader(cpp, dp, {
           slotIdx: reader._slotIdx,
           msgStart: _msgStart,
           msgEnd: _msgEnd,
@@ -1072,12 +1255,14 @@ export class UseBoxReader {
       }
     }
     // Cursor fallback: position the C++ cursor on the nested struct so
-    // subsequent getters read from the right level.
+    // subsequent getters read from the right level. Pass parent so
+    // the nested reader inherits _capTable for cap-typed fields.
     _rebindNested();
-    return new BoxReader(cpp, 0, {
+    return new Box$TextReader(cpp, 0, {
       msg: reader._msg,
       slotIdx: reader._slotIdx,
       gen: cpp._generation ?? 0,
+      parent: reader,
       rebind: _rebindNested,
     });
   }
@@ -1103,7 +1288,7 @@ export class UseBoxReader {
         // first cursor-using access, which positions the C++ any_stack
         // onto this nested struct. Pure-JS reads via _dataPtr never hit
         // that branch; only Bool list / unsafe paths need the cursor.
-        return new BoxReader(cpp, dp, {
+        return new Box$TagReader(cpp, dp, {
           slotIdx: reader._slotIdx,
           msgStart: _msgStart,
           msgEnd: _msgEnd,
@@ -1114,19 +1299,21 @@ export class UseBoxReader {
       }
     }
     // Cursor fallback: position the C++ cursor on the nested struct so
-    // subsequent getters read from the right level.
+    // subsequent getters read from the right level. Pass parent so
+    // the nested reader inherits _capTable for cap-typed fields.
     _rebindNested();
-    return new BoxReader(cpp, 0, {
+    return new Box$TagReader(cpp, 0, {
       msg: reader._msg,
       slotIdx: reader._slotIdx,
       gen: cpp._generation ?? 0,
+      parent: reader,
       rebind: _rebindNested,
     });
   }
 
   static _FIELDS = {
-    textBox: {"kind":-1,"off":0,"type":"Box"},
-    tagBox: {"kind":-1,"off":1,"type":"Box"},
+    textBox: {"kind":-1,"off":0,"type":"Box$Text"},
+    tagBox: {"kind":-1,"off":1,"type":"Box$Tag"},
   };
 
   draft(fn) {
@@ -1145,9 +1332,160 @@ if (typeof Symbol.dispose === "symbol") {
   UseBoxReader.prototype[Symbol.dispose] = UseBoxReader.prototype.dispose;
 }
 
+_STRUCT_FIELDS["Box$Text"] = Box$TextReader._FIELDS;
+_STRUCT_FIELDS["Box$Tag"] = Box$TagReader._FIELDS;
 _STRUCT_FIELDS["Tag"] = TagReader._FIELDS;
 _STRUCT_FIELDS["Box"] = BoxReader._FIELDS;
 _STRUCT_FIELDS["UseBox"] = UseBoxReader._FIELDS;
+
+export class Box$TextBuilder {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    if (!opts || !opts.preinitialized) {
+      if (this._exp.cpp_any_builder_init(0, 1) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
+  }
+
+  set value(value) {
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._exp.cpp_any_builder_set_text(0, written);
+    this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.value !== undefined) this.value = o.value;
+    return this;
+  }
+
+  /**
+   * Build a Box$Text from a plain JS object in one call.
+   * Shorthand for `new Box$TextBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new Box$TextBuilder(cpp).fromObject(o);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const out = this._cpp._outPtr;
+    return this._cpp._u8.slice(out, out + len);
+  }
+}
+
+export class Box$TagBuilder {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    if (!opts || !opts.preinitialized) {
+      if (this._exp.cpp_any_builder_init(0, 1) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
+  }
+
+  get value() {
+    if (this._exp.cpp_any_builder_enter_struct(0, 1, 1) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for value");
+    }
+    const sub = new TagBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub._exitOnFinalize = true;
+    return sub;
+  }
+  set value(value) {
+    if (value == null) return;
+    if (value && value._cpp && typeof value._slotIdx === "number") {
+      if (this._exp.cpp_any_builder_set_anypointer_from_slot(0, value._slotIdx) !== 1) {
+        throw new Error("orphan/Reader adopt failed for value");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (value && value._capnpFrame instanceof Uint8Array) {
+      const _frame = value._capnpFrame;
+      this._cpp._u8.set(_frame, this._exp.cpp_in_ptr());
+      if (this._exp.cpp_any_builder_set_struct_from_bytes(0, _frame.length) !== 1) {
+        throw new Error("orphan/bytes adopt failed for value");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (this._exp.cpp_any_builder_enter_struct(0, 1, 1) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for value");
+    }
+    const sub = new TagBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub.fromObject(value);
+    if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+      throw new Error("cpp_any_builder_exit_struct failed for value");
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.value !== undefined) this.value = o.value;
+    return this;
+  }
+
+  /**
+   * Build a Box$Tag from a plain JS object in one call.
+   * Shorthand for `new Box$TagBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new Box$TagBuilder(cpp).fromObject(o);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const out = this._cpp._outPtr;
+    return this._cpp._u8.slice(out, out + len);
+  }
+}
 
 export class TagBuilder {
   static _DATA_WORDS = 1;
@@ -1323,17 +1661,37 @@ export class UseBoxBuilder {
     if (this._exp.cpp_any_builder_enter_struct(0, 0, 1) !== 1) {
       throw new Error("cpp_any_builder_enter_struct failed for textBox");
     }
-    const sub = new BoxBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    const sub = new Box$TextBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
     sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
     sub._exitOnFinalize = true;
     return sub;
   }
   set textBox(value) {
     if (value == null) return;
+    if (value && value._cpp && typeof value._slotIdx === "number") {
+      if (this._exp.cpp_any_builder_set_anypointer_from_slot(0, value._slotIdx) !== 1) {
+        throw new Error("orphan/Reader adopt failed for textBox");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (value && value._capnpFrame instanceof Uint8Array) {
+      const _frame = value._capnpFrame;
+      this._cpp._u8.set(_frame, this._exp.cpp_in_ptr());
+      if (this._exp.cpp_any_builder_set_struct_from_bytes(0, _frame.length) !== 1) {
+        throw new Error("orphan/bytes adopt failed for textBox");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
     if (this._exp.cpp_any_builder_enter_struct(0, 0, 1) !== 1) {
       throw new Error("cpp_any_builder_enter_struct failed for textBox");
     }
-    const sub = new BoxBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    const sub = new Box$TextBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
     sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
     sub.fromObject(value);
     if (this._exp.cpp_any_builder_exit_struct() !== 1) {
@@ -1347,17 +1705,37 @@ export class UseBoxBuilder {
     if (this._exp.cpp_any_builder_enter_struct(1, 0, 1) !== 1) {
       throw new Error("cpp_any_builder_enter_struct failed for tagBox");
     }
-    const sub = new BoxBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    const sub = new Box$TagBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
     sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
     sub._exitOnFinalize = true;
     return sub;
   }
   set tagBox(value) {
     if (value == null) return;
+    if (value && value._cpp && typeof value._slotIdx === "number") {
+      if (this._exp.cpp_any_builder_set_anypointer_from_slot(1, value._slotIdx) !== 1) {
+        throw new Error("orphan/Reader adopt failed for tagBox");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (value && value._capnpFrame instanceof Uint8Array) {
+      const _frame = value._capnpFrame;
+      this._cpp._u8.set(_frame, this._exp.cpp_in_ptr());
+      if (this._exp.cpp_any_builder_set_struct_from_bytes(1, _frame.length) !== 1) {
+        throw new Error("orphan/bytes adopt failed for tagBox");
+      }
+      this._u8 = this._cpp._u8;
+      this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
     if (this._exp.cpp_any_builder_enter_struct(1, 0, 1) !== 1) {
       throw new Error("cpp_any_builder_enter_struct failed for tagBox");
     }
-    const sub = new BoxBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    const sub = new Box$TagBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
     sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
     sub.fromObject(value);
     if (this._exp.cpp_any_builder_exit_struct() !== 1) {
@@ -1396,6 +1774,44 @@ export class UseBoxBuilder {
     const out = this._cpp._outPtr;
     return this._cpp._u8.slice(out, out + len);
   }
+}
+
+/**
+ * Open framed Cap'n Proto bytes for typed access. Returns a Box$TextReader.
+ */
+export function openBox$Text(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new Box$TextReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openBox$TextUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new Box$TextReader(cpp, opened.dataPtr, opened);
+}
+
+/** Begin building a new Box$Text message. Returns a Box$TextBuilder. */
+export function buildBox$Text(cpp) {
+  return new Box$TextBuilder(cpp);
+}
+
+/**
+ * Open framed Cap'n Proto bytes for typed access. Returns a Box$TagReader.
+ */
+export function openBox$Tag(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new Box$TagReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openBox$TagUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new Box$TagReader(cpp, opened.dataPtr, opened);
+}
+
+/** Begin building a new Box$Tag message. Returns a Box$TagBuilder. */
+export function buildBox$Tag(cpp) {
+  return new Box$TagBuilder(cpp);
 }
 
 /**

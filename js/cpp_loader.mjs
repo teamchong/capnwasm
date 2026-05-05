@@ -130,7 +130,20 @@ export class CapnCpp {
       },
       fd_close: zero,
     };
-    const importObj = { wasi_snapshot_preview1: wasi };
+    // env imports: capnwasm-defined callbacks the wasm side calls into JS
+    // for. cw_alloc_segment hooks the Cap'n Proto MessageBuilder's
+    // segment allocator. The default returns 0, signaling the C++ side
+    // to use its built-in malloc fallback (current behavior). Users
+    // override via cpp.setSegmentAllocator(fn) to plug their own buffer
+    // pool, SharedArrayBuffer-backed allocator, message-size cap, etc.
+    let userSegmentAllocator = null;
+    const env = {
+      cw_alloc_segment: (minWords) => {
+        if (userSegmentAllocator) return userSegmentAllocator(minWords) >>> 0;
+        return 0;
+      },
+    };
+    const importObj = { wasi_snapshot_preview1: wasi, env };
 
     // Dispatch carefully: do NOT touch `Response`, `Request`, or `URL` on the
     // bytes/Module fast paths. In Node, those globals come from undici and
@@ -212,6 +225,15 @@ export class CapnCpp {
         }
       } catch (_) {}
     });
+    // Expose the segment-allocator override here so it lives next to the
+    // capture closure that the wasm import sees. Pass null to revert to
+    // the default malloc fallback.
+    cpp.setSegmentAllocator = (fn) => {
+      if (fn !== null && typeof fn !== "function") {
+        throw new TypeError("setSegmentAllocator: expected function or null");
+      }
+      userSegmentAllocator = fn;
+    };
     return cpp;
   }
 

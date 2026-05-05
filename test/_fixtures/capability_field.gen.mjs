@@ -1043,7 +1043,7 @@ export class VisitReader {
   }
   get cap() {
     _ensureCapnwasmReader(this);
-    const _idx = this._exp.cpp_any_get_cap_index(1);
+    const _idx = this._exp.cpp_any_get_cap_index(this._dataPtr, 0, 1);
     if (_idx === 0xffffffff) return null;
     return this._capTable ? (this._capTable[_idx] ?? null) : null;
   }

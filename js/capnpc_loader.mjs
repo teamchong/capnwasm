@@ -146,7 +146,12 @@ export class CapnpCompiler {
       }
       out.push(s);
     }
-    return out;
+    // Generic specialization: walk every translated field for `Foo$X`
+    // names (produced by typeToName from brand-bound struct refs). For
+    // each unique specialization, synthesize a concrete Reader/Builder
+    // that mirrors the original struct's layout but with parameter
+    // types resolved through the brand bindings.
+    return synthesizeSpecializations(out, raw, refs);
   }
 
   /**
@@ -211,14 +216,28 @@ export class CapnpCompiler {
 // Map from Cap'n Proto schema type to the canonical type name our codegen
 // uses. Primitives map directly; struct/enum refs resolve their name from
 // the request's id table. Lists return a structured marker so the
-// generator can emit element-type-aware accessors.
-function typeToName(t, byId) {
+// generator can emit element-type-aware accessors. Brand bindings on
+// struct/interface refs produce specialized names (e.g. `Box$Tag` for
+// `Box(Tag)`) — see synthesizeSpecializations below for how those names
+// get backed by a real synthesized struct entry.
+//
+// `paramScope` is the scopeId of the surrounding generic struct (or
+// undefined). When resolving an AnyPointer.parameter type, we look up
+// the binding in `brandStack` for matching scopeIds.
+function typeToName(t, byId, brandStack) {
   if (typeof t === "string") return t;  // primitive
   if (t.list) {
-    const inner = typeToName(t.list, byId);
+    const inner = typeToName(t.list, byId, brandStack);
     return `List(${inner})`;
   }
-  if (t.struct)    return byId.get(String(t.struct))?.name ?? "AnyPointer";
+  if (t.struct) {
+    const base = byId.get(String(t.struct))?.name ?? "AnyPointer";
+    if (t.brand && t.brand.scopes && t.brand.scopes.length > 0) {
+      const suffix = brandSuffix(t.brand, byId, brandStack);
+      if (suffix) return `${base}${suffix}`;
+    }
+    return base;
+  }
   if (t.enum)      return byId.get(String(t.enum))?.name ?? "UInt16";
   // Interface-typed (capability) fields: tagged so codegen can emit a
   // null-returning getter / null-accepting setter without colliding with
@@ -228,7 +247,55 @@ function typeToName(t, byId) {
     const ifaceName = byId.get(String(t.interface))?.name ?? "AnyPointer";
     return `Capability(${ifaceName})`;
   }
+  if (t.parameter) {
+    // Generic parameter reference. Resolve via the surrounding brand
+    // stack: walk outward until we find a scope matching this scopeId,
+    // then pick the binding at the parameter's index.
+    if (brandStack) {
+      for (let i = brandStack.length - 1; i >= 0; i--) {
+        const brand = brandStack[i];
+        const scope = (brand?.scopes ?? []).find(s => String(s.scopeId) === String(t.parameter.scopeId));
+        if (scope && Array.isArray(scope.bind)) {
+          const binding = scope.bind[t.parameter.index];
+          if (binding && binding.type !== undefined) {
+            return typeToName(binding.type, byId, brandStack.slice(0, i));
+          }
+        }
+      }
+    }
+    return "AnyPointer";
+  }
   return "AnyPointer";
+}
+
+// Build a name suffix from a brand. For Box(Tag) -> "$Tag". For
+// Box(List(Text)) -> "$List_Text". The exact form is deterministic so
+// the same (struct, brand) tuple always produces the same name.
+function brandSuffix(brand, byId, brandStack) {
+  const parts = [];
+  for (const scope of (brand.scopes ?? [])) {
+    if (!Array.isArray(scope.bind)) continue;
+    for (const binding of scope.bind) {
+      if (binding && binding.type !== undefined) {
+        const inner = typeToName(binding.type, byId, brandStack);
+        parts.push(sanitizeNamePart(inner));
+      } else {
+        parts.push("AnyPointer");
+      }
+    }
+  }
+  if (parts.length === 0) return "";
+  return "$" + parts.join("_");
+}
+
+// Convert a possibly-nested capnp type name (e.g. "List(Text)") into
+// something safe to use inside a JS identifier. List/Capability
+// wrappers become snake-style segments.
+function sanitizeNamePart(name) {
+  return String(name)
+    .replace(/^List\(([^)]*)\)$/, (_, inner) => "List_" + sanitizeNamePart(inner))
+    .replace(/^Capability\(([^)]*)\)$/, (_, inner) => "Cap_" + sanitizeNamePart(inner))
+    .replace(/[^A-Za-z0-9_]/g, "_");
 }
 
 // For the codegen we also need to know whether a struct ref resolves to a
@@ -254,9 +321,13 @@ const TYPE_WIDTHS = {
 // `synthAccum` is a mutable list the caller passes in to collect synthetic
 // nested-struct definitions discovered during translation. The caller
 // appends them to the final structs array so they get a Reader class.
-function translateField(f, byId, parentName, synthAccum) {
+//
+// `brandStack` is the chain of brand bindings active at this field's
+// position (innermost last). Used by typeToName to resolve generic
+// parameter references when synthesizing specialized struct entries.
+function translateField(f, byId, parentName, synthAccum, brandStack) {
   if (f.slot) {
-    const typeName = typeToName(f.slot.type, byId);
+    const typeName = typeToName(f.slot.type, byId, brandStack);
     const width = TYPE_WIDTHS[typeName];
     const isPtr = !width;
     return [{
@@ -268,6 +339,9 @@ function translateField(f, byId, parentName, synthAccum) {
       bitSize: isPtr ? 0 : width,
       ptrIndex: isPtr ? f.slot.offset : undefined,
       discriminantValue: f.discriminantValue,
+      // Preserve the raw type so synthesizeSpecializations can re-emit
+      // the field's type under a different brand stack later.
+      _rawType: f.slot.type,
     }];
   }
   if (f.group !== undefined) {
@@ -287,6 +361,7 @@ function translateField(f, byId, parentName, synthAccum) {
       [],
       byId,
       synthAccum,
+      brandStack,
     );
     synthAccum.push(inner);
     return [{
@@ -301,13 +376,14 @@ function translateField(f, byId, parentName, synthAccum) {
   return [{ name: f.name, ordinal: f.ordinal, type: "Unknown", bitOffset: 0 }];
 }
 
-function translateStruct(s, _unusedAll, byIdParam, synthAccumParam) {
+function translateStruct(s, _unusedAll, byIdParam, synthAccumParam, brandStackParam) {
   // First-call public form: translateStruct(s, allStructs). Recursive form:
-  // translateStruct(s, [], byId, synthAccum). Detect by argument shape.
+  // translateStruct(s, [], byId, synthAccum, brandStack). Detect by argument shape.
   const byId = byIdParam ?? new Map(_unusedAll.map(x => [String(x.id), x]));
   const synthAccum = synthAccumParam ?? [];
+  const brandStack = brandStackParam ?? [];
   const fields = s.fields.flatMap(f =>
-    translateField(f, byId, s.name, synthAccum));
+    translateField(f, byId, s.name, synthAccum, brandStack));
   const result = {
     name: s.name,
     fields,
@@ -323,4 +399,87 @@ function translateStruct(s, _unusedAll, byIdParam, synthAccumParam) {
     result._synthStructs = synthAccum;
   }
   return result;
+}
+
+// Walk the translated struct list looking for fields whose type names
+// are specialized (`Box$Tag`, `List(Box$Tag)`, etc.) and synthesize a
+// concrete struct entry for each one. The synthesized struct mirrors
+// the original generic's wire layout but resolves any AnyPointer
+// parameter references through the brand bindings.
+//
+// Idempotent: if `Box$Tag` appears in three fields, only one entry is
+// synthesized. The list of types we walk grows recursively because a
+// specialization's own fields can reference further specializations
+// (e.g. `Box(Box(Tag))` produces both `Box$Box_Tag` and `Box$Tag`).
+function synthesizeSpecializations(structs, raw, refs) {
+  const byId = new Map(refs.map(x => [String(x.id), x]));
+  const byName = new Map(structs.map(s => [s.name, s]));
+  const rawByName = new Map(raw.filter(s => !s.isGroup).map(s => [s.name, s]));
+  const synthesized = new Map(); // specName -> struct entry
+
+  // Collect every (genericName, brand) tuple referenced from any field.
+  const queue = [];
+  function enqueueFromTypeName(typeName, fieldRawType) {
+    if (!typeName) return;
+    // Strip List(...) / Capability(...) wrappers; only struct refs synthesize.
+    let m = /^List\(([^)]*)\)$/.exec(typeName);
+    if (m) { enqueueFromTypeName(m[1], fieldRawType?.list); return; }
+    m = /^Capability\(([^)]*)\)$/.exec(typeName);
+    if (m) return; // capability brand specialization not yet emitted
+    const dollarIdx = typeName.indexOf("$");
+    if (dollarIdx < 0) return;
+    if (synthesized.has(typeName) || byName.has(typeName)) return;
+    // Resolve the raw type back to (typeId, brand). The field's _rawType
+    // points at the slot's Type Reader from the JSON; for a struct ref
+    // this is `{struct: id, brand: {...}}`. For wrapped types (List)
+    // we recurse into the element. For mismatched cases we skip
+    // synthesis — the codegen will still see the specialized name and
+    // currently treats it as an unrecognized struct.
+    const rawTy = unwrapToStruct(fieldRawType);
+    if (!rawTy || !rawTy.struct) return;
+    queue.push({ name: typeName, structId: String(rawTy.struct), brand: rawTy.brand });
+  }
+  for (const s of structs) {
+    for (const f of s.fields) {
+      enqueueFromTypeName(f.type, f._rawType);
+    }
+  }
+  while (queue.length > 0) {
+    const { name, structId, brand } = queue.shift();
+    if (synthesized.has(name) || byName.has(name)) continue;
+    const node = byId.get(structId);
+    if (!node || !node.fields) continue;
+    const brandStack = [brand];
+    const synthFields = node.fields.flatMap(f =>
+      translateField(f, byId, name, /* synthAccum */ [], brandStack)
+    );
+    const entry = {
+      name,
+      fields: synthFields,
+      dataWords: node.dataWords,
+      ptrWords: node.ptrWords,
+      discriminantCount: node.discriminantCount,
+      discriminantOffsetBits: node.discriminantOffset !== undefined ? node.discriminantOffset * 16 : undefined,
+    };
+    synthesized.set(name, entry);
+    // Specialized fields may themselves reference further specializations.
+    for (const f of synthFields) {
+      enqueueFromTypeName(f.type, f._rawType);
+    }
+  }
+  if (synthesized.size === 0) return structs;
+  // Place specializations before their first user. Order isn't strict
+  // (codegen forward-refs by name) but keeping them near the top keeps
+  // dist diffs readable.
+  return [...synthesized.values(), ...structs];
+}
+
+// Reach into a raw schema Type to find an inner struct ref. Walks
+// List(...) wrappers; returns the struct-typed Type Reader literal or
+// null if none reachable.
+function unwrapToStruct(t) {
+  if (!t || typeof t !== "object") return null;
+  if (t.struct) return t;
+  if (t.list) return unwrapToStruct(t.list);
+  return null;
 }

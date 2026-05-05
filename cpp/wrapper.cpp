@@ -1663,8 +1663,69 @@ uint32_t cpp_any_list_project(uint32_t ptr_idx, uint32_t input_len) {
 // us, so re-initialization sees a fresh-zeroed buffer.
 
 alignas(8) static capnp::word any_builder_first_seg[8192];   // 64 KB
-alignas(8) static char any_builder_storage[sizeof(capnp::MallocMessageBuilder)];
-static capnp::MallocMessageBuilder* any_builder = nullptr;
+
+// JS-imported segment allocator. Returns a wasm linear-memory pointer to
+// `minWords * 8` bytes of zero-initialized storage, or 0 to fall back to
+// the default malloc path. Always present in the import surface; the
+// default JS implementation returns 0 so behavior matches stock
+// MallocMessageBuilder. Users override via cpp.setSegmentAllocator(fn)
+// to plug their own buffer pool, SharedArrayBuffer-backed allocator,
+// size cap, etc.
+extern "C" __attribute__((import_module("env"), import_name("cw_alloc_segment")))
+uint32_t cw_alloc_segment(uint32_t minWords);
+
+// Custom MessageBuilder that funnels every segment allocation through
+// the JS-side callback first, falling back to malloc when JS returns 0.
+// Memory ownership: when JS provides a pointer, JS retains it (typical
+// pattern: cpp_msg_alloc inside the callback, freed on user's schedule).
+// When the fallback fires, this class owns the allocation and frees it
+// in the destructor.
+class JsMessageBuilder : public capnp::MessageBuilder {
+public:
+  JsMessageBuilder() = default;
+  JsMessageBuilder(kj::ArrayPtr<capnp::word> firstSegment)
+      : firstSegment(firstSegment), hasFirstSegment(true) {}
+  ~JsMessageBuilder() noexcept(false) {
+    for (void* p : ownedSegments) std::free(p);
+    if (returnedFirstSegment && hasFirstSegment && !firstSegmentOwnedByUs) {
+      std::memset(firstSegment.begin(), 0, firstSegment.size() * sizeof(capnp::word));
+    }
+  }
+  kj::ArrayPtr<capnp::word> allocateSegment(capnp::uint minimumSize) override {
+    if (hasFirstSegment && !returnedFirstSegment && firstSegment.size() >= minimumSize) {
+      returnedFirstSegment = true;
+      return firstSegment;
+    }
+    uint32_t size = minimumSize > 1024u ? (uint32_t)minimumSize : 1024u;
+    uint32_t cb = cw_alloc_segment(size);
+    if (cb != 0) {
+      // JS-owned memory; we just hand the pointer back. Caller (JS) is
+      // responsible for keeping it alive until the message is gone.
+      return kj::arrayPtr(reinterpret_cast<capnp::word*>(cb), size);
+    }
+    // Fallback: zero-initialized malloc, our class owns it.
+    void* mem = std::calloc(size, sizeof(capnp::word));
+    if (!mem) return kj::ArrayPtr<capnp::word>();
+    if (!returnedFirstSegment) {
+      firstSegment = kj::arrayPtr(reinterpret_cast<capnp::word*>(mem), size);
+      hasFirstSegment = true;
+      firstSegmentOwnedByUs = true;
+      returnedFirstSegment = true;
+    } else {
+      ownedSegments.add(mem);
+    }
+    return kj::arrayPtr(reinterpret_cast<capnp::word*>(mem), size);
+  }
+private:
+  kj::ArrayPtr<capnp::word> firstSegment;
+  bool hasFirstSegment = false;
+  bool returnedFirstSegment = false;
+  bool firstSegmentOwnedByUs = false;
+  kj::Vector<void*> ownedSegments;
+};
+
+alignas(8) static char any_builder_storage[sizeof(JsMessageBuilder)];
+static JsMessageBuilder* any_builder = nullptr;
 alignas(8) static char any_builder_root_storage[64];
 static capnp::AnyStruct::Builder* any_builder_root = nullptr;
 
@@ -1693,10 +1754,10 @@ uint32_t cpp_any_builder_init(uint32_t data_words, uint32_t ptr_words) {
     cursor_stack[0] = nullptr;
   }
   if (any_builder) {
-    any_builder->~MallocMessageBuilder();
+    any_builder->~JsMessageBuilder();
     any_builder = nullptr;
   }
-  any_builder = new (any_builder_storage) capnp::MallocMessageBuilder(
+  any_builder = new (any_builder_storage) JsMessageBuilder(
       kj::arrayPtr(any_builder_first_seg,
                    sizeof(any_builder_first_seg) / sizeof(capnp::word)));
   auto root = any_builder->initRoot<capnp::AnyPointer>();
@@ -2011,16 +2072,20 @@ uint32_t cpp_any_builder_finalize() {
 // Call.params.content / Return.results.content via initWithCaveats and
 // don't bloat this builder.
 alignas(8) static capnp::word rpc_first_seg[512];   // 4 KB
-alignas(8) static char rpc_builder_storage[sizeof(capnp::MallocMessageBuilder)];
-static capnp::MallocMessageBuilder* rpc_builder = nullptr;
+alignas(8) static char rpc_builder_storage[sizeof(JsMessageBuilder)];
+static JsMessageBuilder* rpc_builder = nullptr;
+
 alignas(8) static char rpc_reader_storage[1024];
 static capnp::FlatArrayMessageReader* rpc_reader = nullptr;
 
 // Reset rpc_builder in place using the static first segment. Replaces
-// the old `delete + new` pattern that hit calloc on every send.
+// the old `delete + new` pattern that hit calloc on every send. Uses
+// the JS-aware builder so a user-installed segment allocator can also
+// intercept RPC frame allocations (useful for capping outbound
+// message size or pooling RPC buffers).
 static inline void resetRpcBuilder() {
-  if (rpc_builder) rpc_builder->~MallocMessageBuilder();
-  rpc_builder = new (rpc_builder_storage) capnp::MallocMessageBuilder(
+  if (rpc_builder) rpc_builder->~JsMessageBuilder();
+  rpc_builder = new (rpc_builder_storage) JsMessageBuilder(
       kj::arrayPtr(rpc_first_seg, sizeof(rpc_first_seg) / sizeof(capnp::word)));
 }
 
@@ -2759,7 +2824,10 @@ uint32_t cpp_rpc_begin_call(
     cursor_depth--;
   }
   if (any_builder_root) { any_builder_root->~Builder(); any_builder_root = nullptr; cursor_stack[0] = nullptr; }
-  if (any_builder)      { delete any_builder; any_builder = nullptr; }
+  // any_builder lives in static placement-new storage (see init); call
+  // its dtor explicitly rather than `delete` (which would try to free
+  // the static buffer).
+  if (any_builder)      { any_builder->~JsMessageBuilder(); any_builder = nullptr; }
   auto contentAnyStruct = payload.getContent().initAsAnyStruct(data_words, ptr_words);
   static_assert(sizeof(capnp::AnyStruct::Builder) <= sizeof(any_builder_root_storage),
                 "any_builder_root_storage too small");
@@ -2789,7 +2857,8 @@ uint32_t cpp_rpc_begin_return(
     cursor_depth--;
   }
   if (any_builder_root) { any_builder_root->~Builder(); any_builder_root = nullptr; cursor_stack[0] = nullptr; }
-  if (any_builder)      { delete any_builder; any_builder = nullptr; }
+  // Same reason as begin_call: explicit destructor, not delete.
+  if (any_builder)      { any_builder->~JsMessageBuilder(); any_builder = nullptr; }
   auto contentAnyStruct = payload.getContent().initAsAnyStruct(data_words, ptr_words);
   any_builder_root = new (any_builder_root_storage) capnp::AnyStruct::Builder(kj::mv(contentAnyStruct));
   cursor_stack[0] = any_builder_root;

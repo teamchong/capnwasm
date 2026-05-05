@@ -271,7 +271,10 @@ static const char* primitiveTypeName(capnp::schema::Type::Which w) {
     case W::FLOAT64: return "Float64";
     case W::TEXT:    return "Text";
     case W::DATA:    return "Data";
-    case W::ANY_POINTER: return "AnyPointer";
+    // ANY_POINTER deliberately omitted: appendTypeJson handles it
+    // separately so it can distinguish unconstrained AnyPointer from a
+    // generic parameter reference (which carries scopeId + index for
+    // brand resolution).
     default: return nullptr;
   }
 }
@@ -317,6 +320,11 @@ static void appendU64Str(kj::Vector<char>& out, uint64_t v) {
 
 // Walk one Type Reader and append a JSON value (string for primitives /
 // special tokens like {"struct": id} for struct refs).
+// Forward decl: brand emission walks back into appendTypeJson for each
+// binding, since brand bindings are themselves Type values (which may
+// be parameterized struct refs in turn).
+static void appendBrandJson(kj::Vector<char>& out, capnp::schema::Brand::Reader brand);
+
 static void appendTypeJson(kj::Vector<char>& out, capnp::schema::Type::Reader t) {
   using W = capnp::schema::Type::Which;
   W w = t.which();
@@ -332,8 +340,14 @@ static void appendTypeJson(kj::Vector<char>& out, capnp::schema::Type::Reader t)
     // Type IDs are 64-bit hashes that exceed JS Number's 2^53 precision,
     // so emit them as decimal STRINGS. JS-side byId resolution stringifies
     // ids consistently and avoids silent precision-loss collisions.
+    auto sref = t.getStruct();
     out.addAll(kj::StringPtr("{\"struct\":"));
-    appendU64Str(out, t.getStruct().getTypeId());
+    appendU64Str(out, sref.getTypeId());
+    auto brand = sref.getBrand();
+    if (brand.getScopes().size() > 0) {
+      out.addAll(kj::StringPtr(",\"brand\":"));
+      appendBrandJson(out, brand);
+    }
     out.add('}');
     return;
   }
@@ -344,12 +358,77 @@ static void appendTypeJson(kj::Vector<char>& out, capnp::schema::Type::Reader t)
     return;
   }
   if (w == W::INTERFACE) {
+    auto iref = t.getInterface();
     out.addAll(kj::StringPtr("{\"interface\":"));
-    appendU64Str(out, t.getInterface().getTypeId());
+    appendU64Str(out, iref.getTypeId());
+    auto brand = iref.getBrand();
+    if (brand.getScopes().size() > 0) {
+      out.addAll(kj::StringPtr(",\"brand\":"));
+      appendBrandJson(out, brand);
+    }
     out.add('}');
     return;
   }
+  if (w == W::ANY_POINTER) {
+    auto ap = t.getAnyPointer();
+    if (ap.isParameter()) {
+      // Generic parameter reference. Codegen needs the (scopeId,
+      // parameterIndex) pair to resolve the binding via the surrounding
+      // brand context when synthesizing a specialized struct.
+      auto pp = ap.getParameter();
+      out.addAll(kj::StringPtr("{\"parameter\":{\"scopeId\":"));
+      appendU64Str(out, pp.getScopeId());
+      out.addAll(kj::StringPtr(",\"index\":"));
+      appendUint(out, pp.getParameterIndex());
+      out.addAll(kj::StringPtr("}}"));
+      return;
+    }
+    if (ap.isImplicitMethodParameter()) {
+      // Method-level generic parameter — rare; treat as opaque
+      // AnyPointer for now (codegen returns the bytes-handle).
+      out.addAll(kj::StringPtr("\"AnyPointer\""));
+      return;
+    }
+    // Unconstrained AnyPointer (`:AnyPointer` with no specialization).
+    out.addAll(kj::StringPtr("\"AnyPointer\""));
+    return;
+  }
   out.addAll(kj::StringPtr("\"Unknown\""));
+}
+
+// Emit a Brand as JSON. Shape:
+//   {"scopes":[{"scopeId":"...","bind":[{"type":<Type>}|{"unbound":true}]}]}
+// Used when a parameterized struct/interface reference carries explicit
+// bindings (e.g. `Box(Tag)` -> brand binds Box's parameter 0 to Tag).
+static void appendBrandJson(kj::Vector<char>& out, capnp::schema::Brand::Reader brand) {
+  out.addAll(kj::StringPtr("{\"scopes\":["));
+  bool firstScope = true;
+  for (auto scope : brand.getScopes()) {
+    if (!firstScope) out.add(',');
+    firstScope = false;
+    out.addAll(kj::StringPtr("{\"scopeId\":"));
+    appendU64Str(out, scope.getScopeId());
+    if (scope.isBind()) {
+      out.addAll(kj::StringPtr(",\"bind\":["));
+      bool firstBind = true;
+      for (auto b : scope.getBind()) {
+        if (!firstBind) out.add(',');
+        firstBind = false;
+        if (b.isType()) {
+          out.addAll(kj::StringPtr("{\"type\":"));
+          appendTypeJson(out, b.getType());
+          out.add('}');
+        } else {
+          out.addAll(kj::StringPtr("{\"unbound\":true}"));
+        }
+      }
+      out.add(']');
+    } else if (scope.isInherit()) {
+      out.addAll(kj::StringPtr(",\"inherit\":true"));
+    }
+    out.add('}');
+  }
+  out.addAll(kj::StringPtr("]}"));
 }
 
 // Build a short name from the displayName by taking the last component
