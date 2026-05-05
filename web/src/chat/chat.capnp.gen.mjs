@@ -199,7 +199,6 @@ const _F64_VIEW_F64 = new Float64Array(_F64_VIEW_BUF);
 
 const _LIST_HELPERS = {
   TD: SHARED_TEXT_DECODER,
-  text: _jsReadTextPtr, data: _jsReadDataPtr,
   F32U: _F32_VIEW_U32, F32F: _F32_VIEW_F32,
   F64U: _F64_VIEW_U32, F64F: _F64_VIEW_F64,
 };
@@ -564,104 +563,7 @@ function _capnwasmListProject(cpp, ptrIndex, fields, names, mapFn, bounds, filte
   return dec(u8, dv, out, rows, _LIST_HELPERS, mapFn, start, limit);
 }
 
-function _compileDirectListDecoder(descs, names, filter) {
-  const cols = descs.length;
-  let filterColIdx = -1;
-  if (filter) {
-    filterColIdx = names.indexOf(filter.field);
-    if (filterColIdx < 0 || (descs[filterColIdx] && descs[filterColIdx].type !== "bool")) { filter = null; filterColIdx = -1; }
-  }
-  const out = [];
-  out.push("const text = H.text, data = H.data;");
-  out.push("const F32U = H.F32U, F32F = H.F32F, F64U = H.F64U, F64F = H.F64F;");
-  out.push("if (start === undefined) start = 0;");
-  out.push("if (limit === undefined) limit = list.count;");
-  out.push("if (limit > list.count) limit = list.count;");
-  out.push("if (start > limit) start = limit;");
-  out.push("const arr = new Array(limit - start);");
-  if (filter) out.push("let arrIdx = 0;");
-  out.push("const step = (list.dataWords + list.ptrWords) * 8;");
-  out.push("for (let row = start; row < limit; row++) {");
-  out.push("  const dataPtr = list.elementsBase + row * step;");
-  if (filter) {
-    const fd = descs[filterColIdx];
-    const byteOff = fd.off >>> 3;
-    const bit = fd.off & 7;
-    const predCmp = filter.kind === "truthy" ? "=== 0" : "!== 0";
-    out.push("  if (((u8[dataPtr + " + byteOff + "] >> " + bit + ") & 1) " + predCmp + ") continue;");
-  }
-  for (let col = 0; col < cols; col++) {
-    const d = descs[col];
-    switch (d.type) {
-      case "text":
-        out.push("  const _t" + col + " = text(u8, dv, dataPtr, list.dataWords, " + d.off + ", msgStart, msgEnd);");
-        out.push("  const _v" + col + " = _t" + col + " === undefined ? undefined : (_t" + col + " ?? \"\");");
-        break;
-      case "data":
-        out.push("  const _d" + col + " = data(u8, dv, dataPtr, list.dataWords, " + d.off + ", msgStart, msgEnd);");
-        out.push("  const _v" + col + " = _d" + col + " === undefined ? undefined : (_d" + col + " ?? new Uint8Array(0));");
-        break;
-      case "bool": {
-        const byteOff = d.off >>> 3;
-        const bit = d.off & 7;
-        out.push("  const _v" + col + " = ((u8[dataPtr + " + byteOff + "] >> " + bit + ") & 1) === 1;");
-        break;
-      }
-      case "uint8": out.push("  const _v" + col + " = u8[dataPtr + " + d.off + "] >>> 0;"); break;
-      case "int8": out.push("  const _v" + col + " = (u8[dataPtr + " + d.off + "] << 24) >> 24;"); break;
-      case "uint16": out.push("  const _v" + col + " = dv.getUint16(dataPtr + " + d.off + ", true);"); break;
-      case "int16": out.push("  const _v" + col + " = dv.getInt16(dataPtr + " + d.off + ", true);"); break;
-      case "uint32": out.push("  const _v" + col + " = dv.getUint32(dataPtr + " + d.off + ", true) >>> 0;"); break;
-      case "int32": out.push("  const _v" + col + " = dv.getInt32(dataPtr + " + d.off + ", true);"); break;
-      case "float32": out.push("  const _v" + col + " = dv.getFloat32(dataPtr + " + d.off + ", true);"); break;
-      case "float64": out.push("  const _v" + col + " = dv.getFloat64(dataPtr + " + d.off + ", true);"); break;
-      case "int64":
-        out.push("  let _v" + col + ";");
-        out.push("  { const _lo = dv.getUint32(dataPtr + " + d.off + ", true); const _hi = dv.getInt32(dataPtr + " + (d.off + 4) + ", true); _v" + col + " = (_hi >= -0x200000 && _hi <= 0x1FFFFF) ? _hi * 4294967296 + _lo : dv.getBigInt64(dataPtr + " + d.off + ", true); }");
-        break;
-      case "uint64":
-        out.push("  let _v" + col + ";");
-        out.push("  { const _lo = dv.getUint32(dataPtr + " + d.off + ", true) >>> 0; const _hi = dv.getUint32(dataPtr + " + (d.off + 4) + ", true) >>> 0; _v" + col + " = (_hi <= 0x001FFFFF) ? _hi * 4294967296 + _lo : ((BigInt(_hi) << 32n) | BigInt(_lo)); }");
-        break;
-      default: out.push("  const _v" + col + " = undefined;");
-    }
-  }
-  const litParts = names.map((n, i) => JSON.stringify(n) + ": _v" + i);
-  const targetExpr = filter ? "arr[arrIdx++]" : "arr[row - start]";
-  out.push("  " + targetExpr + " = { " + litParts.join(", ") + " };");
-  out.push("}");
-  if (filter) out.push("arr.length = arrIdx;");
-  out.push("return arr;");
-  return new Function("u8", "dv", "list", "msgStart", "msgEnd", "H", "start", "limit", out.join("\n"));
-}
-
-function _capnwasmListProjectDirect(reader, ptrIndex, meta, names, bounds, filter) {
-  if (!reader || !reader._msgEnd || !meta) return null;
-  if (filter && names.indexOf(filter.field) < 0) return null;
-  const cpp = reader._cpp;
-  if (reader._u8.buffer !== cpp.memory.buffer) {
-    reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
-    reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
-  }
-  const list = _jsReadListStructPtr(reader._u8, reader._dv, reader._dataPtr, reader.constructor._DATA_WORDS, ptrIndex, reader._msgStart, reader._msgEnd);
-  if (list === undefined) return null;
-  if (list === null) return [];
-  const entry = _getPickRequest(meta.fields, names);
-  let start = 0, limit = list.count;
-  if (bounds) {
-    start = bounds[0] | 0; if (start > list.count) start = list.count;
-    const requested = bounds[1];
-    if (requested !== Infinity) { const max = requested | 0; if (max < limit - start) limit = start + max; }
-  }
-  if (!entry.directListDecoders) entry.directListDecoders = new Map();
-  const filterKey = filter ? filter.kind + ":" + filter.field : "";
-  let dec = entry.directListDecoders.get(filterKey);
-  if (!dec) { dec = _compileDirectListDecoder(entry.descs, names, filter); entry.directListDecoders.set(filterKey, dec); }
-  return dec(reader._u8, reader._dv, list, reader._msgStart, reader._msgEnd, _LIST_HELPERS, start, limit);
-}
-
 const _STRUCT_FIELDS = Object.create(null);
-const _STRUCT_META = Object.create(null);
 export class StaleReaderError extends Error {
   constructor(message = "Cap'n Proto reader is stale because the CapnCpp runtime opened another message") {
     super(message);
@@ -923,20 +825,16 @@ function _materializeDraft(cpp, fields, plan) {
   }
   return out;
 }
-function _runDraft(reader, fields, fn) {
-  const cpp = reader._cpp;
+function _runDraft(cpp, fields, fn) {
   const plan = _getDraftPlan(fields, fn);
   if (plan.outerListMapPos >= 0 && plan.listMap.length > 0) {
     const item = plan.listMap[plan.outerListMapPos];
     const desc = fields[item.name];
     if (desc && _STRUCT_FIELDS[item.inner] && item.plan.nested.length === 0 && item.plan.listMap.length === 0) {
       const innerFields = _STRUCT_FIELDS[item.inner];
-      const innerMeta = _STRUCT_META[item.inner];
       const fastFn = item.shapePreserving ? null : item.fn;
-      const fast = fastFn ? null : _capnwasmListProjectDirect(reader, desc.off, innerMeta, item.plan.leaf, plan.outerSlice, item.filter);
+      const fast = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf, fastFn, plan.outerSlice, item.filter);
       if (fast !== null) return fast;
-      const fallback = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf, fastFn, plan.outerSlice, item.filter);
-      if (fallback !== null) return fallback;
     }
   }
   if (plan.nested.length === 0 && plan.listMap.length === 0) {
@@ -1022,7 +920,7 @@ export class PostParamsReader {
   draft(fn) {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _runDraft(this, PostParamsReader._FIELDS, fn);
+    return _runDraft(this._cpp, PostParamsReader._FIELDS, fn);
   }
 
   toObject() {
@@ -1135,7 +1033,7 @@ export class ChatMessageReader {
   draft(fn) {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _runDraft(this, ChatMessageReader._FIELDS, fn);
+    return _runDraft(this._cpp, ChatMessageReader._FIELDS, fn);
   }
 
   toObject() {
@@ -1202,7 +1100,7 @@ export class GetSinceParamsReader {
   draft(fn) {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _runDraft(this, GetSinceParamsReader._FIELDS, fn);
+    return _runDraft(this._cpp, GetSinceParamsReader._FIELDS, fn);
   }
 
   toObject() {
@@ -1311,7 +1209,7 @@ export class ChatMessageListReader {
   draft(fn) {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _runDraft(this, ChatMessageListReader._FIELDS, fn);
+    return _runDraft(this._cpp, ChatMessageListReader._FIELDS, fn);
   }
 
   toObject() {
@@ -1325,13 +1223,9 @@ if (typeof Symbol.dispose === "symbol") {
 }
 
 _STRUCT_FIELDS["PostParams"] = PostParamsReader._FIELDS;
-_STRUCT_META["PostParams"] = { fields: PostParamsReader._FIELDS, dataWords: 0, ptrWords: 2 };
 _STRUCT_FIELDS["ChatMessage"] = ChatMessageReader._FIELDS;
-_STRUCT_META["ChatMessage"] = { fields: ChatMessageReader._FIELDS, dataWords: 2, ptrWords: 3 };
 _STRUCT_FIELDS["GetSinceParams"] = GetSinceParamsReader._FIELDS;
-_STRUCT_META["GetSinceParams"] = { fields: GetSinceParamsReader._FIELDS, dataWords: 1, ptrWords: 0 };
 _STRUCT_FIELDS["ChatMessageList"] = ChatMessageListReader._FIELDS;
-_STRUCT_META["ChatMessageList"] = { fields: ChatMessageListReader._FIELDS, dataWords: 0, ptrWords: 1 };
 
 export class PostParamsBuilder {
   static _DATA_WORDS = 0;
