@@ -699,6 +699,15 @@ function lowerFirst(s) {
   return s ? s.charAt(0).toLowerCase() + s.slice(1) : s;
 }
 
+// Codegen tags interface-typed fields as `Capability(<IfaceName>)` so it
+// can emit the right reader/builder shape. Cap'n Proto schema syntax just
+// uses the bare interface name, so unwrap the tag when emitting back to
+// .capnp text.
+function capnpFieldType(t) {
+  const m = /^Capability\(([^)]+)\)$/.exec(t ?? "");
+  return m ? m[1] : t;
+}
+
 // --- Render ---------------------------------------------------------------
 
 function render(ctx) {
@@ -731,7 +740,7 @@ function render(ctx) {
     if (s.union) {
       lines.push(`struct ${name} {`);
       lines.push(`  union {`);
-      for (const f of fList) lines.push(`    ${f.name} @${f.ordinal} :${f.type};`);
+      for (const f of fList) lines.push(`    ${f.name} @${f.ordinal} :${capnpFieldType(f.type)};`);
       lines.push(`  }`);
       lines.push(`}`);
     } else {
@@ -739,7 +748,7 @@ function render(ctx) {
       for (const f of fList) {
         const note = f.origName && f.origName !== f.name ? ` # original: "${f.origName}"` : "";
         if (f.doc) for (const l of String(f.doc).split("\n")) lines.push(`  # ${l}`);
-        lines.push(`  ${f.name} @${f.ordinal} :${f.type};${note}`);
+        lines.push(`  ${f.name} @${f.ordinal} :${capnpFieldType(f.type)};${note}`);
       }
       lines.push(`}`);
     }
@@ -753,8 +762,8 @@ function render(ctx) {
     const mList = pinMethodOrdinals(ctx, name, iface.methods);
     for (const { method: m, ordinal } of mList) {
       if (m.description) for (const l of String(m.description).split("\n")) lines.push(`  # ${l}`);
-      const paramList = m.params.map((p) => `${p.name} :${p.type}`).join(", ");
-      const result = m.resultType && m.resultType !== "Void" ? ` -> (result :${m.resultType})` : "";
+      const paramList = m.params.map((p) => `${p.name} :${capnpFieldType(p.type)}`).join(", ");
+      const result = m.resultType && m.resultType !== "Void" ? ` -> (result :${capnpFieldType(m.resultType)})` : "";
       const httpNote = m.httpVerb && m.httpPath
         ? `  # HTTP ${m.httpVerb} ${m.httpPath}\n`
         : "";

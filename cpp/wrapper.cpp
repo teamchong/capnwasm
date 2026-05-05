@@ -950,6 +950,25 @@ struct ReaderSlot {
 static ReaderSlot reader_slots[READER_SLOT_COUNT];
 static int32_t active_slot_idx = 0;
 
+// Reader options applied to the next open_into_slot / cpp_any_open_at call.
+// Match upstream defaults; JS callers tighten via cpp_any_set_reader_options.
+static capnp::ReaderOptions s_reader_options;
+
+// JS opt-in: tighten reader limits for hostile input. The traversal limit is
+// passed as a pair of u32s because wasm's native call convention shuns
+// 64-bit arguments. Callers JS-side recompose (high << 32 | low).
+void cpp_any_set_reader_options(uint32_t traversalLow,
+                                uint32_t traversalHigh,
+                                int32_t nestingLimit) {
+  uint64_t traversal = (static_cast<uint64_t>(traversalHigh) << 32) | traversalLow;
+  if (traversal != 0) s_reader_options.traversalLimitInWords = traversal;
+  if (nestingLimit > 0) s_reader_options.nestingLimit = nestingLimit;
+}
+
+void cpp_any_reset_reader_options() {
+  s_reader_options = capnp::ReaderOptions();
+}
+
 // Active-slot mirror state. These are the same names the rest of the
 // file already uses for reads, so existing function bodies don't change.
 alignas(8) static char any_reader_storage[1024];
@@ -1009,7 +1028,7 @@ static uint32_t open_into_slot(uint32_t slot_idx, const uint8_t* bytes_ptr, uint
   auto words = kj::ArrayPtr<const capnp::word>(
       reinterpret_cast<const capnp::word*>(bytes_ptr),
       bytes_len / sizeof(capnp::word));
-  s.reader = new (storage) capnp::FlatArrayMessageReader(words);
+  s.reader = new (storage) capnp::FlatArrayMessageReader(words, s_reader_options);
   s.stack_top = 0;
   s.stack[0].r = s.reader->getRoot<capnp::AnyPointer>().getAs<capnp::AnyStruct>();
   s.msg_start = reinterpret_cast<uint32_t>(bytes_ptr + 8);

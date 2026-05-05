@@ -1528,6 +1528,17 @@ export class RpcSession {
     this.#sendQueue = null;
     const total = this.#sendQueueBytes;
     this.#sendQueueBytes = 0;
+    // Per-frame transports (e.g. packed WS) handle each frame separately
+    // so they can apply per-frame transformations like packing without
+    // having to walk the concatenated byte stream.
+    if (this.#transport.sendFrames) {
+      this.#transport.sendFrames(q);
+      if (this.#metricSubscribers && this.#metricSubscribers.length > 0) {
+        this.#emitMetric("bytesSent", { bytes: total });
+      }
+      this.#maybeNotifyIdle();
+      return;
+    }
     if (q.length === 1) {
       this.#transport.send(q[0]);
       if (this.#metricSubscribers && this.#metricSubscribers.length > 0) {
@@ -1694,15 +1705,39 @@ function u64(x) { return BigInt.asUintN(64, BigInt(x)); }
 //   const session = new RpcSession(cpp, wsTransport(ws), registry, { bootstrap });
 //
 // Or use connectWebSocket() below to skip the boilerplate.
-export function wsTransport(ws) {
+export function wsTransport(ws, opts = {}) {
   ws.binaryType = "arraybuffer";
+  const packed = !!opts.packed;
+  const cpp = opts.cpp;
+  if (packed && !cpp) {
+    throw new Error("wsTransport: opts.packed requires opts.cpp (load capnwasm)");
+  }
   let cb = null;
   let closeCb = null;
+  // Packed wire format: each ws message is one packed Cap'n Proto framed
+  // message with the redundant inner u32 length prefix dropped (the ws
+  // frame is already self-delimiting). On receive we re-prepend it so the
+  // FrameReader inside RpcSession sees the same shape it would in the
+  // unpacked path.
+  const deliver = (bytes) => {
+    if (!cb) return;
+    if (packed) {
+      let framed;
+      try { framed = cpp.unpackMessage(bytes); }
+      catch (err) { const c = closeCb; closeCb = null; if (c) c(err); return; }
+      const out = new Uint8Array(4 + framed.length);
+      new DataView(out.buffer).setUint32(0, framed.length, true);
+      out.set(framed, 4);
+      cb(out);
+      return;
+    }
+    cb(bytes);
+  };
   ws.addEventListener("message", (ev) => {
     if (!cb) return;
-    if (ev.data instanceof ArrayBuffer) cb(new Uint8Array(ev.data));
-    else if (ev.data instanceof Blob) ev.data.arrayBuffer().then(b => cb(new Uint8Array(b)));
-    else if (typeof ev.data === "string") cb(new TextEncoder().encode(ev.data));
+    if (ev.data instanceof ArrayBuffer) deliver(new Uint8Array(ev.data));
+    else if (ev.data instanceof Blob) ev.data.arrayBuffer().then(b => deliver(new Uint8Array(b)));
+    else if (typeof ev.data === "string") deliver(new TextEncoder().encode(ev.data));
   });
   // Either a normal close or an error tears down the session. Fires once -
   // the session's close() is idempotent so repeats are harmless, but we
@@ -1710,17 +1745,29 @@ export function wsTransport(ws) {
   const fire = () => { const c = closeCb; closeCb = null; if (c) c(); };
   ws.addEventListener("close", fire);
   ws.addEventListener("error", fire);
-  return {
+  const transport = {
     send(bytes) {
-      // ws.send copies the bytes into its own send queue, so handing it a
-      // subarray view of wasm memory is safe. The WS implementation doesn't
-      // retain the view past the call.
-      ws.send(bytes);
+      if (packed) {
+        // Strip the inner u32 length prefix; the ws frame self-delimits.
+        ws.send(cpp.packMessage(bytes.subarray(4)));
+      } else {
+        ws.send(bytes);
+      }
     },
     onMessage(handler) { cb = handler; },
     onClose(handler) { closeCb = handler; },
     close() { ws.close(); cb = null; },
   };
+  if (packed) {
+    // Per-frame send keeps packed framing self-delimiting: each ws.send
+    // carries exactly one packed Cap'n Proto message. RpcSession#flush
+    // routes through this path to avoid sending a concatenated multi-
+    // frame buffer that packMessage would misinterpret.
+    transport.sendFrames = (frames) => {
+      for (const f of frames) ws.send(cpp.packMessage(f.subarray(4)));
+    };
+  }
+  return transport;
 }
 
 /**
@@ -1751,7 +1798,7 @@ export async function connectWebSocket(cpp, url, opts = {}) {
     ws.addEventListener("open", resolve, { once: true });
     ws.addEventListener("error", reject, { once: true });
   });
-  return new RpcSession(cpp, wsTransport(ws), opts.registry, {
+  return new RpcSession(cpp, wsTransport(ws, { packed: !!opts.packed, cpp }), opts.registry, {
     bootstrap: opts.bootstrap,
     batchWindowMs: opts.batchWindowMs,
   });

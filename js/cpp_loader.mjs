@@ -471,6 +471,34 @@ export class CapnCpp {
   _validateSingleSegment(bytes) { return validateSingleSegment(bytes); }
 
   /**
+   * Tighten reader options for the next message open. Mirrors upstream
+   * `capnp::ReaderOptions`. Pass 0 / undefined for any field to keep the
+   * existing value. JS hostile-input handling sets these per-message.
+   * @param {object} opts
+   * @param {number|bigint} [opts.traversalLimitInWords] - max words read while traversing
+   * @param {number} [opts.nestingLimit] - max nested struct depth
+   */
+  setReaderOptions(opts = {}) {
+    const ex = this.#exports;
+    if (!ex.cpp_any_set_reader_options) return;
+    let low = 0, high = 0;
+    if (opts.traversalLimitInWords !== undefined) {
+      const v = typeof opts.traversalLimitInWords === "bigint"
+        ? opts.traversalLimitInWords
+        : BigInt(opts.traversalLimitInWords | 0);
+      low = Number(v & 0xffffffffn) >>> 0;
+      high = Number((v >> 32n) & 0xffffffffn) >>> 0;
+    }
+    const nesting = opts.nestingLimit !== undefined ? (opts.nestingLimit | 0) : 0;
+    ex.cpp_any_set_reader_options(low, high, nesting);
+  }
+
+  resetReaderOptions() {
+    const ex = this.#exports;
+    if (ex.cpp_any_reset_reader_options) ex.cpp_any_reset_reader_options();
+  }
+
+  /**
    * Pack a framed Cap'n Proto message using upstream `serialize-packed.h`.
    * Returns a new Uint8Array containing the packed bytes. Throws if the
    * message is malformed or the output exceeds the wasm scratch buffer.

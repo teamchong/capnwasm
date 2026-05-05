@@ -23,6 +23,7 @@
 import { RpcSession } from "./rpc.mjs";
 
 const MIME = "application/x-capnwasm-batch";
+const MIME_PACKED = "application/x-capnwasm-batch+packed";
 
 /* ------------------------------------------------------------------ */
 /*  Envelope helpers                                                  */
@@ -55,6 +56,16 @@ function decodeBatch(bytes) {
     out.push(bytes.subarray(p, p + len));
     p += len;
   }
+  return out;
+}
+
+// Wrap a framed Cap'n Proto message in the inner u32 length prefix that
+// RpcSession's FrameReader expects. Used after unpacking a packed-batch
+// frame so the downstream RPC layer sees a uniformly framed buffer.
+function prependU32Len(framed) {
+  const out = new Uint8Array(4 + framed.length);
+  new DataView(out.buffer).setUint32(0, framed.length, true);
+  out.set(framed, 4);
   return out;
 }
 
@@ -112,6 +123,12 @@ function filterFrames(bytes, dropKinds) {
  * @param {Function} [opts.fetch] - fetch implementation (defaults to globalThis.fetch)
  * @param {object} [opts.headers] - extra HTTP headers (e.g., auth)
  * @param {AbortSignal} [opts.signal] - aborts in-flight requests + closes the transport
+ * @param {boolean} [opts.packed] - enable Cap'n Proto packed-encoding for every
+ *        frame in the batch. Both ends must agree. The transport tags the
+ *        Content-Type as `application/x-capnwasm-batch+packed` and the
+ *        server handler auto-detects.
+ * @param {object} [opts.cpp] - required when `packed` is true. Provides
+ *        the wasm-backed `packMessage` / `unpackMessage` helpers.
  * @returns {{ send: Function, onMessage: Function, onClose: Function, close: Function }}
  */
 export function httpBatchTransport(url, opts = {}) {
@@ -119,6 +136,12 @@ export function httpBatchTransport(url, opts = {}) {
   if (!fetchFn) throw new Error("httpBatchTransport: no fetch available");
   const extraHeaders = opts.headers ?? {};
   const signal = opts.signal;
+  const packed = !!opts.packed;
+  const cpp = opts.cpp;
+  if (packed && !cpp) {
+    throw new Error("httpBatchTransport: opts.packed requires opts.cpp (load capnwasm)");
+  }
+  const mime = packed ? MIME_PACKED : MIME;
 
   let messageCb = null;
   let closeCb = null;
@@ -152,12 +175,23 @@ export function httpBatchTransport(url, opts = {}) {
     if (closed || outbox.length === 0) return;
     const batch = outbox;
     outbox = [];
-    const body = encodeBatch(batch);
+    let body;
+    try {
+      // RpcSession queues frames as [u32 inner-length][framed-message]. The
+      // batch envelope adds its own length prefix, so the inner one is
+      // redundant in packed mode — strip it before packing, the receiver
+      // re-adds it after unpacking so the inner FrameReader still sees a
+      // valid length-prefixed payload.
+      body = encodeBatch(packed ? batch.map((f) => cpp.packMessage(f.subarray(4))) : batch);
+    } catch (err) {
+      fireClose(err);
+      return;
+    }
     let res;
     try {
       res = await fetchFn(url, {
         method: "POST",
-        headers: { "Content-Type": MIME, ...extraHeaders },
+        headers: { "Content-Type": mime, ...extraHeaders },
         body,
         signal,
       });
@@ -177,9 +211,15 @@ export function httpBatchTransport(url, opts = {}) {
       return;
     }
     if (closed || !messageCb) return;
+    const respCt = res.headers?.get?.("Content-Type") ?? "";
+    const respPacked = respCt.includes(MIME_PACKED);
     let frames;
     try {
       frames = decodeBatch(respBytes);
+      if (respPacked) {
+        if (!cpp) throw new Error("server returned packed batch but transport has no cpp to unpack");
+        frames = frames.map((f) => prependU32Len(cpp.unpackMessage(f)));
+      }
     } catch (err) {
       fireClose(err);
       return;
@@ -200,7 +240,7 @@ export function httpBatchTransport(url, opts = {}) {
   // will go on the wire and waste a round-trip; pass `stateless: true`
   // to your RpcSession to fix.)
 
-  return {
+  const transport = {
     send(bytes) {
       if (closed) return;
       // Defensive copy: `bytes` is typically a slice of wasm memory that
@@ -213,6 +253,19 @@ export function httpBatchTransport(url, opts = {}) {
     onClose(handler) { closeCb = handler; },
     close() { fireClose(); },
   };
+  if (packed) {
+    // Per-frame entry point. RpcSession#flush prefers sendFrames over
+    // send() when present so packed-mode batches can pack each frame
+    // individually. Without this, send() would receive a concatenated
+    // [u32 len][frame][u32 len][frame] buffer and the pack op would
+    // misinterpret the inner length prefix as part of the message.
+    transport.sendFrames = (frames) => {
+      if (closed) return;
+      for (let i = 0; i < frames.length; i++) outbox.push(new Uint8Array(frames[i]));
+      scheduleFlush();
+    };
+  }
+  return transport;
 }
 
 /**
@@ -226,7 +279,7 @@ export function httpBatchTransport(url, opts = {}) {
  *                          .send().promise;
  */
 export function connectHttpBatch(cpp, url, opts = {}) {
-  const transport = httpBatchTransport(url, opts);
+  const transport = httpBatchTransport(url, { ...opts, cpp });
   return new RpcSession(cpp, transport, opts.registry, {
     bootstrap: opts.bootstrap,
     // Stateless mode: peer (server) creates a fresh session per request,
@@ -272,8 +325,9 @@ export function createHttpBatchHandler(cpp, registry, opts = {}) {
       return new Response("expected POST", { status: 405 });
     }
     const ct = req.headers.get("Content-Type") ?? "";
-    if (!ct.includes(MIME) && !ct.includes("application/octet-stream")) {
-      return new Response(`expected Content-Type: ${MIME}`, { status: 415 });
+    const packed = ct.includes(MIME_PACKED);
+    if (!packed && !ct.includes(MIME) && !ct.includes("application/octet-stream")) {
+      return new Response(`expected Content-Type: ${MIME} or ${MIME_PACKED}`, { status: 415 });
     }
     let bodyBytes;
     try {
@@ -284,6 +338,7 @@ export function createHttpBatchHandler(cpp, registry, opts = {}) {
     let frames;
     try {
       frames = decodeBatch(bodyBytes);
+      if (packed) frames = frames.map((f) => prependU32Len(cpp.unpackMessage(f)));
     } catch (err) {
       return new Response(`bad batch envelope: ${err.message ?? err}`, { status: 400 });
     }
@@ -296,6 +351,14 @@ export function createHttpBatchHandler(cpp, registry, opts = {}) {
       onClose() {},
       close() {},
     };
+    if (packed) {
+      // Same reasoning as the client: pack each Return frame separately so
+      // the inner length prefix never gets fed to packMessage as message
+      // body. RpcSession#flush calls sendFrames when present.
+      transport.sendFrames = (frames) => {
+        for (let i = 0; i < frames.length; i++) outbox.push(new Uint8Array(frames[i]));
+      };
+    }
 
     const bootstrap = typeof opts.bootstrap === "function"
       ? opts.bootstrap(req)
@@ -317,9 +380,10 @@ export function createHttpBatchHandler(cpp, registry, opts = {}) {
       session.close();
     }
 
-    return new Response(encodeBatch(outbox), {
+    const respFrames = packed ? outbox.map((f) => cpp.packMessage(f.subarray(4))) : outbox;
+    return new Response(encodeBatch(respFrames), {
       status: 200,
-      headers: { "Content-Type": MIME },
+      headers: { "Content-Type": packed ? MIME_PACKED : MIME },
     });
   };
 }

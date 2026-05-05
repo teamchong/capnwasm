@@ -157,7 +157,11 @@ export class CapnpCompiler {
     const outPtr = this.#exports.capnpc_out_ptr();
     const json = new TextDecoder().decode(u8.slice(outPtr, outPtr + len));
     const raw = JSON.parse(json);
-    return raw.map(s => translateStruct(s, raw));
+    // Include interface nodes in byId so Capability(<Iface>) field types
+    // resolve to a real interface name (matching capnpc_loader.mjs).
+    const ifaces = this.extractInterfaces();
+    const refs = [...raw, ...ifaces];
+    return raw.map(s => translateStruct(s, refs));
   }
 
   /**

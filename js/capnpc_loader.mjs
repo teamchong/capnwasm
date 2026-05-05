@@ -124,6 +124,11 @@ export class CapnpCompiler {
     const json = new TextDecoder().decode(u8.slice(outPtr, outPtr + len));
     const raw = JSON.parse(json);
 
+    // Pull interface nodes out of the same compile request so byId in
+    // translateStruct can resolve `Capability(<IfaceName>)` types. The
+    // struct extractor doesn't emit them; capnpc_extract_interfaces does.
+    const ifaces = this.extractInterfaces();
+
     // raw is [{ name, id, dataWords, ptrWords, fields: [{name, ordinal, codeOrder, slot:{offset,type}}] }]
     // Translate types and compute bitOffsets so the existing codegen consumes it.
     // Translate each top-level struct (skipping raw group entries. Those
@@ -131,7 +136,8 @@ export class CapnpCompiler {
     // and re-synthesized with parent-prefixed names so they don't clash
     // with user types). Then lift the synthesized group-Reader structs
     // into the flat output list so the generator emits classes for them.
-    const top = raw.filter(s => !s.isGroup).map(s => translateStruct(s, raw));
+    const refs = [...raw, ...ifaces];
+    const top = raw.filter(s => !s.isGroup).map(s => translateStruct(s, refs));
     const out = [];
     for (const s of top) {
       if (s._synthStructs) {
@@ -214,7 +220,14 @@ function typeToName(t, byId) {
   }
   if (t.struct)    return byId.get(String(t.struct))?.name ?? "AnyPointer";
   if (t.enum)      return byId.get(String(t.enum))?.name ?? "UInt16";
-  if (t.interface) return byId.get(String(t.interface))?.name ?? "AnyPointer";
+  // Interface-typed (capability) fields: tagged so codegen can emit a
+  // null-returning getter / null-accepting setter without colliding with
+  // a same-named struct. Resolving the cap proper requires an RPC cap
+  // table, which non-RPC openers (openDynamic, raw bytes) don't have.
+  if (t.interface) {
+    const ifaceName = byId.get(String(t.interface))?.name ?? "AnyPointer";
+    return `Capability(${ifaceName})`;
+  }
   return "AnyPointer";
 }
 

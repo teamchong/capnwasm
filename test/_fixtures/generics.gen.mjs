@@ -1,4 +1,4 @@
-// Generated from users.capnp by capnwasm-gen. Do not edit by hand.
+// Generated from generics.capnp by capnwasm-gen. Do not edit by hand.
 
 const SHARED_TEXT_DECODER = new TextDecoder();
 const SHARED_ENCODER = new TextEncoder();
@@ -848,9 +848,9 @@ function _runDraft(cpp, fields, fn) {
   return fn(_materializeDraft(cpp, fields, plan));
 }
 
-export class UserReader {
-  static _DATA_WORDS = 3;
-  static _PTR_WORDS = 3;
+export class TagReader {
+  static _DATA_WORDS = 1;
+  static _PTR_WORDS = 1;
   constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
@@ -889,15 +889,11 @@ export class UserReader {
   }
 
 
-  get id() {
-    _ensureCapnwasmReader(this);
-    return this._dataPtr ? this._dv.getBigUint64(this._dataPtr + 0, true) : this._exp.cpp_any_int64_at(0, 0n);
-  }
   get name() {
     _ensureCapnwasmReader(this);
     const _msgEnd = this._msgEnd;
     if (_msgEnd) {
-      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 3, 0, this._msgStart, _msgEnd);
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 1, 0, this._msgStart, _msgEnd);
       if (v !== undefined) return v ?? "";
     }
     const len = this._exp.cpp_any_text_at(0);
@@ -906,240 +902,33 @@ export class UserReader {
     const out = this._cpp._outPtr;
     return decodeAscii(u8.subarray(out, out + len));
   }
-  get email() {
-    _ensureCapnwasmReader(this);
-    const _msgEnd = this._msgEnd;
-    if (_msgEnd) {
-      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 3, 1, this._msgStart, _msgEnd);
-      if (v !== undefined) return v ?? "";
-    }
-    const len = this._exp.cpp_any_text_at(1);
-    if (len === 0) return "";
-    const u8 = this._cpp._u8;
-    const out = this._cpp._outPtr;
-    return decodeAscii(u8.subarray(out, out + len));
-  }
-  get joinedAtMs() {
-    _ensureCapnwasmReader(this);
-    return this._dataPtr ? this._dv.getBigUint64(this._dataPtr + 8, true) : this._exp.cpp_any_int64_at(8, 0n);
-  }
-  get active() {
-    _ensureCapnwasmReader(this);
-    return this._dataPtr ? ((this._u8[this._dataPtr + 16] >> 0) & 1) === 1 : this._exp.cpp_any_bool_at(128, 0) === 1;
-  }
-  get avatar() {
-    _ensureCapnwasmReader(this);
-    const _msgEnd = this._msgEnd;
-    if (_msgEnd) {
-      const v = _jsReadDataPtr(this._u8, this._dv, this._dataPtr, 3, 2, this._msgStart, _msgEnd);
-      if (v !== undefined) return v ?? new Uint8Array(0);
-    }
-    const len = this._exp.cpp_any_data_at(2);
-    const u8 = this._cpp._u8;
-    const out = this._cpp._outPtr;
-    return u8.slice(out, out + len);
-  }
-
-  static _FIELDS = {
-    id: {"kind":4,"off":0,"type":"uint64"},
-    name: {"kind":0,"off":0,"type":"text"},
-    email: {"kind":0,"off":1,"type":"text"},
-    joinedAtMs: {"kind":4,"off":8,"type":"uint64"},
-    active: {"kind":5,"off":128,"type":"bool"},
-    avatar: {"kind":6,"off":2,"type":"data"},
-  };
-
-  draft(fn) {
-    _ensureCapnwasmReader(this);
-    if (this._rebind) this._rebind();
-    return _runDraft(this._cpp, UserReader._FIELDS, fn);
-  }
-
-  toObject() {
-    _ensureCapnwasmReader(this);
-    if (this._rebind) this._rebind();
-    return _capnwasmPick(this._cpp, UserReader._FIELDS, Object.keys(UserReader._FIELDS));
-  }
-}
-if (typeof Symbol.dispose === "symbol") {
-  UserReader.prototype[Symbol.dispose] = UserReader.prototype.dispose;
-}
-
-export class UserListReader {
-  static _DATA_WORDS = 0;
-  static _PTR_WORDS = 1;
-  constructor(cpp, dataPtr, opts = undefined) {
-    this._cpp = cpp;
-    this._exp = cpp._exports;
-    this._msg = opts && opts.msg ? opts.msg : null;
-    this._rebind = opts && opts.rebind ? opts.rebind : null;
-    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
-    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
-    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
-    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
-    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
-    this._dataPtr = dataPtr | 0;
-    if (opts && opts.parent) {
-      const _p = opts.parent;
-      this._u8 = _p._u8; this._dv = _p._dv;
-      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
-    } else {
-      this._u8 = cpp._u8;
-      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
-      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
-    }
-    this._disposed = false;
-  }
-
-  dispose() {
-    if (this._disposed) return;
-    this._disposed = true;
-    if (this._slotHandle) {
-      this._cpp._releaseSlot(this._slotHandle);
-      this._slotHandle = null;
-    } else if (this._msg) {
-      this._cpp._freeMessage(this._msg);
-      this._msg = null;
-    }
-    this._dataPtr = 0;
-    this._rebind = null;
-  }
-
-
-  get users() {
-    _ensureCapnwasmReader(this);
-    const reader = this;
-    const cpp = this._cpp;
-    const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;
-    const _u8 = reader._u8, _dv = reader._dv;
-    let _listDesc = null;
-    if (_msgEnd) {
-      _listDesc = _jsReadListStructPtr(_u8, _dv, reader._dataPtr, 0, 0, _msgStart, _msgEnd);
-    }
-    if (_listDesc && _listDesc !== undefined) {
-      return {
-        length: _listDesc.count,
-        at(i) {
-          if (i < 0 || i >= _listDesc.count) return undefined;
-          const elemDataPtr = _listDesc.elementsBase + i * (_listDesc.dataWords + _listDesc.ptrWords) * 8;
-          return new UserReader(cpp, elemDataPtr, {
-            slotIdx: reader._slotIdx,
-            msgStart: _msgStart,
-            msgEnd: _msgEnd,
-            gen: cpp._generation ?? 0,
-            parent: reader,
-            rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(0); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); },
-          });
-        },
-        *[Symbol.iterator]() { for (let i = 0; i < this.length; i++) yield this.at(i); },
-      };
-    }
-    const size = cpp._exports.cpp_any_open_list(0);
-    let pushed = false;
-    return {
-      length: size,
-      at(i) {
-        if (i < 0 || i >= size) return undefined;
-        _ensureCapnwasmReader(reader);
-        if (pushed) cpp._exports.cpp_any_leave_struct();
-        cpp._exports.cpp_any_open_list(0);
-        cpp._exports.cpp_any_enter_list_at(i);
-        cpp._bumpGeneration();
-        pushed = true;
-        const r = new UserReader(cpp, 0, { msg: reader._msg, slotIdx: reader._slotIdx, gen: cpp._generation ?? 0, rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(0); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); } });
-        return r;
-      },
-      *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
-    };
-  }
-
-  static _FIELDS = {
-    users: {"kind":-1,"off":0,"type":"List(User)"},
-  };
-
-  draft(fn) {
-    _ensureCapnwasmReader(this);
-    if (this._rebind) this._rebind();
-    return _runDraft(this._cpp, UserListReader._FIELDS, fn);
-  }
-
-  toObject() {
-    _ensureCapnwasmReader(this);
-    if (this._rebind) this._rebind();
-    return _capnwasmPick(this._cpp, UserListReader._FIELDS, Object.keys(UserListReader._FIELDS));
-  }
-}
-if (typeof Symbol.dispose === "symbol") {
-  UserListReader.prototype[Symbol.dispose] = UserListReader.prototype.dispose;
-}
-
-export class CountParamsReader {
-  static _DATA_WORDS = 1;
-  static _PTR_WORDS = 0;
-  constructor(cpp, dataPtr, opts = undefined) {
-    this._cpp = cpp;
-    this._exp = cpp._exports;
-    this._msg = opts && opts.msg ? opts.msg : null;
-    this._rebind = opts && opts.rebind ? opts.rebind : null;
-    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
-    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
-    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
-    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
-    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
-    this._dataPtr = dataPtr | 0;
-    if (opts && opts.parent) {
-      const _p = opts.parent;
-      this._u8 = _p._u8; this._dv = _p._dv;
-      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
-    } else {
-      this._u8 = cpp._u8;
-      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
-      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
-    }
-    this._disposed = false;
-  }
-
-  dispose() {
-    if (this._disposed) return;
-    this._disposed = true;
-    if (this._slotHandle) {
-      this._cpp._releaseSlot(this._slotHandle);
-      this._slotHandle = null;
-    } else if (this._msg) {
-      this._cpp._freeMessage(this._msg);
-      this._msg = null;
-    }
-    this._dataPtr = 0;
-    this._rebind = null;
-  }
-
-
-  get n() {
+  get weight() {
     _ensureCapnwasmReader(this);
     return this._dataPtr ? this._u32[(this._dataPtr + 0) >>> 2] : this._exp.cpp_any_uint32_at(0, 0);
   }
 
   static _FIELDS = {
-    n: {"kind":3,"off":0,"type":"uint32"},
+    name: {"kind":0,"off":0,"type":"text"},
+    weight: {"kind":3,"off":0,"type":"uint32"},
   };
 
   draft(fn) {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _runDraft(this._cpp, CountParamsReader._FIELDS, fn);
+    return _runDraft(this._cpp, TagReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _capnwasmPick(this._cpp, CountParamsReader._FIELDS, Object.keys(CountParamsReader._FIELDS));
+    return _capnwasmPick(this._cpp, TagReader._FIELDS, Object.keys(TagReader._FIELDS));
   }
 }
 if (typeof Symbol.dispose === "symbol") {
-  CountParamsReader.prototype[Symbol.dispose] = CountParamsReader.prototype.dispose;
+  TagReader.prototype[Symbol.dispose] = TagReader.prototype.dispose;
 }
 
-export class BlobReplyReader {
+export class BoxReader {
   static _DATA_WORDS = 0;
   static _PTR_WORDS = 1;
   constructor(cpp, dataPtr, opts = undefined) {
@@ -1180,42 +969,35 @@ export class BlobReplyReader {
   }
 
 
-  get data() {
+  get value() {
     _ensureCapnwasmReader(this);
-    const _msgEnd = this._msgEnd;
-    if (_msgEnd) {
-      const v = _jsReadDataPtr(this._u8, this._dv, this._dataPtr, 0, 0, this._msgStart, _msgEnd);
-      if (v !== undefined) return v ?? new Uint8Array(0);
-    }
-    const len = this._exp.cpp_any_data_at(0);
-    const u8 = this._cpp._u8;
-    const out = this._cpp._outPtr;
-    return u8.slice(out, out + len);
+    const reader = this;
+    return new _AnyPointerReadHandle(reader, 0, 0);
   }
 
   static _FIELDS = {
-    data: {"kind":6,"off":0,"type":"data"},
+    value: {"kind":-1,"off":0,"type":"AnyPointer"},
   };
 
   draft(fn) {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _runDraft(this._cpp, BlobReplyReader._FIELDS, fn);
+    return _runDraft(this._cpp, BoxReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _capnwasmPick(this._cpp, BlobReplyReader._FIELDS, Object.keys(BlobReplyReader._FIELDS));
+    return _capnwasmPick(this._cpp, BoxReader._FIELDS, Object.keys(BoxReader._FIELDS));
   }
 }
 if (typeof Symbol.dispose === "symbol") {
-  BlobReplyReader.prototype[Symbol.dispose] = BlobReplyReader.prototype.dispose;
+  BoxReader.prototype[Symbol.dispose] = BoxReader.prototype.dispose;
 }
 
-export class NumericProbeReader {
+export class UseBoxReader {
   static _DATA_WORDS = 0;
-  static _PTR_WORDS = 1;
+  static _PTR_WORDS = 2;
   constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
@@ -1254,90 +1036,124 @@ export class NumericProbeReader {
   }
 
 
-  get f64s() {
+  get textBox() {
     _ensureCapnwasmReader(this);
     const reader = this;
     const cpp = this._cpp;
     const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;
-    let _desc = null;
-    if (_msgEnd) {
-      _desc = _jsReadListPrimPtr(reader._u8, reader._dv, reader._dataPtr, 0, 0, _msgStart, _msgEnd, 8);
-    }
-    if (_desc) {
-      const _count = _desc.count;
-      const _baseByte = _desc.elementsBase;
-      const _baseIdx = _baseByte >>> 3;
-      return {
-        length: _count,
-        at(i) {
-          if (i < 0 || i >= _count) return undefined;
-          let v = reader._f64[_baseIdx + i];
-          if (v !== undefined) return v;
-          if (reader._f64.buffer !== cpp.memory.buffer) {
-            reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
-            reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
-          }
-          return reader._f64[_baseIdx + i];
-        },
-        *[Symbol.iterator]() { for (let i = 0; i < _count; i++) yield this.at(i); },
-        view() {
-          if (reader._f64.buffer !== cpp.memory.buffer) {
-            reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
-            reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
-          }
-          return reader._f64.subarray(_baseIdx, _baseIdx + _count);
-        },
-      };
-    }
-    // Cursor-based fallback: unsafe reader, no _msgEnd, or pointer decode failed.
-    const size = cpp._exports.cpp_any_open_list(0);
-    return {
-      length: size,
-      at(i) {
-        if (i < 0 || i >= size) return undefined;
-        _ensureCapnwasmReader(reader);
-        cpp._exports.cpp_any_open_list(0);
-        return ((bits) => { _F64_VIEW_U32[0] = Number(bits & 0xFFFFFFFFn) >>> 0; _F64_VIEW_U32[1] = Number(bits >> 32n) >>> 0; return _F64_VIEW_F64[0]; })(cpp._exports.cpp_any_list_get_float64_bits(i));
-      },
-      *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
-      view() { throw new Error("view() requires a slot-pool reader; got an unsafe / cursor-only reader"); },
+    // Rebind closure for cursor-only sub-readers: re-position the C++
+    // any_stack onto this nested struct before any boundary call. Used
+    // by paths the JS decoder doesn't cover (Bool list, unsafe readers).
+    const _rebindNested = () => {
+      _ensureCapnwasmReader(reader);
+      cpp._exports.cpp_any_slot_reset_root?.();
+      cpp._exports.cpp_any_enter_struct(0);
+      cpp._bumpGeneration();
     };
+    if (_msgEnd) {
+      const desc = _jsReadStructPtr(reader._u8, reader._dv, reader._dataPtr, 0, 0, _msgStart, _msgEnd);
+      if (desc !== undefined) {
+        const dp = desc === null ? 0 : desc.dataPtr;
+        // gen=-1 forces _ensureCapnwasmReader to invoke the rebind on the
+        // first cursor-using access, which positions the C++ any_stack
+        // onto this nested struct. Pure-JS reads via _dataPtr never hit
+        // that branch; only Bool list / unsafe paths need the cursor.
+        return new BoxReader(cpp, dp, {
+          slotIdx: reader._slotIdx,
+          msgStart: _msgStart,
+          msgEnd: _msgEnd,
+          gen: -1,
+          parent: reader,
+          rebind: _rebindNested,
+        });
+      }
+    }
+    // Cursor fallback: position the C++ cursor on the nested struct so
+    // subsequent getters read from the right level.
+    _rebindNested();
+    return new BoxReader(cpp, 0, {
+      msg: reader._msg,
+      slotIdx: reader._slotIdx,
+      gen: cpp._generation ?? 0,
+      rebind: _rebindNested,
+    });
+  }
+  get tagBox() {
+    _ensureCapnwasmReader(this);
+    const reader = this;
+    const cpp = this._cpp;
+    const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;
+    // Rebind closure for cursor-only sub-readers: re-position the C++
+    // any_stack onto this nested struct before any boundary call. Used
+    // by paths the JS decoder doesn't cover (Bool list, unsafe readers).
+    const _rebindNested = () => {
+      _ensureCapnwasmReader(reader);
+      cpp._exports.cpp_any_slot_reset_root?.();
+      cpp._exports.cpp_any_enter_struct(1);
+      cpp._bumpGeneration();
+    };
+    if (_msgEnd) {
+      const desc = _jsReadStructPtr(reader._u8, reader._dv, reader._dataPtr, 0, 1, _msgStart, _msgEnd);
+      if (desc !== undefined) {
+        const dp = desc === null ? 0 : desc.dataPtr;
+        // gen=-1 forces _ensureCapnwasmReader to invoke the rebind on the
+        // first cursor-using access, which positions the C++ any_stack
+        // onto this nested struct. Pure-JS reads via _dataPtr never hit
+        // that branch; only Bool list / unsafe paths need the cursor.
+        return new BoxReader(cpp, dp, {
+          slotIdx: reader._slotIdx,
+          msgStart: _msgStart,
+          msgEnd: _msgEnd,
+          gen: -1,
+          parent: reader,
+          rebind: _rebindNested,
+        });
+      }
+    }
+    // Cursor fallback: position the C++ cursor on the nested struct so
+    // subsequent getters read from the right level.
+    _rebindNested();
+    return new BoxReader(cpp, 0, {
+      msg: reader._msg,
+      slotIdx: reader._slotIdx,
+      gen: cpp._generation ?? 0,
+      rebind: _rebindNested,
+    });
   }
 
   static _FIELDS = {
-    f64s: {"kind":-1,"off":0,"type":"List(Float64)"},
+    textBox: {"kind":-1,"off":0,"type":"Box"},
+    tagBox: {"kind":-1,"off":1,"type":"Box"},
   };
 
   draft(fn) {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _runDraft(this._cpp, NumericProbeReader._FIELDS, fn);
+    return _runDraft(this._cpp, UseBoxReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _capnwasmPick(this._cpp, NumericProbeReader._FIELDS, Object.keys(NumericProbeReader._FIELDS));
+    return _capnwasmPick(this._cpp, UseBoxReader._FIELDS, Object.keys(UseBoxReader._FIELDS));
   }
 }
 if (typeof Symbol.dispose === "symbol") {
-  NumericProbeReader.prototype[Symbol.dispose] = NumericProbeReader.prototype.dispose;
+  UseBoxReader.prototype[Symbol.dispose] = UseBoxReader.prototype.dispose;
 }
 
-_STRUCT_FIELDS["User"] = UserReader._FIELDS;
-_STRUCT_FIELDS["UserList"] = UserListReader._FIELDS;
-_STRUCT_FIELDS["CountParams"] = CountParamsReader._FIELDS;
-_STRUCT_FIELDS["BlobReply"] = BlobReplyReader._FIELDS;
-_STRUCT_FIELDS["NumericProbe"] = NumericProbeReader._FIELDS;
+_STRUCT_FIELDS["Tag"] = TagReader._FIELDS;
+_STRUCT_FIELDS["Box"] = BoxReader._FIELDS;
+_STRUCT_FIELDS["UseBox"] = UseBoxReader._FIELDS;
 
-export class UserBuilder {
-  static _DATA_WORDS = 3;
-  static _PTR_WORDS = 3;
+export class TagBuilder {
+  static _DATA_WORDS = 1;
+  static _PTR_WORDS = 1;
   constructor(cpp, opts) {
     this._cpp = cpp;
     this._exp = cpp._exports;
     if (!opts || !opts.preinitialized) {
-      if (this._exp.cpp_any_builder_init(3, 3) !== 1) {
+      if (this._exp.cpp_any_builder_init(1, 1) !== 1) {
         throw new Error("cpp_any_builder_init failed");
       }
     }
@@ -1347,19 +1163,6 @@ export class UserBuilder {
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
-  set id(value) {
-    const dv = this._dv;
-    if (typeof value === "bigint") {
-      dv.setBigInt64(this._dataPtr + 0, value, true);
-    } else {
-      let lo, hi;
-      if (value >= 0) { lo = (value >>> 0); hi = ((value / 4294967296) >>> 0); }
-      else { const abs = -value; const aLo = (abs >>> 0); const aHi = ((abs / 4294967296) >>> 0);
-             lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0; }
-      dv.setUint32(this._dataPtr + 0, lo, true);
-      dv.setUint32(this._dataPtr + 4, hi, true);
-    }
-  }
   set name(value) {
     const inPtr = this._exp.cpp_in_ptr();
     const inCap = this._exp.cpp_in_capacity();
@@ -1369,163 +1172,7 @@ export class UserBuilder {
     this._u8 = this._cpp._u8;
     if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
-  set email(value) {
-    const inPtr = this._exp.cpp_in_ptr();
-    const inCap = this._exp.cpp_in_capacity();
-    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
-    const { written } = SHARED_ENCODER.encodeInto(value, dst);
-    this._exp.cpp_any_builder_set_text(1, written);
-    this._u8 = this._cpp._u8;
-    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
-  }
-  set joinedAtMs(value) {
-    const dv = this._dv;
-    if (typeof value === "bigint") {
-      dv.setBigInt64(this._dataPtr + 8, value, true);
-    } else {
-      let lo, hi;
-      if (value >= 0) { lo = (value >>> 0); hi = ((value / 4294967296) >>> 0); }
-      else { const abs = -value; const aLo = (abs >>> 0); const aHi = ((abs / 4294967296) >>> 0);
-             lo = (~aLo + 1) >>> 0; hi = (~aHi + (lo === 0 ? 1 : 0)) >>> 0; }
-      dv.setUint32(this._dataPtr + 8, lo, true);
-      dv.setUint32(this._dataPtr + 12, hi, true);
-    }
-  }
-  set active(value) {
-    const u8 = this._u8;
-    const off = this._dataPtr + 16;
-    if (value) u8[off] |= 1;
-    else u8[off] &= 254;
-  }
-  set avatar(value) {
-    const u8 = this._cpp._u8;
-    u8.set(value, this._exp.cpp_in_ptr());
-    this._exp.cpp_any_builder_set_data(2, value.length);
-    this._u8 = this._cpp._u8;
-    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
-  }
-
-  /**
-   * Apply fields from a plain JS object to this builder. Same shape
-   * as JSON.stringify on the wire side: pass any object whose keys
-   * match the schema field names. Missing keys are skipped, unknown
-   * keys are ignored. Returns `this` for chaining.
-   */
-  fromObject(o) {
-    if (o == null) return this;
-    if (o.id !== undefined) this.id = o.id;
-    if (o.name !== undefined) this.name = o.name;
-    if (o.email !== undefined) this.email = o.email;
-    if (o.joinedAtMs !== undefined) this.joinedAtMs = o.joinedAtMs;
-    if (o.active !== undefined) this.active = o.active;
-    if (o.avatar !== undefined) this.avatar = o.avatar;
-    return this;
-  }
-
-  /**
-   * Build a User from a plain JS object in one call.
-   * Shorthand for `new UserBuilder(cpp).fromObject(o)`.
-   */
-  static from(cpp, o) {
-    return new UserBuilder(cpp).fromObject(o);
-  }
-
-  /** Serialize the message to framed Cap'n Proto bytes. */
-  toBytes() {
-    const len = this._exp.cpp_any_builder_finalize();
-    if (!len) throw new Error("cpp_any_builder_finalize failed");
-    const out = this._cpp._outPtr;
-    return this._cpp._u8.slice(out, out + len);
-  }
-}
-
-export class UserListBuilder {
-  static _DATA_WORDS = 0;
-  static _PTR_WORDS = 1;
-  constructor(cpp, opts) {
-    this._cpp = cpp;
-    this._exp = cpp._exports;
-    if (!opts || !opts.preinitialized) {
-      if (this._exp.cpp_any_builder_init(0, 1) !== 1) {
-        throw new Error("cpp_any_builder_init failed");
-      }
-    }
-    this._dataPtr = (opts && opts.dataPtr !== undefined)
-      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
-    this._u8 = cpp._u8;
-    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
-  }
-
-  set users(value) {
-    if (!Array.isArray(value)) throw new TypeError("List(User) field expects an array");
-    if (this._exp.cpp_any_builder_init_list_struct(0, value.length, 3, 3) !== 1) {
-      throw new Error("init_list_struct failed for users");
-    }
-    for (let i = 0; i < value.length; i++) {
-      const item = value[i];
-      if (item == null) continue;
-      if (this._exp.cpp_any_builder_enter_list_element(0, i) !== 1) {
-        throw new Error("enter_list_element(" + i + ") failed for users");
-      }
-      const sub = new UserBuilder(this._cpp, { preinitialized: true });
-      sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
-      sub.fromObject(item);
-      if (this._exp.cpp_any_builder_exit_struct() !== 1) {
-        throw new Error("exit_struct(list element) failed for users");
-      }
-    }
-    this._u8 = this._cpp._u8;
-    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
-    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
-  }
-
-  /**
-   * Apply fields from a plain JS object to this builder. Same shape
-   * as JSON.stringify on the wire side: pass any object whose keys
-   * match the schema field names. Missing keys are skipped, unknown
-   * keys are ignored. Returns `this` for chaining.
-   */
-  fromObject(o) {
-    if (o == null) return this;
-    if (o.users !== undefined) this.users = o.users;
-    return this;
-  }
-
-  /**
-   * Build a UserList from a plain JS object in one call.
-   * Shorthand for `new UserListBuilder(cpp).fromObject(o)`.
-   */
-  static from(cpp, o) {
-    return new UserListBuilder(cpp).fromObject(o);
-  }
-
-  /** Serialize the message to framed Cap'n Proto bytes. */
-  toBytes() {
-    const len = this._exp.cpp_any_builder_finalize();
-    if (!len) throw new Error("cpp_any_builder_finalize failed");
-    const out = this._cpp._outPtr;
-    return this._cpp._u8.slice(out, out + len);
-  }
-}
-
-export class CountParamsBuilder {
-  static _DATA_WORDS = 1;
-  static _PTR_WORDS = 0;
-  constructor(cpp, opts) {
-    this._cpp = cpp;
-    this._exp = cpp._exports;
-    if (!opts || !opts.preinitialized) {
-      if (this._exp.cpp_any_builder_init(1, 0) !== 1) {
-        throw new Error("cpp_any_builder_init failed");
-      }
-    }
-    this._dataPtr = (opts && opts.dataPtr !== undefined)
-      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
-    this._u8 = cpp._u8;
-    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
-  }
-
-  set n(value) {
+  set weight(value) {
     const u8 = this._u8;
     const o = this._dataPtr + 0;
     u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
@@ -1540,16 +1187,17 @@ export class CountParamsBuilder {
    */
   fromObject(o) {
     if (o == null) return this;
-    if (o.n !== undefined) this.n = o.n;
+    if (o.name !== undefined) this.name = o.name;
+    if (o.weight !== undefined) this.weight = o.weight;
     return this;
   }
 
   /**
-   * Build a CountParams from a plain JS object in one call.
-   * Shorthand for `new CountParamsBuilder(cpp).fromObject(o)`.
+   * Build a Tag from a plain JS object in one call.
+   * Shorthand for `new TagBuilder(cpp).fromObject(o)`.
    */
   static from(cpp, o) {
-    return new CountParamsBuilder(cpp).fromObject(o);
+    return new TagBuilder(cpp).fromObject(o);
   }
 
   /** Serialize the message to framed Cap'n Proto bytes. */
@@ -1561,7 +1209,7 @@ export class CountParamsBuilder {
   }
 }
 
-export class BlobReplyBuilder {
+export class BoxBuilder {
   static _DATA_WORDS = 0;
   static _PTR_WORDS = 1;
   constructor(cpp, opts) {
@@ -1578,11 +1226,120 @@ export class BlobReplyBuilder {
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
-  set data(value) {
-    const u8 = this._cpp._u8;
-    u8.set(value, this._exp.cpp_in_ptr());
-    this._exp.cpp_any_builder_set_data(0, value.length);
+  set value(value) {
+    if (typeof value === "string") {
+      const inPtr = this._exp.cpp_in_ptr();
+      const inCap = this._exp.cpp_in_capacity();
+      const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+      const { written } = SHARED_ENCODER.encodeInto(value, dst);
+      this._exp.cpp_any_builder_set_text(0, written);
+      this._u8 = this._cpp._u8;
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (value instanceof Uint8Array) {
+      this._cpp._u8.set(value, this._exp.cpp_in_ptr());
+      this._exp.cpp_any_builder_set_data(0, value.length);
+      this._u8 = this._cpp._u8;
+      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+      return;
+    }
+    if (value == null) return;
+    throw new TypeError("AnyPointer setter accepts string (Text) or Uint8Array (Data); for struct values, write through the typed sibling field");
+  }
+
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.value !== undefined) this.value = o.value;
+    return this;
+  }
+
+  /**
+   * Build a Box from a plain JS object in one call.
+   * Shorthand for `new BoxBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new BoxBuilder(cpp).fromObject(o);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const out = this._cpp._outPtr;
+    return this._cpp._u8.slice(out, out + len);
+  }
+}
+
+export class UseBoxBuilder {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 2;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    if (!opts || !opts.preinitialized) {
+      if (this._exp.cpp_any_builder_init(0, 2) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+  }
+
+  get textBox() {
+    if (this._exp.cpp_any_builder_enter_struct(0, 0, 1) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for textBox");
+    }
+    const sub = new BoxBuilder(this._cpp, { preinitialized: true });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub._exitOnFinalize = true;
+    return sub;
+  }
+  set textBox(value) {
+    if (value == null) return;
+    if (this._exp.cpp_any_builder_enter_struct(0, 0, 1) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for textBox");
+    }
+    const sub = new BoxBuilder(this._cpp, { preinitialized: true });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub.fromObject(value);
+    if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+      throw new Error("cpp_any_builder_exit_struct failed for textBox");
+    }
     this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+  get tagBox() {
+    if (this._exp.cpp_any_builder_enter_struct(1, 0, 1) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for tagBox");
+    }
+    const sub = new BoxBuilder(this._cpp, { preinitialized: true });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub._exitOnFinalize = true;
+    return sub;
+  }
+  set tagBox(value) {
+    if (value == null) return;
+    if (this._exp.cpp_any_builder_enter_struct(1, 0, 1) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for tagBox");
+    }
+    const sub = new BoxBuilder(this._cpp, { preinitialized: true });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub.fromObject(value);
+    if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+      throw new Error("cpp_any_builder_exit_struct failed for tagBox");
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
     if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
 
@@ -1594,72 +1351,17 @@ export class BlobReplyBuilder {
    */
   fromObject(o) {
     if (o == null) return this;
-    if (o.data !== undefined) this.data = o.data;
+    if (o.textBox !== undefined) this.textBox = o.textBox;
+    if (o.tagBox !== undefined) this.tagBox = o.tagBox;
     return this;
   }
 
   /**
-   * Build a BlobReply from a plain JS object in one call.
-   * Shorthand for `new BlobReplyBuilder(cpp).fromObject(o)`.
+   * Build a UseBox from a plain JS object in one call.
+   * Shorthand for `new UseBoxBuilder(cpp).fromObject(o)`.
    */
   static from(cpp, o) {
-    return new BlobReplyBuilder(cpp).fromObject(o);
-  }
-
-  /** Serialize the message to framed Cap'n Proto bytes. */
-  toBytes() {
-    const len = this._exp.cpp_any_builder_finalize();
-    if (!len) throw new Error("cpp_any_builder_finalize failed");
-    const out = this._cpp._outPtr;
-    return this._cpp._u8.slice(out, out + len);
-  }
-}
-
-export class NumericProbeBuilder {
-  static _DATA_WORDS = 0;
-  static _PTR_WORDS = 1;
-  constructor(cpp, opts) {
-    this._cpp = cpp;
-    this._exp = cpp._exports;
-    if (!opts || !opts.preinitialized) {
-      if (this._exp.cpp_any_builder_init(0, 1) !== 1) {
-        throw new Error("cpp_any_builder_init failed");
-      }
-    }
-    this._dataPtr = (opts && opts.dataPtr !== undefined)
-      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
-    this._u8 = cpp._u8;
-    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
-  }
-
-  set f64s(value) {
-    if (!Array.isArray(value)) throw new TypeError("List(Float64) field expects an array");
-    if (this._exp.cpp_any_builder_init_list_float64(0, value.length) !== 1) {
-      throw new Error("init_list_float64 failed for f64s");
-    }
-    for (let i = 0; i < value.length; i++) {
-      this._exp.cpp_any_builder_set_list_float64(0, i, value[i]);
-    }
-  }
-
-  /**
-   * Apply fields from a plain JS object to this builder. Same shape
-   * as JSON.stringify on the wire side: pass any object whose keys
-   * match the schema field names. Missing keys are skipped, unknown
-   * keys are ignored. Returns `this` for chaining.
-   */
-  fromObject(o) {
-    if (o == null) return this;
-    if (o.f64s !== undefined) this.f64s = o.f64s;
-    return this;
-  }
-
-  /**
-   * Build a NumericProbe from a plain JS object in one call.
-   * Shorthand for `new NumericProbeBuilder(cpp).fromObject(o)`.
-   */
-  static from(cpp, o) {
-    return new NumericProbeBuilder(cpp).fromObject(o);
+    return new UseBoxBuilder(cpp).fromObject(o);
   }
 
   /** Serialize the message to framed Cap'n Proto bytes. */
@@ -1672,97 +1374,59 @@ export class NumericProbeBuilder {
 }
 
 /**
- * Open framed Cap'n Proto bytes for typed access. Returns a UserReader.
+ * Open framed Cap'n Proto bytes for typed access. Returns a TagReader.
  */
-export function openUser(cpp, bytes) {
+export function openTag(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, false);
-  return new UserReader(cpp, opened.dataPtr, opened);
+  return new TagReader(cpp, opened.dataPtr, opened);
 }
 
 /** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
-export function openUserUnsafe(cpp, bytes) {
+export function openTagUnsafe(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, true);
-  return new UserReader(cpp, opened.dataPtr, opened);
+  return new TagReader(cpp, opened.dataPtr, opened);
 }
 
-/** Begin building a new User message. Returns a UserBuilder. */
-export function buildUser(cpp) {
-  return new UserBuilder(cpp);
+/** Begin building a new Tag message. Returns a TagBuilder. */
+export function buildTag(cpp) {
+  return new TagBuilder(cpp);
 }
 
 /**
- * Open framed Cap'n Proto bytes for typed access. Returns a UserListReader.
+ * Open framed Cap'n Proto bytes for typed access. Returns a BoxReader.
  */
-export function openUserList(cpp, bytes) {
+export function openBox(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, false);
-  return new UserListReader(cpp, opened.dataPtr, opened);
+  return new BoxReader(cpp, opened.dataPtr, opened);
 }
 
 /** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
-export function openUserListUnsafe(cpp, bytes) {
+export function openBoxUnsafe(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, true);
-  return new UserListReader(cpp, opened.dataPtr, opened);
+  return new BoxReader(cpp, opened.dataPtr, opened);
 }
 
-/** Begin building a new UserList message. Returns a UserListBuilder. */
-export function buildUserList(cpp) {
-  return new UserListBuilder(cpp);
+/** Begin building a new Box message. Returns a BoxBuilder. */
+export function buildBox(cpp) {
+  return new BoxBuilder(cpp);
 }
 
 /**
- * Open framed Cap'n Proto bytes for typed access. Returns a CountParamsReader.
+ * Open framed Cap'n Proto bytes for typed access. Returns a UseBoxReader.
  */
-export function openCountParams(cpp, bytes) {
+export function openUseBox(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, false);
-  return new CountParamsReader(cpp, opened.dataPtr, opened);
+  return new UseBoxReader(cpp, opened.dataPtr, opened);
 }
 
 /** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
-export function openCountParamsUnsafe(cpp, bytes) {
+export function openUseBoxUnsafe(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, true);
-  return new CountParamsReader(cpp, opened.dataPtr, opened);
+  return new UseBoxReader(cpp, opened.dataPtr, opened);
 }
 
-/** Begin building a new CountParams message. Returns a CountParamsBuilder. */
-export function buildCountParams(cpp) {
-  return new CountParamsBuilder(cpp);
-}
-
-/**
- * Open framed Cap'n Proto bytes for typed access. Returns a BlobReplyReader.
- */
-export function openBlobReply(cpp, bytes) {
-  const opened = _openCapnwasmMessage(cpp, bytes, false);
-  return new BlobReplyReader(cpp, opened.dataPtr, opened);
-}
-
-/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
-export function openBlobReplyUnsafe(cpp, bytes) {
-  const opened = _openCapnwasmMessage(cpp, bytes, true);
-  return new BlobReplyReader(cpp, opened.dataPtr, opened);
-}
-
-/** Begin building a new BlobReply message. Returns a BlobReplyBuilder. */
-export function buildBlobReply(cpp) {
-  return new BlobReplyBuilder(cpp);
-}
-
-/**
- * Open framed Cap'n Proto bytes for typed access. Returns a NumericProbeReader.
- */
-export function openNumericProbe(cpp, bytes) {
-  const opened = _openCapnwasmMessage(cpp, bytes, false);
-  return new NumericProbeReader(cpp, opened.dataPtr, opened);
-}
-
-/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
-export function openNumericProbeUnsafe(cpp, bytes) {
-  const opened = _openCapnwasmMessage(cpp, bytes, true);
-  return new NumericProbeReader(cpp, opened.dataPtr, opened);
-}
-
-/** Begin building a new NumericProbe message. Returns a NumericProbeBuilder. */
-export function buildNumericProbe(cpp) {
-  return new NumericProbeBuilder(cpp);
+/** Begin building a new UseBox message. Returns a UseBoxBuilder. */
+export function buildUseBox(cpp) {
+  return new UseBoxBuilder(cpp);
 }
 

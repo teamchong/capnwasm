@@ -473,6 +473,11 @@ function validCapnpType(t, declared) {
   if (typeof t !== "string") return false;
   if (VALID_CAPNP_PRIMS.has(t)) return true;
   if (declared.has(t)) return true;
+  // Capability(<Iface>) is the codegen tag for interface-typed fields.
+  // The inner name may be an unresolved interface (when only the struct
+  // shapes are declared in this file's struct table) or "AnyPointer".
+  // Either way the codegen knows what to do, so accept the wrapper.
+  if (t.startsWith("Capability(") && t.endsWith(")")) return true;
   // List(X) is valid when X is; recurse so List(List(...)) chains work.
   // Use balanced-paren matching since X may itself contain parens.
   if (t.startsWith("List(") && t.endsWith(")")) {
@@ -974,6 +979,75 @@ function generateJs(structs, schemaName) {
   lines.push(`  const elementsBase = target + 8;`);
   lines.push(`  if (elementsBase + elementCount * wordsPerElement * 8 > msgEnd) return undefined;`);
   lines.push(`  return { elementsBase, count: elementCount, dataWords: tagDataWords, ptrWords: tagPtrWords };`);
+  lines.push(`}`);
+  lines.push("");
+  // AnyPointer reader handle: stored on AnyPointer-typed reader fields and
+  // generic-parameter slots (T inside `Box(T)`). Caller decodes the slot
+  // by calling .asText() / .asData() / .asStruct(SomeReader). The handle
+  // captures the parent reader plus the pointer-slot byte address so the
+  // decode functions can hit the segment-0 fast path or fall back to the
+  // C++ cursor.
+  lines.push(`class _AnyPointerReadHandle {`);
+  lines.push(`  constructor(parent, parentDataWords, ptrIndex) {`);
+  lines.push(`    this._parent = parent;`);
+  lines.push(`    this._parentDataWords = parentDataWords;`);
+  lines.push(`    this._ptrIndex = ptrIndex;`);
+  lines.push(`  }`);
+  lines.push(`  /** Returns the AnyPointer slot interpreted as Text, or null when the slot is null. */`);
+  lines.push(`  asText() {`);
+  lines.push(`    _ensureCapnwasmReader(this._parent);`);
+  lines.push(`    const p = this._parent;`);
+  lines.push(`    const v = _jsReadTextPtr(p._u8, p._dv, p._dataPtr, this._parentDataWords, this._ptrIndex, p._msgStart, p._msgEnd);`);
+  lines.push(`    if (v !== undefined) return v ?? "";`);
+  lines.push(`    const len = p._cpp._exports.cpp_any_text_at(this._ptrIndex);`);
+  lines.push(`    if (len === 0) return "";`);
+  lines.push(`    const out = p._cpp._outPtr;`);
+  lines.push(`    return decodeAscii(p._cpp._u8.subarray(out, out + len));`);
+  lines.push(`  }`);
+  lines.push(`  /** Returns the AnyPointer slot as a Uint8Array (Data), or an empty array. */`);
+  lines.push(`  asData() {`);
+  lines.push(`    _ensureCapnwasmReader(this._parent);`);
+  lines.push(`    const p = this._parent;`);
+  lines.push(`    const v = _jsReadDataPtr(p._u8, p._dv, p._dataPtr, this._parentDataWords, this._ptrIndex, p._msgStart, p._msgEnd);`);
+  lines.push(`    if (v !== undefined) return v ?? new Uint8Array(0);`);
+  lines.push(`    const len = p._cpp._exports.cpp_any_data_at(this._ptrIndex);`);
+  lines.push(`    const out = p._cpp._outPtr;`);
+  lines.push(`    return p._cpp._u8.slice(out, out + len);`);
+  lines.push(`  }`);
+  lines.push(`  /** Decode the slot as a struct of the given Reader class. Pass the codegen reader class. */`);
+  lines.push(`  asStruct(ReaderClass) {`);
+  lines.push(`    _ensureCapnwasmReader(this._parent);`);
+  lines.push(`    const p = this._parent;`);
+  lines.push(`    const cpp = p._cpp;`);
+  lines.push(`    const _msgStart = p._msgStart, _msgEnd = p._msgEnd;`);
+  lines.push(`    const rebind = () => {`);
+  lines.push(`      _ensureCapnwasmReader(p);`);
+  lines.push(`      cpp._exports.cpp_any_slot_reset_root?.();`);
+  lines.push(`      cpp._exports.cpp_any_enter_struct(this._ptrIndex);`);
+  lines.push(`      cpp._bumpGeneration();`);
+  lines.push(`    };`);
+  lines.push(`    if (_msgEnd) {`);
+  lines.push(`      const desc = _jsReadStructPtr(p._u8, p._dv, p._dataPtr, this._parentDataWords, this._ptrIndex, _msgStart, _msgEnd);`);
+  lines.push(`      if (desc !== undefined) {`);
+  lines.push(`        const dp = desc === null ? 0 : desc.dataPtr;`);
+  lines.push(`        return new ReaderClass(cpp, dp, {`);
+  lines.push(`          slotIdx: p._slotIdx,`);
+  lines.push(`          msgStart: _msgStart,`);
+  lines.push(`          msgEnd: _msgEnd,`);
+  lines.push(`          gen: -1,`);
+  lines.push(`          parent: p,`);
+  lines.push(`          rebind,`);
+  lines.push(`        });`);
+  lines.push(`      }`);
+  lines.push(`    }`);
+  lines.push(`    rebind();`);
+  lines.push(`    return new ReaderClass(cpp, 0, {`);
+  lines.push(`      msg: p._msg,`);
+  lines.push(`      slotIdx: p._slotIdx,`);
+  lines.push(`      gen: cpp._generation ?? 0,`);
+  lines.push(`      rebind,`);
+  lines.push(`    });`);
+  lines.push(`  }`);
   lines.push(`}`);
   lines.push("");
   // Pick helper: takes the FIELDS table + caller-requested names, packs a
@@ -2256,8 +2330,9 @@ const LIST_PRIMITIVE_KINDS = new Map([
 function hasFieldSetter(field, declaredStructs) {
   if (field.kind === "group") return false;
   if (field.kind === "pointer") {
-    if (field.type === "Text" || field.type === "Data") return true;
+    if (field.type === "Text" || field.type === "Data" || field.type === "AnyPointer") return true;
     if (declaredStructs && declaredStructs.has(field.type)) return true;
+    if (/^Capability\(/.test(field.type ?? "")) return true;
     const listMatch = /^List\(([^)]+)\)$/.exec(field.type);
     if (listMatch) {
       const inner = listMatch[1];
@@ -2398,6 +2473,33 @@ function generateSetter(field, declaredStructs, structByName) {
   // and skip setter generation here.
   if (field.kind === "group") return null;
   if (field.kind === "pointer") {
+    if (field.type === "AnyPointer") {
+      // Best-effort AnyPointer setter: string -> text, Uint8Array -> data.
+      // Other shapes (writing a struct ref into an AnyPointer) require
+      // additional cpp builder support; leave a clean error so it surfaces
+      // immediately instead of silently dropping bytes.
+      return [
+        `if (typeof value === "string") {`,
+        `  const inPtr = this._exp.cpp_in_ptr();`,
+        `  const inCap = this._exp.cpp_in_capacity();`,
+        `  const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);`,
+        `  const { written } = SHARED_ENCODER.encodeInto(value, dst);`,
+        `  this._exp.cpp_any_builder_set_text(${field.ptrIndex}, written);`,
+        `  this._u8 = this._cpp._u8;`,
+        `  if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`,
+        `  return;`,
+        `}`,
+        `if (value instanceof Uint8Array) {`,
+        `  this._cpp._u8.set(value, this._exp.cpp_in_ptr());`,
+        `  this._exp.cpp_any_builder_set_data(${field.ptrIndex}, value.length);`,
+        `  this._u8 = this._cpp._u8;`,
+        `  if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`,
+        `  return;`,
+        `}`,
+        `if (value == null) return;`,
+        `throw new TypeError("AnyPointer setter accepts string (Text) or Uint8Array (Data); for struct values, write through the typed sibling field");`,
+      ];
+    }
     const listMatch = /^List\(([^)]+)\)$/.exec(field.type ?? "");
     if (listMatch) {
       return generateListSetter(field, listMatch[1], declaredStructs, structByName);
@@ -2433,6 +2535,16 @@ function generateSetter(field, declaredStructs, structByName) {
         `this._exp.cpp_any_builder_set_data(${field.ptrIndex}, value.length);`,
         `this._u8 = this._cpp._u8;`,
         `if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`,
+      ];
+    }
+    if (/^Capability\(/.test(field.type ?? "")) {
+      // Capability-typed setter. Writing a real cap requires an RPC cap
+      // table; the non-RPC builder paths can only honor the null write
+      // (which leaves the slot at its default empty pointer). Anything
+      // else is rejected so silent corruption doesn't slip through.
+      return [
+        `if (value == null) return;`,
+        `throw new TypeError("capability fields can only be set to null outside an RPC context");`,
       ];
     }
     return null;  // struct refs need nested builder support
@@ -2680,6 +2792,9 @@ function capnpToTs(capnpType, declaredStructs) {
     return `{ readonly length: number; at(i: number): ${innerTs} | undefined; [Symbol.iterator](): IterableIterator<${innerTs}> }`;
   }
   if (declaredStructs.has(capnpType)) return capnpType + "Reader";
+  // Capability(<Iface>) — null today (real cap-table-backed proxies are
+  // future work). Setter accepts null only.
+  if (/^Capability\(/.test(capnpType)) return "null";
   switch (capnpType) {
     case "Bool":   return "boolean";
     case "Text":   return "string";
@@ -3206,6 +3321,20 @@ function generateGetter(field, declaredStructs) {
         `  rebind: _rebindNested,`,
         `});`,
       ];
+    }
+    if (field.type === "AnyPointer") {
+      const parentDw = field.parentDataWords ?? 0;
+      return [
+        `const reader = this;`,
+        `return new _AnyPointerReadHandle(reader, ${parentDw}, ${field.ptrIndex});`,
+      ];
+    }
+    if (/^Capability\(/.test(field.type)) {
+      // Capability-typed field. Resolving to a real cap proxy needs an
+      // RPC cap table; non-RPC openers (openDynamic, raw bytes) don't
+      // have one, so we surface null. Wiring up the cap-table path so an
+      // RPC-delivered struct can hand back a typed proxy is future work.
+      return [`return null;`];
     }
     return [`throw new Error("unsupported pointer type: ${field.type}");`];
   }

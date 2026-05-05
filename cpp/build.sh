@@ -215,6 +215,8 @@ FLAGS=(
   # Browser RPC/dynamic paths don't need them.
   -Wl,--export=cpp_any_open
   -Wl,--export=cpp_any_open_at
+  -Wl,--export=cpp_any_set_reader_options
+  -Wl,--export=cpp_any_reset_reader_options
   # M3: Native multi-reader slot pool. Each safe reader (openFoo) holds a
   # slot index; cpp_any_use_slot makes its slot active before any read.
   # acquire_slot copies bytes in and returns the slot index; release_slot

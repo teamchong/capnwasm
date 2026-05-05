@@ -179,31 +179,42 @@ uint32_t capnpc_compile(uint32_t root_idx) {
   auto& rootFile = (*g_files)[root_idx];
   auto& rootModule = ensureArena().allocate<JsModule>(rootFile, reporter);
 
-  capnp::compiler::Compiler compiler{};
-  uint64_t rootId = compiler.add(rootModule).getId();
-  compiler.eagerlyCompile(rootId, capnp::compiler::Compiler::ALL_RELATED_NODES);
+  // capnp::compiler::Compiler can throw on hard errors (e.g. generic
+  // parameter constraints, malformed AST). Catch them so the JS side gets a
+  // typed error string instead of a wasm trap.
+  try {
+    capnp::compiler::Compiler compiler{};
+    uint64_t rootId = compiler.add(rootModule).getId();
+    compiler.eagerlyCompile(rootId, capnp::compiler::Compiler::ALL_RELATED_NODES);
 
-  if (reporter.hadErrors()) return 0;
+    if (reporter.hadErrors()) return 0;
 
-  // Emit CodeGeneratorRequest containing the root's compiled schema.
-  auto requestSchemas = compiler.getLoader().getAllLoaded();
-  capnp::MallocMessageBuilder mb;
-  auto request = mb.initRoot<capnp::schema::CodeGeneratorRequest>();
-  auto nodes = request.initNodes(requestSchemas.size());
-  for (size_t i = 0; i < requestSchemas.size(); i++) {
-    nodes.setWithCaveats(i, requestSchemas[i].getProto());
+    // Emit CodeGeneratorRequest containing the root's compiled schema.
+    auto requestSchemas = compiler.getLoader().getAllLoaded();
+    capnp::MallocMessageBuilder mb;
+    auto request = mb.initRoot<capnp::schema::CodeGeneratorRequest>();
+    auto nodes = request.initNodes(requestSchemas.size());
+    for (size_t i = 0; i < requestSchemas.size(); i++) {
+      nodes.setWithCaveats(i, requestSchemas[i].getProto());
+    }
+    // Mark the root file as "requested" so JS-side codegen knows where to start.
+    auto requested = request.initRequestedFiles(1);
+    auto rf = requested[0];
+    rf.setId(rootId);
+    rf.setFilename(rootFile.name);
+
+    auto words = capnp::messageToFlatArray(mb);
+    auto bytes = words.asBytes();
+    if (bytes.size() > CAPNPC_CAP) return 0;
+    std::memcpy(capnpc_out, bytes.begin(), bytes.size());
+    return static_cast<uint32_t>(bytes.size());
+  } catch (kj::Exception& e) {
+    reporter.addError(0, 0, e.getDescription());
+    return 0;
+  } catch (...) {
+    reporter.addError(0, 0, kj::StringPtr("capnpc_compile: unknown C++ exception"));
+    return 0;
   }
-  // Mark the root file as "requested" so JS-side codegen knows where to start.
-  auto requested = request.initRequestedFiles(1);
-  auto rf = requested[0];
-  rf.setId(rootId);
-  rf.setFilename(rootFile.name);
-
-  auto words = capnp::messageToFlatArray(mb);
-  auto bytes = words.asBytes();
-  if (bytes.size() > CAPNPC_CAP) return 0;
-  std::memcpy(capnpc_out, bytes.begin(), bytes.size());
-  return static_cast<uint32_t>(bytes.size());
 }
 
 // Concatenate any errors emitted during the last compile, separated by '\n'.
@@ -293,6 +304,17 @@ static void appendUint(kj::Vector<char>& out, uint64_t v) {
   out.addAll(kj::ArrayPtr<const char>(s.cStr(), s.size()));
 }
 
+// JS Number can only safely represent u53; capnp interface/struct IDs are
+// 64-bit hashes that routinely exceed that. Emit u64 as a decimal STRING
+// so the JS side can BigInt() it without precision loss. Forward-declared
+// here so callers earlier in the file can use it.
+static void appendU64Str(kj::Vector<char>& out, uint64_t v) {
+  out.add('"');
+  auto s = kj::str(v);
+  out.addAll(kj::ArrayPtr<const char>(s.cStr(), s.size()));
+  out.add('"');
+}
+
 // Walk one Type Reader and append a JSON value (string for primitives /
 // special tokens like {"struct": id} for struct refs).
 static void appendTypeJson(kj::Vector<char>& out, capnp::schema::Type::Reader t) {
@@ -307,20 +329,23 @@ static void appendTypeJson(kj::Vector<char>& out, capnp::schema::Type::Reader t)
     return;
   }
   if (w == W::STRUCT) {
+    // Type IDs are 64-bit hashes that exceed JS Number's 2^53 precision,
+    // so emit them as decimal STRINGS. JS-side byId resolution stringifies
+    // ids consistently and avoids silent precision-loss collisions.
     out.addAll(kj::StringPtr("{\"struct\":"));
-    appendUint(out, t.getStruct().getTypeId());
+    appendU64Str(out, t.getStruct().getTypeId());
     out.add('}');
     return;
   }
   if (w == W::ENUM) {
     out.addAll(kj::StringPtr("{\"enum\":"));
-    appendUint(out, t.getEnum().getTypeId());
+    appendU64Str(out, t.getEnum().getTypeId());
     out.add('}');
     return;
   }
   if (w == W::INTERFACE) {
     out.addAll(kj::StringPtr("{\"interface\":"));
-    appendUint(out, t.getInterface().getTypeId());
+    appendU64Str(out, t.getInterface().getTypeId());
     out.add('}');
     return;
   }
@@ -363,7 +388,7 @@ uint32_t capnpc_extract_structs() {
     out.addAll(kj::StringPtr("\"name\":"));
     appendJsonString(out, shortNameOf(node.getDisplayName()));
     out.addAll(kj::StringPtr(",\"id\":"));
-    appendUint(out, node.getId());
+    appendU64Str(out, node.getId());
     out.addAll(kj::StringPtr(",\"dataWords\":"));
     appendUint(out, sn.getDataWordCount());
     out.addAll(kj::StringPtr(",\"ptrWords\":"));
@@ -405,7 +430,7 @@ uint32_t capnpc_extract_structs() {
         out.add('}');
       } else if (f.isGroup()) {
         out.addAll(kj::StringPtr(",\"group\":"));
-        appendUint(out, f.getGroup().getTypeId());
+        appendU64Str(out, f.getGroup().getTypeId());
       }
       out.add('}');
     }
@@ -423,7 +448,7 @@ uint32_t capnpc_extract_structs() {
     out.addAll(kj::StringPtr("\"name\":"));
     appendJsonString(out, shortNameOf(node.getDisplayName()));
     out.addAll(kj::StringPtr(",\"id\":"));
-    appendUint(out, node.getId());
+    appendU64Str(out, node.getId());
     out.addAll(kj::StringPtr(",\"isGroup\":true"));
     out.addAll(kj::StringPtr(",\"dataWords\":"));
     appendUint(out, sn.getDataWordCount());
@@ -461,7 +486,7 @@ uint32_t capnpc_extract_structs() {
         out.add('}');
       } else if (f.isGroup()) {
         out.addAll(kj::StringPtr(",\"group\":"));
-        appendUint(out, f.getGroup().getTypeId());
+        appendU64Str(out, f.getGroup().getTypeId());
       }
       out.add('}');
     }
@@ -471,16 +496,6 @@ uint32_t capnpc_extract_structs() {
   if ((uint32_t)out.size() > CAPNPC_CAP) return 0;
   std::memcpy(capnpc_out, out.begin(), out.size());
   return static_cast<uint32_t>(out.size());
-}
-
-// JS Number can only safely represent u53; capnp interface/struct IDs are
-// 64-bit hashes that routinely exceed that. Emit u64 as a decimal STRING
-// so the JS side can BigInt() it without precision loss.
-static void appendU64Str(kj::Vector<char>& out, uint64_t v) {
-  out.add('"');
-  auto s = kj::str(v);
-  out.addAll(kj::ArrayPtr<const char>(s.cStr(), s.size()));
-  out.add('"');
 }
 
 // Extract interface metadata from the buffered CodeGeneratorRequest. Emits a
