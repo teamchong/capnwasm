@@ -473,9 +473,6 @@ export class DisposedReaderError extends Error {
   }
 }
 function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
-  if (typeof cpp._validateSingleSegment === "function") {
-    cpp._validateSingleSegment(bytes);
-  }
   if (!unsafe && typeof cpp._acquireSlot === "function" && cpp._supportsReaderSlotPool && cpp._supportsReaderSlotPool()) {
     const acquired = cpp._acquireSlot(bytes);
     if (acquired) {
@@ -1113,4 +1110,3 @@ export function openPrimitivesUnsafe(cpp, bytes) {
 export function buildPrimitives(cpp) {
   return new PrimitivesBuilder(cpp);
 }
-

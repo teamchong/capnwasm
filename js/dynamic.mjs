@@ -517,7 +517,6 @@ export function encodeDynamic(cpp, schema, obj) {
  * `defineSchema`. `bytes` is a serialized Cap'n Proto message.
  */
 export function openDynamic(cpp, schema, bytes) {
-  if (typeof cpp._validateSingleSegment === "function") cpp._validateSingleSegment(bytes);
   // M3: Native multi-reader slot pool. Acquire a dedicated slot so this
   // reader survives unrelated decodes without rebinding. Falls back to
   // managed-message + rebind on older runtimes that don't export the
@@ -537,7 +536,6 @@ export function openDynamic(cpp, schema, bytes) {
 }
 
 export function openDynamicUnsafe(cpp, schema, bytes) {
-  if (typeof cpp._validateSingleSegment === "function") cpp._validateSingleSegment(bytes);
   if (bytes.length > cpp._cap) throw new Error("input larger than scratch buffer");
   cpp._u8.set(bytes, cpp._inPtr);
   // cpp_any_open returns the data section pointer (or 0 for an empty

@@ -9,14 +9,12 @@ function decodeAscii(bytes) {
 function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
   if (!msgEnd) return undefined;
   const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
-  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
   return _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);
 }
 
 function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
   if (!msgEnd) return undefined;
   const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
-  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
   return _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);
 }
 
@@ -579,9 +577,6 @@ export class DisposedReaderError extends Error {
   }
 }
 function _openCapnwasmMessage(cpp, bytes, unsafe = false) {
-  if (typeof cpp._validateSingleSegment === "function") {
-    cpp._validateSingleSegment(bytes);
-  }
   if (!unsafe && typeof cpp._acquireSlot === "function" && cpp._supportsReaderSlotPool && cpp._supportsReaderSlotPool()) {
     const acquired = cpp._acquireSlot(bytes);
     if (acquired) {
@@ -2094,4 +2089,3 @@ export function openPostMetaParentUnsafe(cpp, bytes) {
 export function buildPostMetaParent(cpp) {
   return new PostMetaParentBuilder(cpp);
 }
-

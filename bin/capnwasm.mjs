@@ -839,14 +839,12 @@ function generateJs(structs, schemaName) {
   lines.push(`function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {`);
   lines.push(`  if (!msgEnd) return undefined;`);
   lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
-  lines.push(`  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;`);
   lines.push(`  return _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);`);
   lines.push(`}`);
   lines.push("");
   lines.push(`function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {`);
   lines.push(`  if (!msgEnd) return undefined;`);
   lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
-  lines.push(`  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;`);
   lines.push(`  return _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);`);
   lines.push(`}`);
   lines.push("");
@@ -1464,11 +1462,10 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`  }`);
   lines.push(`}`);
   lines.push(`function _openCapnwasmMessage(cpp, bytes, unsafe = false) {`);
-  // Validate framed input before opening. Multi-segment frames are accepted;
-  // JS fast paths use segment-0 bounds and FAR pointers fall back to C++.
-  lines.push(`  if (typeof cpp._validateSingleSegment === "function") {`);
-  lines.push(`    cpp._validateSingleSegment(bytes);`);
-  lines.push(`  }`);
+  // Keep framing validation at the actual open boundary: _acquireSlot and
+  // _allocMessage validate before copying into wasm-owned memory, while the
+  // unsafe scratch path relies on C++ FlatArrayMessageReader. Doing it here
+  // duplicates the hot safe path.
   // M3: Native multi-reader slot pool. Each safe reader acquires its
   // own wasm cursor slot and carries the slot index. Subsequent reads
   // call cpp_any_use_slot(slotIdx) instead of re-binding a shared
