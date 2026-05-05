@@ -861,6 +861,7 @@ export class UserReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -978,6 +979,7 @@ export class UserListReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -1086,6 +1088,7 @@ export class CountParamsReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -1152,6 +1155,7 @@ export class BlobReplyReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -1226,6 +1230,7 @@ export class NumericProbeReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -1345,6 +1350,7 @@ export class UserBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set id(value) {
@@ -1454,6 +1460,7 @@ export class UserListBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set users(value) {
@@ -1467,7 +1474,7 @@ export class UserListBuilder {
       if (this._exp.cpp_any_builder_enter_list_element(0, i) !== 1) {
         throw new Error("enter_list_element(" + i + ") failed for users");
       }
-      const sub = new UserBuilder(this._cpp, { preinitialized: true });
+      const sub = new UserBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
       sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
       sub.fromObject(item);
       if (this._exp.cpp_any_builder_exit_struct() !== 1) {
@@ -1523,6 +1530,7 @@ export class CountParamsBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set n(value) {
@@ -1576,6 +1584,7 @@ export class BlobReplyBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set data(value) {
@@ -1630,6 +1639,7 @@ export class NumericProbeBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set f64s(value) {

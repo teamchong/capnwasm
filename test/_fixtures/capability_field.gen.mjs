@@ -861,6 +861,7 @@ export class hello$ParamsReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -922,6 +923,7 @@ export class hello$ResultsReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -997,6 +999,7 @@ export class VisitReader {
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
     this._dataPtr = dataPtr | 0;
     if (opts && opts.parent) {
       const _p = opts.parent;
@@ -1040,7 +1043,9 @@ export class VisitReader {
   }
   get cap() {
     _ensureCapnwasmReader(this);
-    return null;
+    const _idx = this._exp.cpp_any_get_cap_index(1);
+    if (_idx === 0xffffffff) return null;
+    return this._capTable ? (this._capTable[_idx] ?? null) : null;
   }
 
   static _FIELDS = {
@@ -1083,6 +1088,7 @@ export class hello$ParamsBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
 
@@ -1129,6 +1135,7 @@ export class hello$ResultsBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set msg(value) {
@@ -1185,6 +1192,7 @@ export class VisitBuilder {
       ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
     this._u8 = cpp._u8;
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
   }
 
   set who(value) {
@@ -1198,7 +1206,14 @@ export class VisitBuilder {
   }
   set cap(value) {
     if (value == null) return;
-    throw new TypeError("capability fields can only be set to null outside an RPC context");
+    if (!this._capSink) {
+      throw new TypeError("capability fields can only be set to null outside an RPC context");
+    }
+    const _capIdx = this._capSink.length;
+    this._capSink.push(value);
+    if (this._exp.cpp_any_builder_set_cap_index(1, _capIdx) !== 1) {
+      throw new Error("cpp_any_builder_set_cap_index failed");
+    }
   }
 
   /**

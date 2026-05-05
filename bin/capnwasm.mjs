@@ -1910,6 +1910,12 @@ function _capnwasmPick(cpp, fields, names) {`);
     // fall back to the C++ path.
     lines.push(`    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;`);
     lines.push(`    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;`);
+    // Cap-table threading. RPC delivery paths populate opts.capTable with
+    // the inbound CapDescriptor[] resolved to typed cap proxies; non-RPC
+    // openers (openFoo, openDynamic) leave it null. Nested struct readers
+    // inherit from the parent so an interface-typed field deep inside a
+    // delivered struct still resolves through the same table.
+    lines.push(`    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;`);
     // dataPtr is supplied by openX(cpp, bytes) and by the RPC layer's
     // open_call_params / open_return_results paths. When present,
     // primitive getters can read straight from wasm memory at
@@ -2123,6 +2129,13 @@ function _capnwasmPick(cpp, fields, names) {`);
     // there when memory grows. Saves one alloc per Builder construction
     // (per call on the hot RPC path).
     lines.push(`    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+    // Cap-table sink. RPC outbound paths (build_call / build_return)
+    // pass a mutable array; capability-typed setters push the cap target
+    // into it and write the resulting index into the wire pointer.
+    // Non-RPC builders (buildFoo, fromObject) leave it null and the
+    // setter throws on non-null cap writes — matches today's behavior
+    // for non-RPC contexts where there is no cap table to populate.
+    lines.push(`    this._capSink = (opts && opts.capSink) || null;`);
     lines.push(`  }`);
     lines.push("");
     // Union setters: when this struct holds a union, expose
@@ -2158,7 +2171,9 @@ function _capnwasmPick(cpp, fields, names) {`);
           const discByteOff = s.discriminantOffsetBits >> 3;
           lines.push(`    this._exp.cpp_any_builder_set_uint16(${discByteOff}, ${f.discriminantValue});`);
         }
-        lines.push(`    return new ${f.groupStructName}Builder(this._cpp, { preinitialized: true });`);
+        // Inherit the parent's cap sink so capability-typed setters
+        // inside the group still target the same outbound cap table.
+        lines.push(`    return new ${f.groupStructName}Builder(this._cpp, { preinitialized: true, capSink: this._capSink });`);
         lines.push(`  }`);
         continue;
       }
@@ -2178,7 +2193,9 @@ function _capnwasmPick(cpp, fields, names) {`);
         lines.push(`    if (this._exp.cpp_any_builder_enter_struct(${f.ptrIndex}, ${dWords}, ${pWords}) !== 1) {`);
         lines.push(`      throw new Error("cpp_any_builder_enter_struct failed for ${f.name}");`);
         lines.push(`    }`);
-        lines.push(`    const sub = new ${f.type}Builder(this._cpp, { preinitialized: true });`);
+        // Inherit cap sink so a capability-typed field inside the
+        // nested struct routes to the same outbound cap table.
+        lines.push(`    const sub = new ${f.type}Builder(this._cpp, { preinitialized: true, capSink: this._capSink });`);
         lines.push(`    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();`);
         lines.push(`    sub._exitOnFinalize = true;`);
         lines.push(`    return sub;`);
@@ -2195,7 +2212,7 @@ function _capnwasmPick(cpp, fields, names) {`);
         lines.push(`    if (this._exp.cpp_any_builder_enter_struct(${f.ptrIndex}, ${dWords}, ${pWords}) !== 1) {`);
         lines.push(`      throw new Error("cpp_any_builder_enter_struct failed for ${f.name}");`);
         lines.push(`    }`);
-        lines.push(`    const sub = new ${f.type}Builder(this._cpp, { preinitialized: true });`);
+        lines.push(`    const sub = new ${f.type}Builder(this._cpp, { preinitialized: true, capSink: this._capSink });`);
         lines.push(`    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();`);
         lines.push(`    sub.fromObject(value);`);
         lines.push(`    if (this._exp.cpp_any_builder_exit_struct() !== 1) {`);
@@ -2450,7 +2467,7 @@ function generateListSetter(field, inner, declaredStructs, structByName) {
       `  if (this._exp.cpp_any_builder_enter_list_element(${ptrIndex}, i) !== 1) {`,
       `    throw new Error("enter_list_element(" + i + ") failed for ${field.name}");`,
       `  }`,
-      `  const sub = new ${inner}Builder(this._cpp, { preinitialized: true });`,
+      `  const sub = new ${inner}Builder(this._cpp, { preinitialized: true, capSink: this._capSink });`,
       `  sub._dataPtr = this._exp.cpp_any_builder_data_ptr();`,
       `  sub.fromObject(item);`,
       `  if (this._exp.cpp_any_builder_exit_struct() !== 1) {`,
@@ -2474,10 +2491,20 @@ function generateSetter(field, declaredStructs, structByName) {
   if (field.kind === "group") return null;
   if (field.kind === "pointer") {
     if (field.type === "AnyPointer") {
-      // Best-effort AnyPointer setter: string -> text, Uint8Array -> data.
-      // Other shapes (writing a struct ref into an AnyPointer) require
-      // additional cpp builder support; leave a clean error so it surfaces
-      // immediately instead of silently dropping bytes.
+      // Multi-shape AnyPointer setter:
+      //   string                       -> Text
+      //   Uint8Array                   -> Data
+      //   capnwasm Reader (any class)  -> deep-copy struct from source slot
+      //   { _capnpFrame: Uint8Array }  -> deep-copy from a framed Cap'n Proto
+      //                                   message (e.g. produced by
+      //                                   `someBuilder.toBytes()`)
+      //   null / undefined             -> leave slot empty (no-op)
+      //
+      // Reader detection is duck-typed: any object exposing _slotIdx + _cpp
+      // is treated as a capnwasm Reader. The struct copy goes through
+      // cpp_any_builder_set_anypointer_from_slot, which calls upstream's
+      // AnyPointer::Builder::setAs<AnyPointer>(reader.getRoot()) — bit-
+      // identical to writing the same struct through a typed sibling field.
       return [
         `if (typeof value === "string") {`,
         `  const inPtr = this._exp.cpp_in_ptr();`,
@@ -2496,8 +2523,27 @@ function generateSetter(field, declaredStructs, structByName) {
         `  if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`,
         `  return;`,
         `}`,
+        `if (value && value._cpp && typeof value._slotIdx === "number") {`,
+        `  // Reader instance — deep copy via slot.`,
+        `  if (this._exp.cpp_any_builder_set_anypointer_from_slot(${field.ptrIndex}, value._slotIdx) !== 1) {`,
+        `    throw new Error("AnyPointer struct copy from slot failed (slot released or wrong type)");`,
+        `  }`,
+        `  this._u8 = this._cpp._u8;`,
+        `  if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`,
+        `  return;`,
+        `}`,
+        `if (value && value._capnpFrame instanceof Uint8Array) {`,
+        `  const frame = value._capnpFrame;`,
+        `  this._cpp._u8.set(frame, this._exp.cpp_in_ptr());`,
+        `  if (this._exp.cpp_any_builder_set_struct_from_bytes(${field.ptrIndex}, frame.length) !== 1) {`,
+        `    throw new Error("AnyPointer struct copy from bytes failed (malformed framed message)");`,
+        `  }`,
+        `  this._u8 = this._cpp._u8;`,
+        `  if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`,
+        `  return;`,
+        `}`,
         `if (value == null) return;`,
-        `throw new TypeError("AnyPointer setter accepts string (Text) or Uint8Array (Data); for struct values, write through the typed sibling field");`,
+        `throw new TypeError("AnyPointer setter accepts string (Text), Uint8Array (Data), a capnwasm Reader (struct deep-copy), or { _capnpFrame: Uint8Array } (raw framed message)");`,
       ];
     }
     const listMatch = /^List\(([^)]+)\)$/.exec(field.type ?? "");
@@ -2538,13 +2584,21 @@ function generateSetter(field, declaredStructs, structByName) {
       ];
     }
     if (/^Capability\(/.test(field.type ?? "")) {
-      // Capability-typed setter. Writing a real cap requires an RPC cap
-      // table; the non-RPC builder paths can only honor the null write
-      // (which leaves the slot at its default empty pointer). Anything
-      // else is rejected so silent corruption doesn't slip through.
+      // Capability-typed setter. Pushes the cap target into the
+      // builder's cap sink (a mutable array threaded through by
+      // RpcSession's outbound build paths) and writes the resulting
+      // index into the wire pointer. Without a cap sink we throw —
+      // the field simply cannot carry a real cap outside an RPC context.
       return [
         `if (value == null) return;`,
-        `throw new TypeError("capability fields can only be set to null outside an RPC context");`,
+        `if (!this._capSink) {`,
+        `  throw new TypeError("capability fields can only be set to null outside an RPC context");`,
+        `}`,
+        `const _capIdx = this._capSink.length;`,
+        `this._capSink.push(value);`,
+        `if (this._exp.cpp_any_builder_set_cap_index(${field.ptrIndex}, _capIdx) !== 1) {`,
+        `  throw new Error("cpp_any_builder_set_cap_index failed");`,
+        `}`,
       ];
     }
     return null;  // struct refs need nested builder support
@@ -3312,12 +3366,14 @@ function generateGetter(field, declaredStructs) {
         `  }`,
         `}`,
         `// Cursor fallback: position the C++ cursor on the nested struct so`,
-        `// subsequent getters read from the right level.`,
+        `// subsequent getters read from the right level. Pass parent so`,
+        `// the nested reader inherits _capTable for cap-typed fields.`,
         `_rebindNested();`,
         `return new ${inner}Reader(cpp, 0, {`,
         `  msg: reader._msg,`,
         `  slotIdx: reader._slotIdx,`,
         `  gen: cpp._generation ?? 0,`,
+        `  parent: reader,`,
         `  rebind: _rebindNested,`,
         `});`,
       ];
@@ -3330,11 +3386,20 @@ function generateGetter(field, declaredStructs) {
       ];
     }
     if (/^Capability\(/.test(field.type)) {
-      // Capability-typed field. Resolving to a real cap proxy needs an
-      // RPC cap table; non-RPC openers (openDynamic, raw bytes) don't
-      // have one, so we surface null. Wiring up the cap-table path so an
-      // RPC-delivered struct can hand back a typed proxy is future work.
-      return [`return null;`];
+      // Capability-typed field. cpp_any_get_cap_index reads the wire
+      // pointer at (dataPtr + parentDataWords*8 + ptrIdx*8) and returns
+      // the cap-table index, or 0xffffffff if the slot isn't a
+      // capability descriptor. Resolution goes through the parent
+      // reader's _capTable, which RpcSession populated from the inbound
+      // CapDescriptor[]. Non-RPC openers leave _capTable null, so the
+      // field reads as null — matches upstream behavior for a Reader
+      // not imbued with a cap table.
+      const parentDw = field.parentDataWords ?? 0;
+      return [
+        `const _idx = this._exp.cpp_any_get_cap_index(this._dataPtr, ${parentDw}, ${field.ptrIndex});`,
+        `if (_idx === 0xffffffff) return null;`,
+        `return this._capTable ? (this._capTable[_idx] ?? null) : null;`,
+      ];
     }
     return [`throw new Error("unsupported pointer type: ${field.type}");`];
   }

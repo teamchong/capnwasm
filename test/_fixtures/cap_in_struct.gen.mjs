@@ -1,4 +1,4 @@
-// Generated from generics.capnp by capnwasm-gen. Do not edit by hand.
+// Generated from cap_in_struct.capnp by capnwasm-gen. Do not edit by hand.
 
 const SHARED_TEXT_DECODER = new TextDecoder();
 const SHARED_ENCODER = new TextEncoder();
@@ -848,9 +848,9 @@ function _runDraft(cpp, fields, fn) {
   return fn(_materializeDraft(cpp, fields, plan));
 }
 
-export class TagReader {
-  static _DATA_WORDS = 1;
-  static _PTR_WORDS = 1;
+export class hello$ParamsReader {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 0;
   constructor(cpp, dataPtr, opts = undefined) {
     this._cpp = cpp;
     this._exp = cpp._exports;
@@ -890,46 +890,27 @@ export class TagReader {
   }
 
 
-  get name() {
-    _ensureCapnwasmReader(this);
-    const _msgEnd = this._msgEnd;
-    if (_msgEnd) {
-      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 1, 0, this._msgStart, _msgEnd);
-      if (v !== undefined) return v ?? "";
-    }
-    const len = this._exp.cpp_any_text_at(0);
-    if (len === 0) return "";
-    const u8 = this._cpp._u8;
-    const out = this._cpp._outPtr;
-    return decodeAscii(u8.subarray(out, out + len));
-  }
-  get weight() {
-    _ensureCapnwasmReader(this);
-    return this._dataPtr ? this._u32[(this._dataPtr + 0) >>> 2] : this._exp.cpp_any_uint32_at(0, 0);
-  }
 
   static _FIELDS = {
-    name: {"kind":0,"off":0,"type":"text"},
-    weight: {"kind":3,"off":0,"type":"uint32"},
   };
 
   draft(fn) {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _runDraft(this._cpp, TagReader._FIELDS, fn);
+    return _runDraft(this._cpp, hello$ParamsReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _capnwasmPick(this._cpp, TagReader._FIELDS, Object.keys(TagReader._FIELDS));
+    return _capnwasmPick(this._cpp, hello$ParamsReader._FIELDS, Object.keys(hello$ParamsReader._FIELDS));
   }
 }
 if (typeof Symbol.dispose === "symbol") {
-  TagReader.prototype[Symbol.dispose] = TagReader.prototype.dispose;
+  hello$ParamsReader.prototype[Symbol.dispose] = hello$ParamsReader.prototype.dispose;
 }
 
-export class BoxReader {
+export class hello$ResultsReader {
   static _DATA_WORDS = 0;
   static _PTR_WORDS = 1;
   constructor(cpp, dataPtr, opts = undefined) {
@@ -971,33 +952,41 @@ export class BoxReader {
   }
 
 
-  get value() {
+  get msg() {
     _ensureCapnwasmReader(this);
-    const reader = this;
-    return new _AnyPointerReadHandle(reader, 0, 0);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 0, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
+    const len = this._exp.cpp_any_text_at(0);
+    if (len === 0) return "";
+    const u8 = this._cpp._u8;
+    const out = this._cpp._outPtr;
+    return decodeAscii(u8.subarray(out, out + len));
   }
 
   static _FIELDS = {
-    value: {"kind":-1,"off":0,"type":"AnyPointer"},
+    msg: {"kind":0,"off":0,"type":"text"},
   };
 
   draft(fn) {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _runDraft(this._cpp, BoxReader._FIELDS, fn);
+    return _runDraft(this._cpp, hello$ResultsReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _capnwasmPick(this._cpp, BoxReader._FIELDS, Object.keys(BoxReader._FIELDS));
+    return _capnwasmPick(this._cpp, hello$ResultsReader._FIELDS, Object.keys(hello$ResultsReader._FIELDS));
   }
 }
 if (typeof Symbol.dispose === "symbol") {
-  BoxReader.prototype[Symbol.dispose] = BoxReader.prototype.dispose;
+  hello$ResultsReader.prototype[Symbol.dispose] = hello$ResultsReader.prototype.dispose;
 }
 
-export class UseBoxReader {
+export class GreetingReader {
   static _DATA_WORDS = 0;
   static _PTR_WORDS = 2;
   constructor(cpp, dataPtr, opts = undefined) {
@@ -1039,7 +1028,166 @@ export class UseBoxReader {
   }
 
 
-  get textBox() {
+  get who() {
+    _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 0, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
+    const len = this._exp.cpp_any_text_at(0);
+    if (len === 0) return "";
+    const u8 = this._cpp._u8;
+    const out = this._cpp._outPtr;
+    return decodeAscii(u8.subarray(out, out + len));
+  }
+  get cap() {
+    _ensureCapnwasmReader(this);
+    const _idx = this._exp.cpp_any_get_cap_index(this._dataPtr, 0, 1);
+    if (_idx === 0xffffffff) return null;
+    return this._capTable ? (this._capTable[_idx] ?? null) : null;
+  }
+
+  static _FIELDS = {
+    who: {"kind":0,"off":0,"type":"text"},
+    cap: {"kind":-1,"off":1,"type":"Capability(Greeter)"},
+  };
+
+  draft(fn) {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _runDraft(this._cpp, GreetingReader._FIELDS, fn);
+  }
+
+  toObject() {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _capnwasmPick(this._cpp, GreetingReader._FIELDS, Object.keys(GreetingReader._FIELDS));
+  }
+}
+if (typeof Symbol.dispose === "symbol") {
+  GreetingReader.prototype[Symbol.dispose] = GreetingReader.prototype.dispose;
+}
+
+export class greet$ParamsReader {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, dataPtr, opts = undefined) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
+    this._dataPtr = dataPtr | 0;
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
+    this._disposed = false;
+  }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
+
+  get who() {
+    _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 0, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
+    const len = this._exp.cpp_any_text_at(0);
+    if (len === 0) return "";
+    const u8 = this._cpp._u8;
+    const out = this._cpp._outPtr;
+    return decodeAscii(u8.subarray(out, out + len));
+  }
+
+  static _FIELDS = {
+    who: {"kind":0,"off":0,"type":"text"},
+  };
+
+  draft(fn) {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _runDraft(this._cpp, greet$ParamsReader._FIELDS, fn);
+  }
+
+  toObject() {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _capnwasmPick(this._cpp, greet$ParamsReader._FIELDS, Object.keys(greet$ParamsReader._FIELDS));
+  }
+}
+if (typeof Symbol.dispose === "symbol") {
+  greet$ParamsReader.prototype[Symbol.dispose] = greet$ParamsReader.prototype.dispose;
+}
+
+export class greet$ResultsReader {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, dataPtr, opts = undefined) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
+    this._dataPtr = dataPtr | 0;
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
+    this._disposed = false;
+  }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
+
+  get greeting() {
     _ensureCapnwasmReader(this);
     const reader = this;
     const cpp = this._cpp;
@@ -1061,7 +1209,7 @@ export class UseBoxReader {
         // first cursor-using access, which positions the C++ any_stack
         // onto this nested struct. Pure-JS reads via _dataPtr never hit
         // that branch; only Bool list / unsafe paths need the cursor.
-        return new BoxReader(cpp, dp, {
+        return new GreetingReader(cpp, dp, {
           slotIdx: reader._slotIdx,
           msgStart: _msgStart,
           msgEnd: _msgEnd,
@@ -1072,16 +1220,81 @@ export class UseBoxReader {
       }
     }
     // Cursor fallback: position the C++ cursor on the nested struct so
-    // subsequent getters read from the right level.
+    // subsequent getters read from the right level. Pass parent so
+    // the nested reader inherits _capTable for cap-typed fields.
     _rebindNested();
-    return new BoxReader(cpp, 0, {
+    return new GreetingReader(cpp, 0, {
       msg: reader._msg,
       slotIdx: reader._slotIdx,
       gen: cpp._generation ?? 0,
+      parent: reader,
       rebind: _rebindNested,
     });
   }
-  get tagBox() {
+
+  static _FIELDS = {
+    greeting: {"kind":-1,"off":0,"type":"Greeting"},
+  };
+
+  draft(fn) {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _runDraft(this._cpp, greet$ResultsReader._FIELDS, fn);
+  }
+
+  toObject() {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _capnwasmPick(this._cpp, greet$ResultsReader._FIELDS, Object.keys(greet$ResultsReader._FIELDS));
+  }
+}
+if (typeof Symbol.dispose === "symbol") {
+  greet$ResultsReader.prototype[Symbol.dispose] = greet$ResultsReader.prototype.dispose;
+}
+
+export class useCap$ParamsReader {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, dataPtr, opts = undefined) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
+    this._dataPtr = dataPtr | 0;
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
+    this._disposed = false;
+  }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
+
+  get greeting() {
     _ensureCapnwasmReader(this);
     const reader = this;
     const cpp = this._cpp;
@@ -1092,18 +1305,18 @@ export class UseBoxReader {
     const _rebindNested = () => {
       _ensureCapnwasmReader(reader);
       cpp._exports.cpp_any_slot_reset_root?.();
-      cpp._exports.cpp_any_enter_struct(1);
+      cpp._exports.cpp_any_enter_struct(0);
       cpp._bumpGeneration();
     };
     if (_msgEnd) {
-      const desc = _jsReadStructPtr(reader._u8, reader._dv, reader._dataPtr, 0, 1, _msgStart, _msgEnd);
+      const desc = _jsReadStructPtr(reader._u8, reader._dv, reader._dataPtr, 0, 0, _msgStart, _msgEnd);
       if (desc !== undefined) {
         const dp = desc === null ? 0 : desc.dataPtr;
         // gen=-1 forces _ensureCapnwasmReader to invoke the rebind on the
         // first cursor-using access, which positions the C++ any_stack
         // onto this nested struct. Pure-JS reads via _dataPtr never hit
         // that branch; only Bool list / unsafe paths need the cursor.
-        return new BoxReader(cpp, dp, {
+        return new GreetingReader(cpp, dp, {
           slotIdx: reader._slotIdx,
           msgStart: _msgStart,
           msgEnd: _msgEnd,
@@ -1114,49 +1327,130 @@ export class UseBoxReader {
       }
     }
     // Cursor fallback: position the C++ cursor on the nested struct so
-    // subsequent getters read from the right level.
+    // subsequent getters read from the right level. Pass parent so
+    // the nested reader inherits _capTable for cap-typed fields.
     _rebindNested();
-    return new BoxReader(cpp, 0, {
+    return new GreetingReader(cpp, 0, {
       msg: reader._msg,
       slotIdx: reader._slotIdx,
       gen: cpp._generation ?? 0,
+      parent: reader,
       rebind: _rebindNested,
     });
   }
 
   static _FIELDS = {
-    textBox: {"kind":-1,"off":0,"type":"Box"},
-    tagBox: {"kind":-1,"off":1,"type":"Box"},
+    greeting: {"kind":-1,"off":0,"type":"Greeting"},
   };
 
   draft(fn) {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _runDraft(this._cpp, UseBoxReader._FIELDS, fn);
+    return _runDraft(this._cpp, useCap$ParamsReader._FIELDS, fn);
   }
 
   toObject() {
     _ensureCapnwasmReader(this);
     if (this._rebind) this._rebind();
-    return _capnwasmPick(this._cpp, UseBoxReader._FIELDS, Object.keys(UseBoxReader._FIELDS));
+    return _capnwasmPick(this._cpp, useCap$ParamsReader._FIELDS, Object.keys(useCap$ParamsReader._FIELDS));
   }
 }
 if (typeof Symbol.dispose === "symbol") {
-  UseBoxReader.prototype[Symbol.dispose] = UseBoxReader.prototype.dispose;
+  useCap$ParamsReader.prototype[Symbol.dispose] = useCap$ParamsReader.prototype.dispose;
 }
 
-_STRUCT_FIELDS["Tag"] = TagReader._FIELDS;
-_STRUCT_FIELDS["Box"] = BoxReader._FIELDS;
-_STRUCT_FIELDS["UseBox"] = UseBoxReader._FIELDS;
-
-export class TagBuilder {
-  static _DATA_WORDS = 1;
+export class useCap$ResultsReader {
+  static _DATA_WORDS = 0;
   static _PTR_WORDS = 1;
+  constructor(cpp, dataPtr, opts = undefined) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._capTable = (opts && opts.capTable) || (opts && opts.parent && opts.parent._capTable) || null;
+    this._dataPtr = dataPtr | 0;
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
+    this._disposed = false;
+  }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
+
+  get echoed() {
+    _ensureCapnwasmReader(this);
+    const _msgEnd = this._msgEnd;
+    if (_msgEnd) {
+      const v = _jsReadTextPtr(this._u8, this._dv, this._dataPtr, 0, 0, this._msgStart, _msgEnd);
+      if (v !== undefined) return v ?? "";
+    }
+    const len = this._exp.cpp_any_text_at(0);
+    if (len === 0) return "";
+    const u8 = this._cpp._u8;
+    const out = this._cpp._outPtr;
+    return decodeAscii(u8.subarray(out, out + len));
+  }
+
+  static _FIELDS = {
+    echoed: {"kind":0,"off":0,"type":"text"},
+  };
+
+  draft(fn) {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _runDraft(this._cpp, useCap$ResultsReader._FIELDS, fn);
+  }
+
+  toObject() {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _capnwasmPick(this._cpp, useCap$ResultsReader._FIELDS, Object.keys(useCap$ResultsReader._FIELDS));
+  }
+}
+if (typeof Symbol.dispose === "symbol") {
+  useCap$ResultsReader.prototype[Symbol.dispose] = useCap$ResultsReader.prototype.dispose;
+}
+
+_STRUCT_FIELDS["hello$Params"] = hello$ParamsReader._FIELDS;
+_STRUCT_FIELDS["hello$Results"] = hello$ResultsReader._FIELDS;
+_STRUCT_FIELDS["Greeting"] = GreetingReader._FIELDS;
+_STRUCT_FIELDS["greet$Params"] = greet$ParamsReader._FIELDS;
+_STRUCT_FIELDS["greet$Results"] = greet$ResultsReader._FIELDS;
+_STRUCT_FIELDS["useCap$Params"] = useCap$ParamsReader._FIELDS;
+_STRUCT_FIELDS["useCap$Results"] = useCap$ResultsReader._FIELDS;
+
+export class hello$ParamsBuilder {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 0;
   constructor(cpp, opts) {
     this._cpp = cpp;
     this._exp = cpp._exports;
     if (!opts || !opts.preinitialized) {
-      if (this._exp.cpp_any_builder_init(1, 1) !== 1) {
+      if (this._exp.cpp_any_builder_init(0, 0) !== 1) {
         throw new Error("cpp_any_builder_init failed");
       }
     }
@@ -1167,21 +1461,6 @@ export class TagBuilder {
     this._capSink = (opts && opts.capSink) || null;
   }
 
-  set name(value) {
-    const inPtr = this._exp.cpp_in_ptr();
-    const inCap = this._exp.cpp_in_capacity();
-    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
-    const { written } = SHARED_ENCODER.encodeInto(value, dst);
-    this._exp.cpp_any_builder_set_text(0, written);
-    this._u8 = this._cpp._u8;
-    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
-  }
-  set weight(value) {
-    const u8 = this._u8;
-    const o = this._dataPtr + 0;
-    u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
-    u8[o+2] = (value >>> 16) & 0xff; u8[o+3] = (value >>> 24) & 0xff;
-  }
 
   /**
    * Apply fields from a plain JS object to this builder. Same shape
@@ -1191,17 +1470,15 @@ export class TagBuilder {
    */
   fromObject(o) {
     if (o == null) return this;
-    if (o.name !== undefined) this.name = o.name;
-    if (o.weight !== undefined) this.weight = o.weight;
     return this;
   }
 
   /**
-   * Build a Tag from a plain JS object in one call.
-   * Shorthand for `new TagBuilder(cpp).fromObject(o)`.
+   * Build a hello$Params from a plain JS object in one call.
+   * Shorthand for `new hello$ParamsBuilder(cpp).fromObject(o)`.
    */
   static from(cpp, o) {
-    return new TagBuilder(cpp).fromObject(o);
+    return new hello$ParamsBuilder(cpp).fromObject(o);
   }
 
   /** Serialize the message to framed Cap'n Proto bytes. */
@@ -1213,7 +1490,7 @@ export class TagBuilder {
   }
 }
 
-export class BoxBuilder {
+export class hello$ResultsBuilder {
   static _DATA_WORDS = 0;
   static _PTR_WORDS = 1;
   constructor(cpp, opts) {
@@ -1231,45 +1508,14 @@ export class BoxBuilder {
     this._capSink = (opts && opts.capSink) || null;
   }
 
-  set value(value) {
-    if (typeof value === "string") {
-      const inPtr = this._exp.cpp_in_ptr();
-      const inCap = this._exp.cpp_in_capacity();
-      const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
-      const { written } = SHARED_ENCODER.encodeInto(value, dst);
-      this._exp.cpp_any_builder_set_text(0, written);
-      this._u8 = this._cpp._u8;
-      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
-      return;
-    }
-    if (value instanceof Uint8Array) {
-      this._cpp._u8.set(value, this._exp.cpp_in_ptr());
-      this._exp.cpp_any_builder_set_data(0, value.length);
-      this._u8 = this._cpp._u8;
-      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
-      return;
-    }
-    if (value && value._cpp && typeof value._slotIdx === "number") {
-      // Reader instance — deep copy via slot.
-      if (this._exp.cpp_any_builder_set_anypointer_from_slot(0, value._slotIdx) !== 1) {
-        throw new Error("AnyPointer struct copy from slot failed (slot released or wrong type)");
-      }
-      this._u8 = this._cpp._u8;
-      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
-      return;
-    }
-    if (value && value._capnpFrame instanceof Uint8Array) {
-      const frame = value._capnpFrame;
-      this._cpp._u8.set(frame, this._exp.cpp_in_ptr());
-      if (this._exp.cpp_any_builder_set_struct_from_bytes(0, frame.length) !== 1) {
-        throw new Error("AnyPointer struct copy from bytes failed (malformed framed message)");
-      }
-      this._u8 = this._cpp._u8;
-      if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
-      return;
-    }
-    if (value == null) return;
-    throw new TypeError("AnyPointer setter accepts string (Text), Uint8Array (Data), a capnwasm Reader (struct deep-copy), or { _capnpFrame: Uint8Array } (raw framed message)");
+  set msg(value) {
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._exp.cpp_any_builder_set_text(0, written);
+    this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
 
   /**
@@ -1280,16 +1526,16 @@ export class BoxBuilder {
    */
   fromObject(o) {
     if (o == null) return this;
-    if (o.value !== undefined) this.value = o.value;
+    if (o.msg !== undefined) this.msg = o.msg;
     return this;
   }
 
   /**
-   * Build a Box from a plain JS object in one call.
-   * Shorthand for `new BoxBuilder(cpp).fromObject(o)`.
+   * Build a hello$Results from a plain JS object in one call.
+   * Shorthand for `new hello$ResultsBuilder(cpp).fromObject(o)`.
    */
   static from(cpp, o) {
-    return new BoxBuilder(cpp).fromObject(o);
+    return new hello$ResultsBuilder(cpp).fromObject(o);
   }
 
   /** Serialize the message to framed Cap'n Proto bytes. */
@@ -1301,7 +1547,7 @@ export class BoxBuilder {
   }
 }
 
-export class UseBoxBuilder {
+export class GreetingBuilder {
   static _DATA_WORDS = 0;
   static _PTR_WORDS = 2;
   constructor(cpp, opts) {
@@ -1319,49 +1565,151 @@ export class UseBoxBuilder {
     this._capSink = (opts && opts.capSink) || null;
   }
 
-  get textBox() {
-    if (this._exp.cpp_any_builder_enter_struct(0, 0, 1) !== 1) {
-      throw new Error("cpp_any_builder_enter_struct failed for textBox");
-    }
-    const sub = new BoxBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
-    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
-    sub._exitOnFinalize = true;
-    return sub;
-  }
-  set textBox(value) {
-    if (value == null) return;
-    if (this._exp.cpp_any_builder_enter_struct(0, 0, 1) !== 1) {
-      throw new Error("cpp_any_builder_enter_struct failed for textBox");
-    }
-    const sub = new BoxBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
-    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
-    sub.fromObject(value);
-    if (this._exp.cpp_any_builder_exit_struct() !== 1) {
-      throw new Error("cpp_any_builder_exit_struct failed for textBox");
-    }
+  set who(value) {
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._exp.cpp_any_builder_set_text(0, written);
     this._u8 = this._cpp._u8;
-    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
     if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
   }
-  get tagBox() {
-    if (this._exp.cpp_any_builder_enter_struct(1, 0, 1) !== 1) {
-      throw new Error("cpp_any_builder_enter_struct failed for tagBox");
+  set cap(value) {
+    if (value == null) return;
+    if (!this._capSink) {
+      throw new TypeError("capability fields can only be set to null outside an RPC context");
     }
-    const sub = new BoxBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    const _capIdx = this._capSink.length;
+    this._capSink.push(value);
+    if (this._exp.cpp_any_builder_set_cap_index(1, _capIdx) !== 1) {
+      throw new Error("cpp_any_builder_set_cap_index failed");
+    }
+  }
+
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.who !== undefined) this.who = o.who;
+    if (o.cap !== undefined) this.cap = o.cap;
+    return this;
+  }
+
+  /**
+   * Build a Greeting from a plain JS object in one call.
+   * Shorthand for `new GreetingBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new GreetingBuilder(cpp).fromObject(o);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const out = this._cpp._outPtr;
+    return this._cpp._u8.slice(out, out + len);
+  }
+}
+
+export class greet$ParamsBuilder {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    if (!opts || !opts.preinitialized) {
+      if (this._exp.cpp_any_builder_init(0, 1) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
+  }
+
+  set who(value) {
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._exp.cpp_any_builder_set_text(0, written);
+    this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.who !== undefined) this.who = o.who;
+    return this;
+  }
+
+  /**
+   * Build a greet$Params from a plain JS object in one call.
+   * Shorthand for `new greet$ParamsBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new greet$ParamsBuilder(cpp).fromObject(o);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const out = this._cpp._outPtr;
+    return this._cpp._u8.slice(out, out + len);
+  }
+}
+
+export class greet$ResultsBuilder {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    if (!opts || !opts.preinitialized) {
+      if (this._exp.cpp_any_builder_init(0, 1) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
+  }
+
+  get greeting() {
+    if (this._exp.cpp_any_builder_enter_struct(0, 0, 2) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for greeting");
+    }
+    const sub = new GreetingBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
     sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
     sub._exitOnFinalize = true;
     return sub;
   }
-  set tagBox(value) {
+  set greeting(value) {
     if (value == null) return;
-    if (this._exp.cpp_any_builder_enter_struct(1, 0, 1) !== 1) {
-      throw new Error("cpp_any_builder_enter_struct failed for tagBox");
+    if (this._exp.cpp_any_builder_enter_struct(0, 0, 2) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for greeting");
     }
-    const sub = new BoxBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    const sub = new GreetingBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
     sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
     sub.fromObject(value);
     if (this._exp.cpp_any_builder_exit_struct() !== 1) {
-      throw new Error("cpp_any_builder_exit_struct failed for tagBox");
+      throw new Error("cpp_any_builder_exit_struct failed for greeting");
     }
     this._u8 = this._cpp._u8;
     this._dataPtr = this._exp.cpp_any_builder_data_ptr();
@@ -1376,17 +1724,145 @@ export class UseBoxBuilder {
    */
   fromObject(o) {
     if (o == null) return this;
-    if (o.textBox !== undefined) this.textBox = o.textBox;
-    if (o.tagBox !== undefined) this.tagBox = o.tagBox;
+    if (o.greeting !== undefined) this.greeting = o.greeting;
     return this;
   }
 
   /**
-   * Build a UseBox from a plain JS object in one call.
-   * Shorthand for `new UseBoxBuilder(cpp).fromObject(o)`.
+   * Build a greet$Results from a plain JS object in one call.
+   * Shorthand for `new greet$ResultsBuilder(cpp).fromObject(o)`.
    */
   static from(cpp, o) {
-    return new UseBoxBuilder(cpp).fromObject(o);
+    return new greet$ResultsBuilder(cpp).fromObject(o);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const out = this._cpp._outPtr;
+    return this._cpp._u8.slice(out, out + len);
+  }
+}
+
+export class useCap$ParamsBuilder {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    if (!opts || !opts.preinitialized) {
+      if (this._exp.cpp_any_builder_init(0, 1) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
+  }
+
+  get greeting() {
+    if (this._exp.cpp_any_builder_enter_struct(0, 0, 2) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for greeting");
+    }
+    const sub = new GreetingBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub._exitOnFinalize = true;
+    return sub;
+  }
+  set greeting(value) {
+    if (value == null) return;
+    if (this._exp.cpp_any_builder_enter_struct(0, 0, 2) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for greeting");
+    }
+    const sub = new GreetingBuilder(this._cpp, { preinitialized: true, capSink: this._capSink });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub.fromObject(value);
+    if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+      throw new Error("cpp_any_builder_exit_struct failed for greeting");
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.greeting !== undefined) this.greeting = o.greeting;
+    return this;
+  }
+
+  /**
+   * Build a useCap$Params from a plain JS object in one call.
+   * Shorthand for `new useCap$ParamsBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new useCap$ParamsBuilder(cpp).fromObject(o);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const out = this._cpp._outPtr;
+    return this._cpp._u8.slice(out, out + len);
+  }
+}
+
+export class useCap$ResultsBuilder {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    if (!opts || !opts.preinitialized) {
+      if (this._exp.cpp_any_builder_init(0, 1) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    this._capSink = (opts && opts.capSink) || null;
+  }
+
+  set echoed(value) {
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
+    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+    const { written } = SHARED_ENCODER.encodeInto(value, dst);
+    this._exp.cpp_any_builder_set_text(0, written);
+    this._u8 = this._cpp._u8;
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    if (o.echoed !== undefined) this.echoed = o.echoed;
+    return this;
+  }
+
+  /**
+   * Build a useCap$Results from a plain JS object in one call.
+   * Shorthand for `new useCap$ResultsBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new useCap$ResultsBuilder(cpp).fromObject(o);
   }
 
   /** Serialize the message to framed Cap'n Proto bytes. */
@@ -1399,59 +1875,182 @@ export class UseBoxBuilder {
 }
 
 /**
- * Open framed Cap'n Proto bytes for typed access. Returns a TagReader.
+ * Open framed Cap'n Proto bytes for typed access. Returns a hello$ParamsReader.
  */
-export function openTag(cpp, bytes) {
+export function openhello$Params(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, false);
-  return new TagReader(cpp, opened.dataPtr, opened);
+  return new hello$ParamsReader(cpp, opened.dataPtr, opened);
 }
 
 /** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
-export function openTagUnsafe(cpp, bytes) {
+export function openhello$ParamsUnsafe(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, true);
-  return new TagReader(cpp, opened.dataPtr, opened);
+  return new hello$ParamsReader(cpp, opened.dataPtr, opened);
 }
 
-/** Begin building a new Tag message. Returns a TagBuilder. */
-export function buildTag(cpp) {
-  return new TagBuilder(cpp);
+/** Begin building a new hello$Params message. Returns a hello$ParamsBuilder. */
+export function buildhello$Params(cpp) {
+  return new hello$ParamsBuilder(cpp);
 }
 
 /**
- * Open framed Cap'n Proto bytes for typed access. Returns a BoxReader.
+ * Open framed Cap'n Proto bytes for typed access. Returns a hello$ResultsReader.
  */
-export function openBox(cpp, bytes) {
+export function openhello$Results(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, false);
-  return new BoxReader(cpp, opened.dataPtr, opened);
+  return new hello$ResultsReader(cpp, opened.dataPtr, opened);
 }
 
 /** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
-export function openBoxUnsafe(cpp, bytes) {
+export function openhello$ResultsUnsafe(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, true);
-  return new BoxReader(cpp, opened.dataPtr, opened);
+  return new hello$ResultsReader(cpp, opened.dataPtr, opened);
 }
 
-/** Begin building a new Box message. Returns a BoxBuilder. */
-export function buildBox(cpp) {
-  return new BoxBuilder(cpp);
+/** Begin building a new hello$Results message. Returns a hello$ResultsBuilder. */
+export function buildhello$Results(cpp) {
+  return new hello$ResultsBuilder(cpp);
 }
 
 /**
- * Open framed Cap'n Proto bytes for typed access. Returns a UseBoxReader.
+ * Open framed Cap'n Proto bytes for typed access. Returns a GreetingReader.
  */
-export function openUseBox(cpp, bytes) {
+export function openGreeting(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, false);
-  return new UseBoxReader(cpp, opened.dataPtr, opened);
+  return new GreetingReader(cpp, opened.dataPtr, opened);
 }
 
 /** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
-export function openUseBoxUnsafe(cpp, bytes) {
+export function openGreetingUnsafe(cpp, bytes) {
   const opened = _openCapnwasmMessage(cpp, bytes, true);
-  return new UseBoxReader(cpp, opened.dataPtr, opened);
+  return new GreetingReader(cpp, opened.dataPtr, opened);
 }
 
-/** Begin building a new UseBox message. Returns a UseBoxBuilder. */
-export function buildUseBox(cpp) {
-  return new UseBoxBuilder(cpp);
+/** Begin building a new Greeting message. Returns a GreetingBuilder. */
+export function buildGreeting(cpp) {
+  return new GreetingBuilder(cpp);
 }
 
+/**
+ * Open framed Cap'n Proto bytes for typed access. Returns a greet$ParamsReader.
+ */
+export function opengreet$Params(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new greet$ParamsReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function opengreet$ParamsUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new greet$ParamsReader(cpp, opened.dataPtr, opened);
+}
+
+/** Begin building a new greet$Params message. Returns a greet$ParamsBuilder. */
+export function buildgreet$Params(cpp) {
+  return new greet$ParamsBuilder(cpp);
+}
+
+/**
+ * Open framed Cap'n Proto bytes for typed access. Returns a greet$ResultsReader.
+ */
+export function opengreet$Results(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new greet$ResultsReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function opengreet$ResultsUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new greet$ResultsReader(cpp, opened.dataPtr, opened);
+}
+
+/** Begin building a new greet$Results message. Returns a greet$ResultsBuilder. */
+export function buildgreet$Results(cpp) {
+  return new greet$ResultsBuilder(cpp);
+}
+
+/**
+ * Open framed Cap'n Proto bytes for typed access. Returns a useCap$ParamsReader.
+ */
+export function openuseCap$Params(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new useCap$ParamsReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openuseCap$ParamsUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new useCap$ParamsReader(cpp, opened.dataPtr, opened);
+}
+
+/** Begin building a new useCap$Params message. Returns a useCap$ParamsBuilder. */
+export function builduseCap$Params(cpp) {
+  return new useCap$ParamsBuilder(cpp);
+}
+
+/**
+ * Open framed Cap'n Proto bytes for typed access. Returns a useCap$ResultsReader.
+ */
+export function openuseCap$Results(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new useCap$ResultsReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openuseCap$ResultsUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new useCap$ResultsReader(cpp, opened.dataPtr, opened);
+}
+
+/** Begin building a new useCap$Results message. Returns a useCap$ResultsBuilder. */
+export function builduseCap$Results(cpp) {
+  return new useCap$ResultsBuilder(cpp);
+}
+
+
+
+// --- Interface metadata ---
+
+export const Greeter_INTERFACE = Object.freeze({
+  name: "Greeter",
+  id: BigInt("16585935640402774072"),
+  methods: Object.freeze([
+    Object.freeze({
+      id: 0,
+      name: "hello",
+      Params: hello$ParamsBuilder,
+      ParamsReader: hello$ParamsReader,
+      openParams: openhello$Params,
+      Results: hello$ResultsBuilder,
+      ResultsReader: hello$ResultsReader,
+      openResults: openhello$Results,
+    }),
+  ]),
+});
+
+export const Lobby_INTERFACE = Object.freeze({
+  name: "Lobby",
+  id: BigInt("11217847772402454141"),
+  methods: Object.freeze([
+    Object.freeze({
+      id: 0,
+      name: "greet",
+      Params: greet$ParamsBuilder,
+      ParamsReader: greet$ParamsReader,
+      openParams: opengreet$Params,
+      Results: greet$ResultsBuilder,
+      ResultsReader: greet$ResultsReader,
+      openResults: opengreet$Results,
+    }),
+    Object.freeze({
+      id: 1,
+      name: "useCap",
+      Params: useCap$ParamsBuilder,
+      ParamsReader: useCap$ParamsReader,
+      openParams: openuseCap$Params,
+      Results: useCap$ResultsBuilder,
+      ResultsReader: useCap$ResultsReader,
+      openResults: openuseCap$Results,
+    }),
+  ]),
+});

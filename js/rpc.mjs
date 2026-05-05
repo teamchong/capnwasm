@@ -132,8 +132,12 @@ class CallStarted {
     this._session = session;
     this._questionId = questionId;
     this.params = params;
+    // Populated by RpcSession.callBuilder when the params Builder might
+    // collect capability targets through its setters. Drained by
+    // _completeSend right before cpp_rpc_finalize.
+    this._capSink = null;
   }
-  send(opts) { return this._session._completeSend(this._questionId, opts); }
+  send(opts) { return this._session._completeSend(this._questionId, opts, this._capSink); }
 }
 
 // Per-call result object returned by callBuilder().send(). Using a class
@@ -600,15 +604,38 @@ export class RpcSession {
       BuilderClass._DATA_WORDS, BuilderClass._PTR_WORDS,
     );
     if (!dataPtr) throw new Error("cpp_rpc_begin_call failed");
-    const params = new BuilderClass(this.#cpp, { preinitialized: true, dataPtr });
+    // Cap-sink threading: capability-typed setters in BuilderClass push
+    // the user's CapTarget into this array; _completeSend drains it
+    // before finalize, allocating local export ids and writing them
+    // into Call.params.capTable.
+    const capSink = [];
+    const params = new BuilderClass(this.#cpp, { preinitialized: true, dataPtr, capSink });
     // Class instead of object literal + closure. Every CallStarted
     // shares one hidden class. V8 inline-caches the .params/.send/_session/
     // _questionId chain monomorphically across hot RPC loops.
-    return new CallStarted(this, questionId, params);
+    const started = new CallStarted(this, questionId, params);
+    started._capSink = capSink;
+    return started;
   }
   // Internal. Completes a callBuilder.send(opts). Pulled out of the
   // closure so CallStarted instances don't carry per-call function refs.
-  _completeSend(questionId, opts) {
+  _completeSend(questionId, opts, capSink) {
+    // Drain the cap sink BEFORE finalize: each captured CapTarget gets
+    // a local export id, then we stage the ids into cpp_in and call
+    // set_outbound_cap_table to write Call.params.capTable.
+    if (capSink && capSink.length > 0) {
+      const ids = new Uint32Array(capSink.length);
+      for (let i = 0; i < capSink.length; i++) {
+        const id = this.#allocLocalCapId();
+        const target = capSink[i] && capSink[i].target ? capSink[i].target : capSink[i];
+        this.#localCaps.set(id, { target, refcount: 1 });
+        ids[i] = id;
+      }
+      this.#stageIn(new Uint8Array(ids.buffer, 0, ids.byteLength));
+      if (this.#exp.cpp_rpc_set_outbound_cap_table(capSink.length) !== 1) {
+        throw new Error("cpp_rpc_set_outbound_cap_table failed");
+      }
+    }
     const framedLen = this.#exp.cpp_rpc_finalize();
     if (!framedLen) throw new Error("cpp_rpc_finalize failed");
     const d = deferred();
@@ -872,6 +899,32 @@ export class RpcSession {
     // call openParams synchronously (before any await). Once it yields,
     // the next inbound message can overwrite rpc_reader.
     let beginResultsUsed = false;
+    // Capability fields in the params Reader resolve through this table.
+    // Built lazily because most calls have no caps in their params.
+    let inboundCapTable = null;
+    const buildInboundCapTable = () => {
+      if (inboundCapTable !== null) return inboundCapTable;
+      const count = this.#exp.cpp_rpc_get_call_cap_count();
+      if (count === 0) { inboundCapTable = []; return inboundCapTable; }
+      const arr = new Array(count);
+      for (let i = 0; i < count; i++) {
+        const kind = this.#exp.cpp_rpc_get_call_cap_kind(i);
+        const id   = this.#exp.cpp_rpc_get_call_cap_id(i);
+        if (kind === 1 /* senderHosted */) {
+          const cap = new RpcCap(this, { kind: "import", id }, this.#registry);
+          this.#trackImport(cap, id);
+          arr[i] = cap;
+        } else {
+          arr[i] = null;
+        }
+      }
+      inboundCapTable = arr;
+      return arr;
+    };
+    // Cap-sink threading for ctx.beginResults: if the handler writes any
+    // capability fields into the results Builder, they accumulate here
+    // and we drain them into Return.results.capTable before finalize.
+    let outboundCapSink = null;
     const ctx = {
       cpp: this.#cpp,
       paramsBytes: () => {
@@ -892,7 +945,11 @@ export class RpcSession {
         const dataPtr = this.#exp.cpp_rpc_open_call_params();
         this.#cpp._bumpGeneration?.();
         if (!dataPtr) throw new Error("cpp_rpc_open_call_params failed");
-        return new ReaderClass(this.#cpp, dataPtr, { msg: null, gen: this.#cpp._generation ?? 0 });
+        return new ReaderClass(this.#cpp, dataPtr, {
+          msg: null,
+          gen: this.#cpp._generation ?? 0,
+          capTable: buildInboundCapTable(),
+        });
       },
       beginResults: (BuilderClass) => {
         if (typeof BuilderClass?._DATA_WORDS !== "number") {
@@ -906,7 +963,8 @@ export class RpcSession {
         );
         if (!dataPtr) throw new Error("cpp_rpc_begin_return failed");
         beginResultsUsed = true;
-        return new BuilderClass(this.#cpp, { preinitialized: true, dataPtr });
+        outboundCapSink = [];
+        return new BuilderClass(this.#cpp, { preinitialized: true, dataPtr, capSink: outboundCapSink });
       },
     };
     // Synchronous-handler fast path: if the handler returns a non-thenable,
@@ -948,6 +1006,23 @@ export class RpcSession {
     stash.readyDeferred.resolve();
 
     if (beginResultsUsed) {
+      // Drain the cap sink first: capability fields the handler wrote
+      // through the typed Builder become senderHosted entries in
+      // Return.results.capTable. After this, cpp_rpc_finalize's bytes
+      // include both the user content and the cap descriptors.
+      if (outboundCapSink && outboundCapSink.length > 0) {
+        const ids = new Uint32Array(outboundCapSink.length);
+        for (let i = 0; i < outboundCapSink.length; i++) {
+          const id = this.#allocLocalCapId();
+          const target = outboundCapSink[i] && outboundCapSink[i].target ? outboundCapSink[i].target : outboundCapSink[i];
+          this.#localCaps.set(id, { target, refcount: 1 });
+          ids[i] = id;
+        }
+        this.#stageIn(new Uint8Array(ids.buffer, 0, ids.byteLength));
+        if (this.#exp.cpp_rpc_set_outbound_cap_table(outboundCapSink.length) !== 1) {
+          throw new Error("cpp_rpc_set_outbound_cap_table failed");
+        }
+      }
       // Zero-copy results path: rpc_builder is already populated with the
       // Return + Payload + content. cpp_rpc_finalize writes prefix + bytes
       // straight to cpp_out so we can subarray and send without allocating.
@@ -1058,8 +1133,15 @@ export class RpcSession {
             // this synchronous extract() call. Pass `msg: null` so the
             // reader cannot rebind to a managed message region; if the
             // user escapes it past extract(), gen advance will trigger
-            // StaleReaderError on the next access.
-            const reader = q.resultsReader ? new q.resultsReader(this.#cpp, dataPtr, { msg: null, gen: this.#cpp._generation ?? 0 }) : null;
+            // StaleReaderError on the next access. capTable carries the
+            // inbound caps so capability-typed fields embedded in the
+            // result struct resolve through the same imports the
+            // top-level `caps` array exposes.
+            const reader = q.resultsReader ? new q.resultsReader(this.#cpp, dataPtr, {
+              msg: null,
+              gen: this.#cpp._generation ?? 0,
+              capTable: caps,
+            }) : null;
             extracted = q.extract(reader, caps);
           } catch (err) {
             q.deferred.reject(err instanceof Error ? err : new Error(String(err)));

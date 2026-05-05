@@ -4,10 +4,11 @@
 // pointer dereferences, not just JS-side parsing.
 //
 // Limit violations land as wasm `unreachable` traps because the wasm
-// build doesn't link a C++ exception unwinder. Callers see a RuntimeError
-// from JS; the underlying libc++abi message goes to stderr. The test
-// silences stderr around the trap-expecting calls so the suite output
-// stays readable.
+// build doesn't link a real C++ exception unwinder (LLVM 21's wasm
+// backend can't lower cleanupret for object-typed throws — see
+// cpp/eh_runtime.cpp for the writeup). The throw stubs use
+// __builtin_trap so callers see a clean RuntimeError and there's no
+// libc++abi stderr noise to silence anymore.
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
@@ -23,13 +24,6 @@ const Outer = defineSchema(
   { dataWords: 0, ptrWords: 1 },
 );
 
-// Run `fn` while swallowing libc++abi's stderr noise. Restored on exit.
-function silenceStderr(fn) {
-  const origWrite = process.stderr.write.bind(process.stderr);
-  process.stderr.write = () => true;
-  try { return fn(); } finally { process.stderr.write = origWrite; }
-}
-
 test("ReaderOptions: defaults open a normal message just fine", async () => {
   const cpp = await loadWasm();
   const msg = encodeDynamic(cpp, Outer, { inner: { x: 42 } });
@@ -42,14 +36,12 @@ test("ReaderOptions: tight traversal limit traps on dereference", async () => {
   const msg = encodeDynamic(cpp, Outer, { inner: { x: 42 } });
   cpp.setReaderOptions({ traversalLimitInWords: 1 });
   try {
-    silenceStderr(() => {
-      assert.throws(() => {
-        const r = openDynamic(cpp, Outer, msg);
-        // Force the lazy pointer dereference. Without forcing, the bound
-        // check might not fire until a later access.
-        r.get("inner")?.x;
-      }, /unreachable|trap|RuntimeError|aborted|undefined/i);
-    });
+    assert.throws(() => {
+      const r = openDynamic(cpp, Outer, msg);
+      // Force the lazy pointer dereference. Without forcing, the bound
+      // check might not fire until a later access.
+      r.get("inner")?.x;
+    }, /unreachable|trap|RuntimeError|aborted|undefined/i);
   } finally {
     cpp.resetReaderOptions();
   }
@@ -60,12 +52,10 @@ test("ReaderOptions: tight nestingLimit traps when descending into a child struc
   const msg = encodeDynamic(cpp, Outer, { inner: { x: 42 } });
   cpp.setReaderOptions({ nestingLimit: 1 });
   try {
-    silenceStderr(() => {
-      assert.throws(() => {
-        const r = openDynamic(cpp, Outer, msg);
-        r.get("inner");
-      }, /unreachable|trap|RuntimeError|aborted|undefined/i);
-    });
+    assert.throws(() => {
+      const r = openDynamic(cpp, Outer, msg);
+      r.get("inner");
+    }, /unreachable|trap|RuntimeError|aborted|undefined/i);
   } finally {
     cpp.resetReaderOptions();
   }
@@ -88,11 +78,9 @@ test("ReaderOptions: undefined fields keep their existing values", async () => {
   cpp.setReaderOptions({ traversalLimitInWords: 1 });
   cpp.setReaderOptions({ nestingLimit: 100 });
   const msg = encodeDynamic(cpp, Outer, { inner: { x: 1 } });
-  silenceStderr(() => {
-    assert.throws(() => {
-      const r = openDynamic(cpp, Outer, msg);
-      r.get("inner")?.x;
-    }, /unreachable|trap|RuntimeError|aborted|undefined/i);
-  });
+  assert.throws(() => {
+    const r = openDynamic(cpp, Outer, msg);
+    r.get("inner")?.x;
+  }, /unreachable|trap|RuntimeError|aborted|undefined/i);
   cpp.resetReaderOptions();
 });

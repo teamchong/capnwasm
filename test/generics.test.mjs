@@ -12,6 +12,8 @@ import {
   openBox,
   buildUseBox,
   openUseBox,
+  buildTag,
+  openTag,
   TagBuilder,
   TagReader,
 } from "./_fixtures/generics.gen.mjs";
@@ -74,4 +76,41 @@ test("generics: capnwasm-encoded Box(Text) decodes through upstream capnp CLI", 
     }).stdout.toString(),
   );
   assert.equal(decoded.value, "interop");
+});
+
+test("AnyPointer setter accepts a Reader (deep struct copy via slot)", () => {
+  // Build a Tag and wrap it in a Box via AnyPointer struct write.
+  // Box(T)'s `value` slot is exposed as bare AnyPointer in our codegen,
+  // so the setter dispatches to cpp_any_builder_set_anypointer_from_slot.
+  const tag = buildTag(cpp).fromObject({ name: "anyptr-copy", weight: 99 }).toBytes();
+  const tagReader = openTag(cpp, tag);
+  const b = buildBox(cpp);
+  b.value = tagReader;
+  const bytes = b.toBytes();
+  const r = openBox(cpp, bytes);
+  const decoded = r.value.asStruct(TagReader);
+  assert.equal(decoded.name, "anyptr-copy");
+  assert.equal(decoded.weight, 99);
+  r.dispose();
+  tagReader.dispose();
+});
+
+test("AnyPointer setter accepts a framed message via _capnpFrame", () => {
+  // Same as above but through the bytes path (set_struct_from_bytes).
+  // Useful when the caller has serialized bytes but no live Reader.
+  const tagBytes = buildTag(cpp).fromObject({ name: "frame", weight: 1 }).toBytes();
+  const b = buildBox(cpp);
+  b.value = { _capnpFrame: tagBytes };
+  const bytes = b.toBytes();
+  const r = openBox(cpp, bytes);
+  const decoded = r.value.asStruct(TagReader);
+  assert.equal(decoded.name, "frame");
+  assert.equal(decoded.weight, 1);
+  r.dispose();
+});
+
+test("AnyPointer setter rejects unsupported value shapes", () => {
+  const b = buildBox(cpp);
+  assert.throws(() => { b.value = 42; }, /AnyPointer setter/);
+  assert.throws(() => { b.value = { not: "a-reader" }; }, /AnyPointer setter/);
 });

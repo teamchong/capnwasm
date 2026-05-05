@@ -1338,6 +1338,53 @@ uint32_t cpp_any_data_at(uint32_t ptr_idx) {
   return static_cast<uint32_t>(data.size());
 }
 
+// Read the cap-table index from a capability-typed pointer slot in a
+// struct whose data section starts at `data_ptr` and contains
+// `data_words` words. The pointer section follows immediately, so the
+// pointer slot at `ptr_idx` lives at `data_ptr + data_words*8 +
+// ptr_idx*8`. Returns 0xFFFFFFFF if the pointer there isn't a
+// capability descriptor.
+//
+// Capability pointers in Cap'n Proto wire format:
+//   bits 0-1   (low byte 0):     3   (kind = OTHER)
+//   bits 2-31  (low bytes 0-3):  0   (offsetAndKind, type=0 means cap)
+//   bits 32-63 (bytes 4-7):      cap-table index (32-bit LE)
+//
+// Codegen calls this with the Reader's _dataPtr / static _DATA_WORDS, so
+// no cursor positioning is needed — the read works whether or not the
+// any_stack cursor has been pushed into the struct via enter_struct.
+//
+// We read the raw 8 bytes directly because upstream's getCapability()
+// requires linking capability.c++ which pulls in ClientHook + the full
+// kj::Promise / RPC machinery — too heavy for the slim wasm. Capability
+// pointers are never FAR-redirected in practice (their content is just
+// an index, no segment-allocated data), so this raw read is safe for
+// the wire format's standard contiguous layout.
+uint32_t cpp_any_get_cap_index(uint32_t data_ptr, uint32_t data_words, uint32_t ptr_idx) {
+  const uint8_t* p;
+  if (data_ptr != 0) {
+    // Fast path: codegen passed the parent struct's data section
+    // pointer + word count, so we can read the wire pointer slot
+    // directly without disturbing the any_stack cursor.
+    p = reinterpret_cast<const uint8_t*>(data_ptr) + data_words * 8 + ptr_idx * 8;
+  } else {
+    // Cursor fallback: data_ptr=0 means the codegen reader is using
+    // the cursor path (e.g. nested struct reader created without
+    // msgStart/msgEnd bounds). Position must already be set by the
+    // rebind closure that ran via _ensureCapnwasmReader.
+    if (any_stack_top < 0) return 0xFFFFFFFFu;
+    auto top = any_stack(any_stack_top);
+    auto data = top.getDataSection();
+    p = data.end() + ptr_idx * 8;
+  }
+  uint32_t low, high;
+  std::memcpy(&low, p, 4);
+  std::memcpy(&high, p + 4, 4);
+  if ((low & 0x3u) != 3u) return 0xFFFFFFFFu;       // not OTHER kind
+  if ((low & 0xFFFFFFFCu) != 0u) return 0xFFFFFFFFu; // not cap sub-type
+  return high;
+}
+
 // Read scalar fields from the data section by byte offset. The default value
 // is XOR'd with the on-wire bits, matching Cap'n Proto's encoding rule.
 int64_t cpp_any_int64_at(uint32_t byte_offset, int64_t default_val) {
@@ -1881,6 +1928,56 @@ uint32_t cpp_any_builder_set_struct_from_bytes(uint32_t ptr_idx, uint32_t bytes_
       bytes_len / sizeof(capnp::word));
   capnp::FlatArrayMessageReader reader(words);
   ptrs[ptr_idx].setAs<capnp::AnyPointer>(reader.getRoot<capnp::AnyPointer>());
+  return 1;
+}
+
+// Write a capability pointer at the current cursor's pointer slot
+// `ptr_idx` with the given cap-table index. Used by Builder code emitted
+// for capability-typed struct fields: the JS-side cap sink allocates an
+// index, then this op encodes the wire pointer.
+//
+// Capability pointer wire format (matches the reader-side decoder above):
+//   bits 0-31  (bytes 0-3):  0x00000003   (kind=OTHER, type=cap, offset=0)
+//   bits 32-63 (bytes 4-7):  cap_idx
+//
+// Writing the raw 8 bytes is safe because the destination slot is
+// always within the same segment as the parent struct's pointer
+// section (the builder allocates them contiguously). Mirrors
+// upstream `_::PointerBuilder::setCapability(...)` minus the
+// CapTableBuilder::injectCap step (the cap-table index is supplied by
+// the JS side, which is the source of truth for outbound caps).
+uint32_t cpp_any_builder_set_cap_index(uint32_t ptr_idx, uint32_t cap_idx) {
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  auto data = cur->getDataSection();
+  // Bounds: dataSize is in bytes, pointer section follows it. The
+  // pointer count is encoded in the parent's struct size; we trust the
+  // codegen to pass a valid ptr_idx but guard via the AnyPointer list
+  // size to fail safely on misuse.
+  auto ptrs = cur->getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  uint8_t* p = data.end() + ptr_idx * 8;
+  uint32_t low = 0x00000003u;  // kind=OTHER, type=capability, offset=0
+  std::memcpy(p, &low, 4);
+  std::memcpy(p + 4, &cap_idx, 4);
+  return 1;
+}
+
+// Deep-copy the AnyPointer at the source slot's root into the current
+// cursor's pointer slot at ptr_idx. Used by the AnyPointer struct-write
+// path: when JS hands the Builder another Reader (rather than serialized
+// bytes), we copy from the source reader's tree directly without a
+// serialize/deserialize round trip. Mirrors upstream
+// `AnyPointer::Builder::setAs<DynamicStruct>(reader)`.
+uint32_t cpp_any_builder_set_anypointer_from_slot(uint32_t ptr_idx, uint32_t src_slot_idx) {
+  auto cur = current_cursor();
+  if (!cur) return 0;
+  auto ptrs = cur->getPointerSection();
+  if (ptr_idx >= ptrs.size()) return 0;
+  if (src_slot_idx >= READER_SLOT_COUNT) return 0;
+  ReaderSlot& s = reader_slots[src_slot_idx];
+  if (!s.reader) return 0;
+  ptrs[ptr_idx].setAs<capnp::AnyPointer>(s.reader->getRoot<capnp::AnyPointer>());
   return 1;
 }
 
@@ -2709,6 +2806,81 @@ uint32_t cpp_rpc_begin_return(
 uint32_t cpp_rpc_finalize() {
   if (!rpc_builder) return 0;
   return finalizeRpcBuilder();
+}
+
+// Populate the outbound Call/Return's payload.capTable with senderHosted
+// descriptors. Used by RpcSession when an outbound Builder collected
+// capability writes via its cap sink: each export id (registered locally
+// for one of the user's CapTargets) is written as a senderHosted entry.
+//
+// Export ids are pre-staged in cpp_in as a packed uint32_t LE array
+// (matches cpp_rpc_build_return_with_caps' input contract). Returns 1
+// on success, 0 if the rpc_builder isn't a Call or Return.
+uint32_t cpp_rpc_set_outbound_cap_table(uint32_t cap_count) {
+  if (!rpc_builder) return 0;
+  auto msg = rpc_builder->getRoot<capnp::rpc::Message>();
+  if (msg.isCall()) {
+    auto payload = msg.getCall().getParams();
+    auto caps = payload.initCapTable(cap_count);
+    for (uint32_t i = 0; i < cap_count; i++) {
+      uint32_t exportId;
+      std::memcpy(&exportId, cpp_in + i * 4, 4);
+      caps[i].setSenderHosted(exportId);
+    }
+    return 1;
+  }
+  if (msg.isReturn() && msg.getReturn().isResults()) {
+    auto payload = msg.getReturn().getResults();
+    auto caps = payload.initCapTable(cap_count);
+    for (uint32_t i = 0; i < cap_count; i++) {
+      uint32_t exportId;
+      std::memcpy(&exportId, cpp_in + i * 4, 4);
+      caps[i].setSenderHosted(exportId);
+    }
+    return 1;
+  }
+  return 0;
+}
+
+// Inbound Call's params.capTable accessors. Mirror the Return cap-table
+// accessors (cpp_rpc_get_return_cap_*) so the RpcSession's call-handler
+// path can build a typed cap-table for params Readers, the same way it
+// already does for results Readers.
+uint32_t cpp_rpc_get_call_cap_count() {
+  if (!rpc_reader) return 0;
+  auto msg = rpc_reader->getRoot<capnp::rpc::Message>();
+  if (!msg.isCall()) return 0;
+  return msg.getCall().getParams().getCapTable().size();
+}
+
+uint32_t cpp_rpc_get_call_cap_kind(uint32_t i) {
+  if (!rpc_reader) return 0;
+  auto msg = rpc_reader->getRoot<capnp::rpc::Message>();
+  if (!msg.isCall()) return 0;
+  auto caps = msg.getCall().getParams().getCapTable();
+  if (i >= caps.size()) return 0;
+  switch (caps[i].which()) {
+    case capnp::rpc::CapDescriptor::NONE:               return 0;
+    case capnp::rpc::CapDescriptor::SENDER_HOSTED:      return 1;
+    case capnp::rpc::CapDescriptor::SENDER_PROMISE:     return 2;
+    case capnp::rpc::CapDescriptor::RECEIVER_HOSTED:    return 3;
+    case capnp::rpc::CapDescriptor::RECEIVER_ANSWER:    return 4;
+    case capnp::rpc::CapDescriptor::THIRD_PARTY_HOSTED: return 5;
+  }
+  return 0;
+}
+
+uint32_t cpp_rpc_get_call_cap_id(uint32_t i) {
+  if (!rpc_reader) return 0;
+  auto msg = rpc_reader->getRoot<capnp::rpc::Message>();
+  if (!msg.isCall()) return 0;
+  auto caps = msg.getCall().getParams().getCapTable();
+  if (i >= caps.size()) return 0;
+  auto desc = caps[i];
+  if (desc.isSenderHosted())   return desc.getSenderHosted();
+  if (desc.isSenderPromise())  return desc.getSenderPromise();
+  if (desc.isReceiverHosted()) return desc.getReceiverHosted();
+  return 0;
 }
 
 // Open the inbound Call's params.content as an AnyStruct on the reader

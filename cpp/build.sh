@@ -259,6 +259,13 @@ FLAGS=(
   -Wl,--export=cpp_any_list_get_data
   -Wl,--export=cpp_any_text_at
   -Wl,--export=cpp_any_data_at
+  # Cap-table index accessors. Codegen emits these for capability-typed
+  # struct fields so the typed Reader can resolve the field through a
+  # JS-side cap table, and the Builder can write a wire pointer that
+  # carries the index of an outbound cap. Cap-table contents
+  # (CapTarget proxies) live in JS; wasm just shuttles indexes.
+  -Wl,--export=cpp_any_get_cap_index
+  -Wl,--export=cpp_any_builder_set_cap_index
   -Wl,--export=cpp_any_int64_at
   -Wl,--export=cpp_any_uint32_at
   -Wl,--export=cpp_any_uint16_at
@@ -300,8 +307,14 @@ FLAGS=(
   -Wl,--export=cpp_any_builder_set_list_text
   -Wl,--export=cpp_any_builder_init_list_data
   -Wl,--export=cpp_any_builder_set_list_data
-  # cpp_any_builder_set_struct_from_bytes — superseded by enter_struct/exit_struct,
-  # left in source for tests but not exported in the production build.
+  # AnyPointer struct write paths. enter_struct/exit_struct covers
+  # statically-typed nested struct fields; the two below cover the
+  # case where the field is `:AnyPointer` (or an unbound generic slot)
+  # so the type is unknown at codegen time and we just deep-copy from
+  # an existing message (`set_struct_from_bytes`) or from another
+  # live Reader's slot (`set_anypointer_from_slot`).
+  -Wl,--export=cpp_any_builder_set_struct_from_bytes
+  -Wl,--export=cpp_any_builder_set_anypointer_from_slot
   -Wl,--export=cpp_any_builder_enter_struct
   -Wl,--export=cpp_any_builder_exit_struct
   -Wl,--export=cpp_any_builder_init_list_struct
@@ -335,6 +348,15 @@ FLAGS=(
   -Wl,--export=cpp_rpc_build_return_with_caps
   -Wl,--export=cpp_rpc_get_return_cap_kind
   -Wl,--export=cpp_rpc_get_return_cap_id
+  # Inbound Call params.capTable accessors (mirror return cap accessors)
+  # — used by the call-handler path to build a typed cap-table for the
+  # params Reader so capability-typed params fields resolve through it.
+  -Wl,--export=cpp_rpc_get_call_cap_count
+  -Wl,--export=cpp_rpc_get_call_cap_kind
+  -Wl,--export=cpp_rpc_get_call_cap_id
+  # Outbound capTable populator for Call.params or Return.results.
+  # Reads packed uint32 export ids from cpp_in.
+  -Wl,--export=cpp_rpc_set_outbound_cap_table
   -Wl,--export=cpp_rpc_begin_call
   -Wl,--export=cpp_rpc_begin_return
   -Wl,--export=cpp_rpc_finalize
