@@ -1410,6 +1410,28 @@ export class ChatMessageListBuilder {
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
+  set items(value) {
+    if (!Array.isArray(value)) throw new TypeError("List(ChatMessage) field expects an array");
+    if (this._exp.cpp_any_builder_init_list_struct(0, value.length, 2, 3) !== 1) {
+      throw new Error("init_list_struct failed for items");
+    }
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (item == null) continue;
+      if (this._exp.cpp_any_builder_enter_list_element(0, i) !== 1) {
+        throw new Error("enter_list_element(" + i + ") failed for items");
+      }
+      const sub = new ChatMessageBuilder(this._cpp, { preinitialized: true });
+      sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      sub.fromObject(item);
+      if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+        throw new Error("exit_struct(list element) failed for items");
+      }
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
 
   /**
    * Apply fields from a plain JS object to this builder. Same shape
@@ -1419,7 +1441,7 @@ export class ChatMessageListBuilder {
    */
   fromObject(o) {
     if (o == null) return this;
-    // items: List(ChatMessage). No Builder setter yet (list / struct ref); skipped by fromObject
+    if (o.items !== undefined) this.items = o.items;
     return this;
   }
 

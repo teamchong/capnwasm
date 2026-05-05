@@ -1600,6 +1600,115 @@ export class AllTypesBuilder {
     const o = this._dataPtr + 36;
     u8[o] = value & 0xff; u8[o+1] = (value >>> 8) & 0xff;
   }
+  set boolList(value) {
+    if (!Array.isArray(value)) throw new TypeError("List(Bool) field expects an array");
+    if (this._exp.cpp_any_builder_init_list_bool(2, value.length) !== 1) {
+      throw new Error("init_list_bool failed for boolList");
+    }
+    for (let i = 0; i < value.length; i++) {
+      this._exp.cpp_any_builder_set_list_bool(2, i, value[i] ? 1 : 0);
+    }
+  }
+  set int32List(value) {
+    if (!Array.isArray(value)) throw new TypeError("List(Int32) field expects an array");
+    if (this._exp.cpp_any_builder_init_list_int32(3, value.length) !== 1) {
+      throw new Error("init_list_int32 failed for int32List");
+    }
+    for (let i = 0; i < value.length; i++) {
+      this._exp.cpp_any_builder_set_list_int32(3, i, value[i]);
+    }
+  }
+  set uint64List(value) {
+    if (!Array.isArray(value)) throw new TypeError("List(UInt64) field expects an array");
+    if (this._exp.cpp_any_builder_init_list_uint64(4, value.length) !== 1) {
+      throw new Error("init_list_uint64 failed for uint64List");
+    }
+    for (let i = 0; i < value.length; i++) {
+      const v = value[i];
+      this._exp.cpp_any_builder_set_list_uint64(4, i, typeof v === "bigint" ? v : BigInt(v));
+    }
+  }
+  set float64List(value) {
+    if (!Array.isArray(value)) throw new TypeError("List(Float64) field expects an array");
+    if (this._exp.cpp_any_builder_init_list_float64(5, value.length) !== 1) {
+      throw new Error("init_list_float64 failed for float64List");
+    }
+    for (let i = 0; i < value.length; i++) {
+      this._exp.cpp_any_builder_set_list_float64(5, i, value[i]);
+    }
+  }
+  set textList(value) {
+    if (!Array.isArray(value)) throw new TypeError("List(Text) field expects an array");
+    if (this._exp.cpp_any_builder_init_list_text(6, value.length) !== 1) {
+      throw new Error("init_list_text failed for textList");
+    }
+    const inPtr = this._exp.cpp_in_ptr();
+    const inCap = this._exp.cpp_in_capacity();
+    for (let i = 0; i < value.length; i++) {
+      const s = value[i];
+      let written;
+      if (typeof s === "string") {
+        const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);
+        written = SHARED_ENCODER.encodeInto(s, dst).written;
+      } else {
+        if (s.length > inCap) throw new Error("text element larger than scratch buffer");
+        this._cpp._u8.set(s, inPtr);
+        written = s.length;
+      }
+      if (this._exp.cpp_any_builder_set_list_text(6, i, written) !== 1) {
+        throw new Error("set_list_text(" + i + ") failed for textList");
+      }
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+  get nested() {
+    if (this._exp.cpp_any_builder_enter_struct(7, 1, 1) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for nested");
+    }
+    const sub = new TagBuilder(this._cpp, { preinitialized: true });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub._exitOnFinalize = true;
+    return sub;
+  }
+  set nested(value) {
+    if (value == null) return;
+    if (this._exp.cpp_any_builder_enter_struct(7, 1, 1) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for nested");
+    }
+    const sub = new TagBuilder(this._cpp, { preinitialized: true });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub.fromObject(value);
+    if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+      throw new Error("cpp_any_builder_exit_struct failed for nested");
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
+  set tagList(value) {
+    if (!Array.isArray(value)) throw new TypeError("List(Tag) field expects an array");
+    if (this._exp.cpp_any_builder_init_list_struct(8, value.length, 1, 1) !== 1) {
+      throw new Error("init_list_struct failed for tagList");
+    }
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (item == null) continue;
+      if (this._exp.cpp_any_builder_enter_list_element(8, i) !== 1) {
+        throw new Error("enter_list_element(" + i + ") failed for tagList");
+      }
+      const sub = new TagBuilder(this._cpp, { preinitialized: true });
+      sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      sub.fromObject(item);
+      if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+        throw new Error("exit_struct(list element) failed for tagList");
+      }
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
 
   /**
    * Apply fields from a plain JS object to this builder. Same shape
@@ -1623,13 +1732,13 @@ export class AllTypesBuilder {
     if (o.textField !== undefined) this.textField = o.textField;
     if (o.dataField !== undefined) this.dataField = o.dataField;
     if (o.enumField !== undefined) this.enumField = o.enumField;
-    // boolList: List(Bool). No Builder setter yet (list / struct ref); skipped by fromObject
-    // int32List: List(Int32). No Builder setter yet (list / struct ref); skipped by fromObject
-    // uint64List: List(UInt64). No Builder setter yet (list / struct ref); skipped by fromObject
-    // float64List: List(Float64). No Builder setter yet (list / struct ref); skipped by fromObject
-    // textList: List(Text). No Builder setter yet (list / struct ref); skipped by fromObject
-    // nested: Tag. No Builder setter yet (list / struct ref); skipped by fromObject
-    // tagList: List(Tag). No Builder setter yet (list / struct ref); skipped by fromObject
+    if (o.boolList !== undefined) this.boolList = o.boolList;
+    if (o.int32List !== undefined) this.int32List = o.int32List;
+    if (o.uint64List !== undefined) this.uint64List = o.uint64List;
+    if (o.float64List !== undefined) this.float64List = o.float64List;
+    if (o.textList !== undefined) this.textList = o.textList;
+    if (o.nested !== undefined) this.nested = o.nested;
+    if (o.tagList !== undefined) this.tagList = o.tagList;
     return this;
   }
 
@@ -1667,6 +1776,30 @@ export class InteropMessageBuilder {
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
+  get payload() {
+    if (this._exp.cpp_any_builder_enter_struct(0, 6, 9) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for payload");
+    }
+    const sub = new AllTypesBuilder(this._cpp, { preinitialized: true });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub._exitOnFinalize = true;
+    return sub;
+  }
+  set payload(value) {
+    if (value == null) return;
+    if (this._exp.cpp_any_builder_enter_struct(0, 6, 9) !== 1) {
+      throw new Error("cpp_any_builder_enter_struct failed for payload");
+    }
+    const sub = new AllTypesBuilder(this._cpp, { preinitialized: true });
+    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    sub.fromObject(value);
+    if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+      throw new Error("cpp_any_builder_exit_struct failed for payload");
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
   set ordinal(value) {
     const u8 = this._u8;
     const o = this._dataPtr + 0;
@@ -1682,7 +1815,7 @@ export class InteropMessageBuilder {
    */
   fromObject(o) {
     if (o == null) return this;
-    // payload: AllTypes. No Builder setter yet (list / struct ref); skipped by fromObject
+    if (o.payload !== undefined) this.payload = o.payload;
     if (o.ordinal !== undefined) this.ordinal = o.ordinal;
     return this;
   }

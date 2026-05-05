@@ -1393,6 +1393,28 @@ export class UserListBuilder {
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
+  set users(value) {
+    if (!Array.isArray(value)) throw new TypeError("List(User) field expects an array");
+    if (this._exp.cpp_any_builder_init_list_struct(0, value.length, 3, 3) !== 1) {
+      throw new Error("init_list_struct failed for users");
+    }
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (item == null) continue;
+      if (this._exp.cpp_any_builder_enter_list_element(0, i) !== 1) {
+        throw new Error("enter_list_element(" + i + ") failed for users");
+      }
+      const sub = new UserBuilder(this._cpp, { preinitialized: true });
+      sub._dataPtr = this._exp.cpp_any_builder_data_ptr();
+      sub.fromObject(item);
+      if (this._exp.cpp_any_builder_exit_struct() !== 1) {
+        throw new Error("exit_struct(list element) failed for users");
+      }
+    }
+    this._u8 = this._cpp._u8;
+    this._dataPtr = this._exp.cpp_any_builder_data_ptr();
+    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);
+  }
 
   /**
    * Apply fields from a plain JS object to this builder. Same shape
@@ -1402,7 +1424,7 @@ export class UserListBuilder {
    */
   fromObject(o) {
     if (o == null) return this;
-    // users: List(User). No Builder setter yet (list / struct ref); skipped by fromObject
+    if (o.users !== undefined) this.users = o.users;
     return this;
   }
 
@@ -1547,6 +1569,15 @@ export class NumericProbeBuilder {
     this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
   }
 
+  set f64s(value) {
+    if (!Array.isArray(value)) throw new TypeError("List(Float64) field expects an array");
+    if (this._exp.cpp_any_builder_init_list_float64(0, value.length) !== 1) {
+      throw new Error("init_list_float64 failed for f64s");
+    }
+    for (let i = 0; i < value.length; i++) {
+      this._exp.cpp_any_builder_set_list_float64(0, i, value[i]);
+    }
+  }
 
   /**
    * Apply fields from a plain JS object to this builder. Same shape
@@ -1556,7 +1587,7 @@ export class NumericProbeBuilder {
    */
   fromObject(o) {
     if (o == null) return this;
-    // f64s: List(Float64). No Builder setter yet (list / struct ref); skipped by fromObject
+    if (o.f64s !== undefined) this.f64s = o.f64s;
     return this;
   }
 

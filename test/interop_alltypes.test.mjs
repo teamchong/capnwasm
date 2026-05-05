@@ -14,6 +14,9 @@ import {
   openDynamic,
 } from "../js/dynamic.mjs";
 import {
+  AllTypesBuilder,
+  buildAllTypes,
+  buildInteropMessage,
   openAllTypes,
   openInteropMessage,
 } from "./_fixtures/interop.gen.mjs";
@@ -241,4 +244,46 @@ test("interop AllTypes: bit-stable cross-implementation round-trip", { skip }, (
   const r = openAllTypes(cpp, reEncoded);
   expectAllTypes(r);
   r.dispose();
+});
+
+test("codegen Builder: full AllTypes shape via fromObject", { skip }, () => {
+  const bytes = buildAllTypes(cpp).fromObject(SAMPLE).toBytes();
+  const r = openAllTypes(cpp, bytes);
+  expectAllTypes(r);
+  r.dispose();
+});
+
+test("codegen Builder: capnwasm encodes (fromObject) → upstream capnp decodes", { skip }, () => {
+  const bytes = buildAllTypes(cpp).fromObject(SAMPLE).toBytes();
+  const decoded = capnpDecode(bytes, "AllTypes");
+  assert.equal(decoded.textField, SAMPLE.textField);
+  assert.equal(decoded.enumField, "blue");
+  assert.deepEqual(decoded.boolList, SAMPLE.boolList);
+  assert.deepEqual(decoded.int32List, SAMPLE.int32List);
+  assert.deepEqual(decoded.textList, SAMPLE.textList);
+  assert.equal(decoded.nested.name, SAMPLE.nested.name);
+  assert.equal(decoded.nested.weight, SAMPLE.nested.weight);
+  for (let i = 0; i < SAMPLE.tagList.length; i++) {
+    assert.equal(decoded.tagList[i].name, SAMPLE.tagList[i].name);
+    assert.equal(decoded.tagList[i].weight, SAMPLE.tagList[i].weight);
+  }
+});
+
+test("codegen Builder: setters work field-by-field too", { skip }, () => {
+  const b = new AllTypesBuilder(cpp);
+  for (const k of Object.keys(SAMPLE)) b[k] = SAMPLE[k];
+  const r = openAllTypes(cpp, b.toBytes());
+  expectAllTypes(r);
+  r.dispose();
+});
+
+test("codegen Builder: nested builder in InteropMessage", { skip }, () => {
+  const b = buildInteropMessage(cpp);
+  b.payload.fromObject(SAMPLE);
+  b.ordinal = 99;
+  const bytes = b.toBytes();
+  const back = openInteropMessage(cpp, bytes);
+  assert.equal(back.ordinal, 99);
+  expectAllTypes(back.payload);
+  back.dispose();
 });

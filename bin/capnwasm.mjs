@@ -1801,6 +1801,7 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push("");
 
   const declaredStructs = new Set(structs.map((s) => s.name));
+  const structByName = new Map(structs.map((s) => [s.name, s]));
   for (const s of structs) {
     lines.push(`export class ${s.name}Reader {`);
     // M5: Static struct shape. _DATA_WORDS is the number of 8-byte
@@ -2087,7 +2088,53 @@ function _capnwasmPick(cpp, fields, names) {`);
         lines.push(`  }`);
         continue;
       }
-      const setter = generateSetter(f);
+      // Plain nested struct field: expose a builder-getter that pushes the
+      // wasm cursor into this pointer slot before returning a sub-Builder.
+      // The caller uses normal `b.nested.field = value` syntax. exitStruct()
+      // pops the cursor when the caller is done.
+      if (f.kind === "pointer" && declaredStructs && declaredStructs.has(f.type)) {
+        const innerStruct = structByName.get(f.type);
+        const dWords = innerStruct ? innerStruct.dataWords : 0;
+        const pWords = innerStruct ? innerStruct.ptrWords : 0;
+        lines.push(`  get ${f.name}() {`);
+        if (s.discriminantCount && f.discriminantValue !== undefined && s.discriminantOffsetBits !== undefined) {
+          const discByteOff = s.discriminantOffsetBits >> 3;
+          lines.push(`    this._exp.cpp_any_builder_set_uint16(${discByteOff}, ${f.discriminantValue});`);
+        }
+        lines.push(`    if (this._exp.cpp_any_builder_enter_struct(${f.ptrIndex}, ${dWords}, ${pWords}) !== 1) {`);
+        lines.push(`      throw new Error("cpp_any_builder_enter_struct failed for ${f.name}");`);
+        lines.push(`    }`);
+        lines.push(`    const sub = new ${f.type}Builder(this._cpp, { preinitialized: true });`);
+        lines.push(`    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();`);
+        lines.push(`    sub._exitOnFinalize = true;`);
+        lines.push(`    return sub;`);
+        lines.push(`  }`);
+        // Setter form: assigning a plain object pushes, applies fromObject,
+        // then pops. Lets users write `b.nested = { ... }` instead of
+        // `b.nested.fromObject({ ... })`.
+        lines.push(`  set ${f.name}(value) {`);
+        if (s.discriminantCount && f.discriminantValue !== undefined && s.discriminantOffsetBits !== undefined) {
+          const discByteOff = s.discriminantOffsetBits >> 3;
+          lines.push(`    this._exp.cpp_any_builder_set_uint16(${discByteOff}, ${f.discriminantValue});`);
+        }
+        lines.push(`    if (value == null) return;`);
+        lines.push(`    if (this._exp.cpp_any_builder_enter_struct(${f.ptrIndex}, ${dWords}, ${pWords}) !== 1) {`);
+        lines.push(`      throw new Error("cpp_any_builder_enter_struct failed for ${f.name}");`);
+        lines.push(`    }`);
+        lines.push(`    const sub = new ${f.type}Builder(this._cpp, { preinitialized: true });`);
+        lines.push(`    sub._dataPtr = this._exp.cpp_any_builder_data_ptr();`);
+        lines.push(`    sub.fromObject(value);`);
+        lines.push(`    if (this._exp.cpp_any_builder_exit_struct() !== 1) {`);
+        lines.push(`      throw new Error("cpp_any_builder_exit_struct failed for ${f.name}");`);
+        lines.push(`    }`);
+        // Re-fetch this builder's cached pointers — wasm may have grown.
+        lines.push(`    this._u8 = this._cpp._u8;`);
+        lines.push(`    this._dataPtr = this._exp.cpp_any_builder_data_ptr();`);
+        lines.push(`    if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`);
+        lines.push(`  }`);
+        continue;
+      }
+      const setter = generateSetter(f, declaredStructs, structByName);
       if (!setter) continue;
       lines.push(`  set ${f.name}(value) {`);
       // If this field is a union variant, auto-write the discriminant.
@@ -2129,8 +2176,8 @@ function _capnwasmPick(cpp, fields, names) {`);
       // fromObject they'd silently set a regular JS property and never
       // make it into the wire bytes. Document the gap inline so users
       // see it in their generated file.
-      if (!hasFieldSetter(f)) {
-        lines.push(`    // ${f.name}: ${f.type ?? f.kind}. No Builder setter yet (list / struct ref); skipped by fromObject`);
+      if (!hasFieldSetter(f, declaredStructs)) {
+        lines.push(`    // ${f.name}: ${f.type ?? f.kind}. No Builder setter yet for this shape; skipped by fromObject`);
         continue;
       }
       // The public setter handles type coercion (BigInt for u64/i64,
@@ -2195,16 +2242,155 @@ function _capnwasmPick(cpp, fields, names) {`);
 // Used by the fromObject template to decide whether to skip a field. Kept
 // in lockstep with generateSetter. If generateSetter starts emitting list
 // or struct-ref setters, this needs to learn about them too.
-function hasFieldSetter(field) {
-  if (field.kind === "group") return false;       // groups are sub-builder getters, not setters
+// Names recognised by primitive-list setters. Mirrors the cpp_any_builder
+// init/set list exports.
+const LIST_PRIMITIVE_KINDS = new Map([
+  ["Bool", "bool"],
+  ["UInt8", "uint8"],   ["Int8", "int8"],
+  ["UInt16", "uint16"], ["Int16", "int16"],
+  ["UInt32", "uint32"], ["Int32", "int32"],
+  ["UInt64", "uint64"], ["Int64", "int64"],
+  ["Float32", "float32"], ["Float64", "float64"],
+]);
+
+function hasFieldSetter(field, declaredStructs) {
+  if (field.kind === "group") return false;
   if (field.kind === "pointer") {
-    return field.type === "Text" || field.type === "Data";
+    if (field.type === "Text" || field.type === "Data") return true;
+    if (declaredStructs && declaredStructs.has(field.type)) return true;
+    const listMatch = /^List\(([^)]+)\)$/.exec(field.type);
+    if (listMatch) {
+      const inner = listMatch[1];
+      if (inner === "Text" || inner === "Data") return true;
+      if (LIST_PRIMITIVE_KINDS.has(inner)) return true;
+      if (declaredStructs && declaredStructs.has(inner)) return true;
+    }
+    return false;
   }
-  // Primitive. GenerateSetter handles every type via the switch below.
   return true;
 }
 
-function generateSetter(field) {
+// Generate a list setter that mirrors the dynamic builder's list paths,
+// but emits straight-line code keyed off the static element type. Returns
+// the inlined statement list, or null if the element type isn't supported.
+function generateListSetter(field, inner, declaredStructs, structByName) {
+  const ptrIndex = field.ptrIndex;
+  if (inner === "Text") {
+    return [
+      `if (!Array.isArray(value)) throw new TypeError("List(Text) field expects an array");`,
+      `if (this._exp.cpp_any_builder_init_list_text(${ptrIndex}, value.length) !== 1) {`,
+      `  throw new Error("init_list_text failed for ${field.name}");`,
+      `}`,
+      `const inPtr = this._exp.cpp_in_ptr();`,
+      `const inCap = this._exp.cpp_in_capacity();`,
+      `for (let i = 0; i < value.length; i++) {`,
+      `  const s = value[i];`,
+      `  let written;`,
+      `  if (typeof s === "string") {`,
+      `    const dst = this._cpp._u8.subarray(inPtr, inPtr + inCap);`,
+      `    written = SHARED_ENCODER.encodeInto(s, dst).written;`,
+      `  } else {`,
+      `    if (s.length > inCap) throw new Error("text element larger than scratch buffer");`,
+      `    this._cpp._u8.set(s, inPtr);`,
+      `    written = s.length;`,
+      `  }`,
+      `  if (this._exp.cpp_any_builder_set_list_text(${ptrIndex}, i, written) !== 1) {`,
+      `    throw new Error("set_list_text(" + i + ") failed for ${field.name}");`,
+      `  }`,
+      `}`,
+      `this._u8 = this._cpp._u8;`,
+      `this._dataPtr = this._exp.cpp_any_builder_data_ptr();`,
+      `if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`,
+    ];
+  }
+  if (inner === "Data") {
+    return [
+      `if (!Array.isArray(value)) throw new TypeError("List(Data) field expects an array");`,
+      `if (this._exp.cpp_any_builder_init_list_data(${ptrIndex}, value.length) !== 1) {`,
+      `  throw new Error("init_list_data failed for ${field.name}");`,
+      `}`,
+      `const inPtr = this._exp.cpp_in_ptr();`,
+      `const inCap = this._exp.cpp_in_capacity();`,
+      `for (let i = 0; i < value.length; i++) {`,
+      `  const d = value[i];`,
+      `  if (!(d instanceof Uint8Array)) throw new TypeError("List(Data) element " + i + " must be a Uint8Array");`,
+      `  if (d.length > inCap) throw new Error("data element " + i + " larger than scratch buffer");`,
+      `  this._cpp._u8.set(d, inPtr);`,
+      `  if (this._exp.cpp_any_builder_set_list_data(${ptrIndex}, i, d.length) !== 1) {`,
+      `    throw new Error("set_list_data(" + i + ") failed for ${field.name}");`,
+      `  }`,
+      `}`,
+      `this._u8 = this._cpp._u8;`,
+      `this._dataPtr = this._exp.cpp_any_builder_data_ptr();`,
+      `if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`,
+    ];
+  }
+  if (LIST_PRIMITIVE_KINDS.has(inner)) {
+    const kind = LIST_PRIMITIVE_KINDS.get(inner);
+    if (kind === "bool") {
+      return [
+        `if (!Array.isArray(value)) throw new TypeError("List(Bool) field expects an array");`,
+        `if (this._exp.cpp_any_builder_init_list_bool(${ptrIndex}, value.length) !== 1) {`,
+        `  throw new Error("init_list_bool failed for ${field.name}");`,
+        `}`,
+        `for (let i = 0; i < value.length; i++) {`,
+        `  this._exp.cpp_any_builder_set_list_bool(${ptrIndex}, i, value[i] ? 1 : 0);`,
+        `}`,
+      ];
+    }
+    if (kind === "uint64" || kind === "int64") {
+      return [
+        `if (!Array.isArray(value)) throw new TypeError("List(${inner}) field expects an array");`,
+        `if (this._exp.cpp_any_builder_init_list_${kind}(${ptrIndex}, value.length) !== 1) {`,
+        `  throw new Error("init_list_${kind} failed for ${field.name}");`,
+        `}`,
+        `for (let i = 0; i < value.length; i++) {`,
+        `  const v = value[i];`,
+        `  this._exp.cpp_any_builder_set_list_${kind}(${ptrIndex}, i, typeof v === "bigint" ? v : BigInt(v));`,
+        `}`,
+      ];
+    }
+    return [
+      `if (!Array.isArray(value)) throw new TypeError("List(${inner}) field expects an array");`,
+      `if (this._exp.cpp_any_builder_init_list_${kind}(${ptrIndex}, value.length) !== 1) {`,
+      `  throw new Error("init_list_${kind} failed for ${field.name}");`,
+      `}`,
+      `for (let i = 0; i < value.length; i++) {`,
+      `  this._exp.cpp_any_builder_set_list_${kind}(${ptrIndex}, i, value[i]);`,
+      `}`,
+    ];
+  }
+  if (declaredStructs && declaredStructs.has(inner)) {
+    const innerStruct = structByName.get(inner);
+    const dWords = innerStruct ? innerStruct.dataWords : 0;
+    const pWords = innerStruct ? innerStruct.ptrWords : 0;
+    return [
+      `if (!Array.isArray(value)) throw new TypeError("List(${inner}) field expects an array");`,
+      `if (this._exp.cpp_any_builder_init_list_struct(${ptrIndex}, value.length, ${dWords}, ${pWords}) !== 1) {`,
+      `  throw new Error("init_list_struct failed for ${field.name}");`,
+      `}`,
+      `for (let i = 0; i < value.length; i++) {`,
+      `  const item = value[i];`,
+      `  if (item == null) continue;`,
+      `  if (this._exp.cpp_any_builder_enter_list_element(${ptrIndex}, i) !== 1) {`,
+      `    throw new Error("enter_list_element(" + i + ") failed for ${field.name}");`,
+      `  }`,
+      `  const sub = new ${inner}Builder(this._cpp, { preinitialized: true });`,
+      `  sub._dataPtr = this._exp.cpp_any_builder_data_ptr();`,
+      `  sub.fromObject(item);`,
+      `  if (this._exp.cpp_any_builder_exit_struct() !== 1) {`,
+      `    throw new Error("exit_struct(list element) failed for ${field.name}");`,
+      `  }`,
+      `}`,
+      `this._u8 = this._cpp._u8;`,
+      `this._dataPtr = this._exp.cpp_any_builder_data_ptr();`,
+      `if (this._dv.buffer !== this._u8.buffer) this._dv = new DataView(this._u8.buffer);`,
+    ];
+  }
+  return null;
+}
+
+function generateSetter(field, declaredStructs, structByName) {
   // Group fields aren't assignable directly. The Builder exposes them as
   // a getter that returns a sub-Builder you write into:
   //   b.address.street = "...";
@@ -2212,6 +2398,10 @@ function generateSetter(field) {
   // and skip setter generation here.
   if (field.kind === "group") return null;
   if (field.kind === "pointer") {
+    const listMatch = /^List\(([^)]+)\)$/.exec(field.type ?? "");
+    if (listMatch) {
+      return generateListSetter(field, listMatch[1], declaredStructs, structByName);
+    }
     if (field.type === "Text") {
       // encodeInto writes UTF-8 bytes directly into the destination Uint8Array
       //. No intermediate JS allocation. The destination is a subarray view of
