@@ -928,6 +928,29 @@ function generateJs(structs, schemaName) {
   lines.push(`  return { elementsBase, count: elementCount };`);
   lines.push(`}`);
   lines.push("");
+  // Single struct pointer (kind=0). Returns
+  //   { dataPtr, dataWords, ptrWords } on success
+  //   null when the pointer slot is null (callers return a default Reader
+  //                                       on the pointer's declared type)
+  //   undefined when something the JS decoder cannot handle (FAR pointer,
+  //             wrong kind, out-of-bounds). Caller falls back to C++.
+  lines.push(`function _jsReadStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {`);
+  lines.push(`  if (!msgEnd) return undefined;`);
+  lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
+  lines.push(`  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;`);
+  lines.push(`  const word0 = dv.getUint32(ptrAddr, true);`);
+  lines.push(`  const word1 = dv.getUint32(ptrAddr + 4, true);`);
+  lines.push(`  if (word0 === 0 && word1 === 0) return null;`);
+  lines.push(`  if ((word0 & 3) !== 0) return undefined;`);
+  lines.push(`  const offset = dv.getInt32(ptrAddr, true) >> 2;`);
+  lines.push(`  const dWords = word1 & 0xffff;`);
+  lines.push(`  const pWords = (word1 >>> 16) & 0xffff;`);
+  lines.push(`  const target = ptrAddr + 8 + offset * 8;`);
+  lines.push(`  const totalBytes = (dWords + pWords) * 8;`);
+  lines.push(`  if (target < msgStart || target + totalBytes > msgEnd) return undefined;`);
+  lines.push(`  return { dataPtr: target, dataWords: dWords, ptrWords: pWords };`);
+  lines.push(`}`);
+  lines.push("");
   lines.push(`function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {`);
   lines.push(`  if (!msgEnd) return undefined;`);
   lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
@@ -1777,6 +1800,7 @@ function _capnwasmPick(cpp, fields, names) {`);
   lines.push(`}`);
   lines.push("");
 
+  const declaredStructs = new Set(structs.map((s) => s.name));
   for (const s of structs) {
     lines.push(`export class ${s.name}Reader {`);
     // M5: Static struct shape. _DATA_WORDS is the number of 8-byte
@@ -1902,7 +1926,7 @@ function _capnwasmPick(cpp, fields, names) {`);
       // starts. Mutating the field object in place is fine; codegen
       // emits each struct once.
       f.parentDataWords = s.dataWords;
-      const getter = generateGetter(f);
+      const getter = generateGetter(f, declaredStructs);
       lines.push(`  get ${f.name}() {`);
       lines.push(`    _ensureCapnwasmReader(this);`);
       // If this field is a union variant (or lives inside a group that is),
@@ -2886,7 +2910,7 @@ const PRIMITIVE_LIST_VIEWS = {
   "Float64": { ctor: "Float64Array",   shift: 3, field: "_f64" },
 };
 
-function generateGetter(field) {
+function generateGetter(field, declaredStructs) {
   // Void: no storage, just a marker. Return null so callers can compare
   // and `r.someVoidVariant === null` works in user code.
   if (field.type === "Void") {
@@ -2943,6 +2967,55 @@ function generateGetter(field) {
     if (listMatch) {
       const inner = listMatch[1];
       return generateListGetter(field.ptrIndex, inner, field.parentDataWords ?? 0);
+    }
+    // Plain struct pointer: declared elsewhere in this schema. JS decoder
+    // resolves the pointer to the target struct's data section, builds a
+    // typed sub-Reader. Falls back to the C++ cursor path for unsafe /
+    // pre-M5 readers (no _msgEnd).
+    if (declaredStructs && declaredStructs.has(field.type)) {
+      const inner = field.type;
+      const parentDw = field.parentDataWords ?? 0;
+      return [
+        `const reader = this;`,
+        `const cpp = this._cpp;`,
+        `const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;`,
+        `// Rebind closure for cursor-only sub-readers: re-position the C++`,
+        `// any_stack onto this nested struct before any boundary call. Used`,
+        `// by paths the JS decoder doesn't cover (Bool list, unsafe readers).`,
+        `const _rebindNested = () => {`,
+        `  _ensureCapnwasmReader(reader);`,
+        `  cpp._exports.cpp_any_slot_reset_root?.();`,
+        `  cpp._exports.cpp_any_enter_struct(${field.ptrIndex});`,
+        `  cpp._bumpGeneration();`,
+        `};`,
+        `if (_msgEnd) {`,
+        `  const desc = _jsReadStructPtr(reader._u8, reader._dv, reader._dataPtr, ${parentDw}, ${field.ptrIndex}, _msgStart, _msgEnd);`,
+        `  if (desc !== undefined) {`,
+        `    const dp = desc === null ? 0 : desc.dataPtr;`,
+        `    // gen=-1 forces _ensureCapnwasmReader to invoke the rebind on the`,
+        `    // first cursor-using access, which positions the C++ any_stack`,
+        `    // onto this nested struct. Pure-JS reads via _dataPtr never hit`,
+        `    // that branch; only Bool list / unsafe paths need the cursor.`,
+        `    return new ${inner}Reader(cpp, dp, {`,
+        `      slotIdx: reader._slotIdx,`,
+        `      msgStart: _msgStart,`,
+        `      msgEnd: _msgEnd,`,
+        `      gen: -1,`,
+        `      parent: reader,`,
+        `      rebind: _rebindNested,`,
+        `    });`,
+        `  }`,
+        `}`,
+        `// Cursor fallback: position the C++ cursor on the nested struct so`,
+        `// subsequent getters read from the right level.`,
+        `_rebindNested();`,
+        `return new ${inner}Reader(cpp, 0, {`,
+        `  msg: reader._msg,`,
+        `  slotIdx: reader._slotIdx,`,
+        `  gen: cpp._generation ?? 0,`,
+        `  rebind: _rebindNested,`,
+        `});`,
+      ];
     }
     return [`throw new Error("unsupported pointer type: ${field.type}");`];
   }

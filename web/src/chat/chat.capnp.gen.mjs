@@ -87,6 +87,23 @@ function _jsReadListPrimPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgE
   return { elementsBase, count: elementCount };
 }
 
+function _jsReadStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return null;
+  if ((word0 & 3) !== 0) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const dWords = word1 & 0xffff;
+  const pWords = (word1 >>> 16) & 0xffff;
+  const target = ptrAddr + 8 + offset * 8;
+  const totalBytes = (dWords + pWords) * 8;
+  if (target < msgStart || target + totalBytes > msgEnd) return undefined;
+  return { dataPtr: target, dataWords: dWords, ptrWords: pWords };
+}
+
 function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
   if (!msgEnd) return undefined;
   const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
