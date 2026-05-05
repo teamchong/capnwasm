@@ -73,7 +73,21 @@ WRAPPER=(
   cpp/eh_runtime.cpp
 )
 
-ZIG_LIBCXXABI=/Users/steven_chong/.local/share/mise/installs/zig/0.16.0/lib/libcxxabi/src
+# Resolve libcxxabi sources from whichever `zig` is on PATH so this works on
+# any machine (mise, system, brew, ...); honor ZIG_LIBCXXABI env override.
+if [ -z "${ZIG_LIBCXXABI:-}" ]; then
+  ZIG_BIN="$(command -v zig || true)"
+  if [ -z "$ZIG_BIN" ]; then
+    echo "[build_capnpc.sh] error: zig not found on PATH; install zig or set ZIG_LIBCXXABI" >&2
+    exit 1
+  fi
+  ZIG_PREFIX="$(cd "$(dirname "$ZIG_BIN")/.." && pwd)"
+  ZIG_LIBCXXABI="$ZIG_PREFIX/lib/libcxxabi/src"
+fi
+if [ ! -d "$ZIG_LIBCXXABI" ]; then
+  echo "[build_capnpc.sh] error: ZIG_LIBCXXABI=$ZIG_LIBCXXABI is not a directory" >&2
+  exit 1
+fi
 
 FLAGS=(
   -target wasm32-wasi-musl

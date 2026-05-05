@@ -127,8 +127,22 @@ WRAPPER_BENCH_ONLY=(
 
 # Pull in libcxxabi exception runtime that zig's wasm32-wasi-musl auto-build
 # leaves out. KJ requires C++ exceptions; these provide __cxa_allocate_exception,
-# __cxa_throw, and friends.
-ZIG_LIBCXXABI=/Users/steven_chong/.local/share/mise/installs/zig/0.16.0/lib/libcxxabi/src
+# __cxa_throw, and friends. Resolve from whichever `zig` is on PATH so the
+# script works on any machine (mise, system, brew, ...); honor ZIG_LIBCXXABI
+# env override for unusual layouts.
+if [ -z "${ZIG_LIBCXXABI:-}" ]; then
+  ZIG_BIN="$(command -v zig || true)"
+  if [ -z "$ZIG_BIN" ]; then
+    echo "[build.sh] error: zig not found on PATH; install zig or set ZIG_LIBCXXABI" >&2
+    exit 1
+  fi
+  ZIG_PREFIX="$(cd "$(dirname "$ZIG_BIN")/.." && pwd)"
+  ZIG_LIBCXXABI="$ZIG_PREFIX/lib/libcxxabi/src"
+fi
+if [ ! -d "$ZIG_LIBCXXABI" ]; then
+  echo "[build.sh] error: ZIG_LIBCXXABI=$ZIG_LIBCXXABI is not a directory" >&2
+  exit 1
+fi
 LIBCXXABI=()
 
 # Compile flags. -fno-exceptions because wasm32-freestanding doesn't have
