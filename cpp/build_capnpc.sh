@@ -70,45 +70,53 @@ COMPILER_SOURCES=(
 
 WRAPPER=(
   cpp/capnpc_wrapper.cpp
-  cpp/eh_runtime.cpp
 )
 
-# Resolve libcxxabi sources from whichever `zig` is on PATH so this works on
-# any machine (mise, system, brew, ...); honor ZIG_LIBCXXABI env override.
-if [ -z "${ZIG_LIBCXXABI:-}" ]; then
-  ZIG_BIN="$(command -v zig || true)"
-  if [ -z "$ZIG_BIN" ]; then
-    echo "[build_capnpc.sh] error: zig not found on PATH; install zig or set ZIG_LIBCXXABI" >&2
-    exit 1
-  fi
-  ZIG_PREFIX="$(cd "$(dirname "$ZIG_BIN")/.." && pwd)"
-  ZIG_LIBCXXABI="$ZIG_PREFIX/lib/libcxxabi/src"
-fi
-if [ ! -d "$ZIG_LIBCXXABI" ]; then
-  echo "[build_capnpc.sh] error: ZIG_LIBCXXABI=$ZIG_LIBCXXABI is not a directory" >&2
+# Locate zig. Real wasm-EH requires zig 0.17+; see cpp/build.sh for
+# the rationale and the same version check.
+ZIG_BIN="${ZIG_BIN:-$(command -v zig || true)}"
+if [ -z "$ZIG_BIN" ]; then
+  echo "[build_capnpc.sh] error: zig not found on PATH; install zig 0.17+ or set ZIG_BIN" >&2
   exit 1
 fi
+ZIG_VERSION_STR="$("$ZIG_BIN" version)"
+case "$ZIG_VERSION_STR" in
+  0.16.*|0.15.*|0.14.*|0.13.*)
+    echo "[build_capnpc.sh] error: zig $ZIG_VERSION_STR can't link the __cpp_exception wasm tag." >&2
+    echo "[build_capnpc.sh]        Install zig 0.17+ and either swap your PATH or set" >&2
+    echo "[build_capnpc.sh]        ZIG_BIN=/path/to/zig-0.17/zig before re-running." >&2
+    exit 1
+    ;;
+esac
+
+# Build the EH runtime archive (idempotent — reuses cached .o files).
+ZIG_BIN="$ZIG_BIN" bash cpp/build_eh_runtime.sh
 
 FLAGS=(
   -target wasm32-wasi-musl
   -Oz
   -std=c++23
-  -fexceptions
-  -fno-rtti
+  -fwasm-exceptions
+  -mcpu=generic+exception_handling+reference_types
+  -frtti
   -fno-threadsafe-statics
   -fno-stack-protector
   -fno-unwind-tables
   -fno-asynchronous-unwind-tables
   -fdata-sections
   -ffunction-sections
-  -flto
+  # -flto removed: with LTO + zig's auto-linked libcxxabi.a (which
+  # provides cxa_noexception.o = no-op __cxa_throw stub), our
+  # locally-built cxa_exception.o (real __cxa_throw + wasm-EH) gets
+  # silently dropped during LTO module merging. Without LTO the
+  # ordinary archive resolution picks our .o first since it's passed
+  # as a direct input file.
   -fmerge-all-constants
   -D_WASI_EMULATED_SIGNAL
   -D_WASI_EMULATED_MMAN
   -DKJ_USE_MAIN=0
   -DKJ_NO_LIBDL=1
   -DNDEBUG
-  -DKJ_NO_RTTI
   -DKJ_NO_STACK_TRACES_IN_RELEASE=1
   -I"$CAPNP_SRC"
   -Icpp
@@ -133,12 +141,15 @@ FLAGS=(
   -Wl,--strip-all
 )
 
-zig c++ "${FLAGS[@]}" \
-  -I"$ZIG_LIBCXXABI/../include" \
+"$ZIG_BIN" c++ "${FLAGS[@]}" \
   "${KJ_SOURCES[@]}" \
   "${CAPNP_SOURCES[@]}" \
   "${COMPILER_SOURCES[@]}" \
   "${WRAPPER[@]}" \
+  zig-out/eh_runtime/cxa_exception.o \
+  zig-out/eh_runtime/cxa_personality.o \
+  zig-out/eh_runtime/Unwind-wasm.o \
+  zig-out/eh_runtime/eh_tag.o \
   -o "$OUT"
 
 echo "Built: $OUT"
@@ -148,7 +159,9 @@ OPT_OUT=zig-out/capnpc.opt.wasm
 wasm-opt "$OUT" \
   -Oz --converge \
   --strip-debug --strip-producers --strip-target-features \
-  --enable-bulk-memory --enable-simd --enable-sign-ext --enable-nontrapping-float-to-int \
+  --enable-bulk-memory --enable-bulk-memory-opt \
+  --enable-simd --enable-sign-ext --enable-nontrapping-float-to-int \
+  --enable-exception-handling --enable-reference-types \
   -o "$OPT_OUT"
 echo "Optimized: $OPT_OUT"
 ls -la "$OPT_OUT"

@@ -84,6 +84,10 @@ KJ_SOURCES=(
   # build-time hygiene; final wasm bytes are identical.
   "$CAPNP_SRC/kj/array.c++"
   "$CAPNP_SRC/kj/memory.c++"
+  # units.c++ now needed: with -frtti the layout.c++ paths reference
+  # kj::ThrowOverflow whose operator() lives here. Previously dropped
+  # because -fno-rtti silenced the references.
+  "$CAPNP_SRC/kj/units.c++"
   # encoding.c++ removed — UTF-16/32 / wide / hex / URI helpers; capnwasm
   # works in UTF-8 only and does encode/decode on the JS side via TextEncoder.
   # io.c++ now needed because serialize-packed.c++ uses the buffered I/O
@@ -111,12 +115,15 @@ CAPNP_SOURCES=(
   # level; stream.capnp pulls in code we never call.
 )
 
-# Production runtime: only the wrapper itself + EH runtime + the schema.capnp
-# generated code (used by the RPC layer for rpc.capnp accessors).
+# Production runtime: only the wrapper itself + the schema.capnp generated
+# code (used by the RPC layer for rpc.capnp accessors). The C++ exception
+# runtime (`__cxa_throw`, `__gxx_personality_wasm0`, etc.) used to live in
+# cpp/eh_runtime.cpp as trap-on-throw stubs; it now comes from the real
+# libcxxabi+libunwind variant built by cpp/build_eh_runtime.sh and linked
+# in via zig-out/eh_runtime.a.
 # Test-only schemas (typed/big/conformance) compile in only when BENCH_MODE=1.
 WRAPPER=(
   cpp/wrapper.cpp
-  cpp/eh_runtime.cpp
   cpp/avatar.cpp
 )
 WRAPPER_BENCH_ONLY=(
@@ -125,28 +132,41 @@ WRAPPER_BENCH_ONLY=(
   cpp/conformance_schema.capnp.c++
 )
 
-# Pull in libcxxabi exception runtime that zig's wasm32-wasi-musl auto-build
-# leaves out. KJ requires C++ exceptions; these provide __cxa_allocate_exception,
-# __cxa_throw, and friends. Resolve from whichever `zig` is on PATH so the
-# script works on any machine (mise, system, brew, ...); honor ZIG_LIBCXXABI
-# env override for unusual layouts.
-if [ -z "${ZIG_LIBCXXABI:-}" ]; then
-  ZIG_BIN="$(command -v zig || true)"
-  if [ -z "$ZIG_BIN" ]; then
-    echo "[build.sh] error: zig not found on PATH; install zig or set ZIG_LIBCXXABI" >&2
-    exit 1
-  fi
-  ZIG_PREFIX="$(cd "$(dirname "$ZIG_BIN")/.." && pwd)"
-  ZIG_LIBCXXABI="$ZIG_PREFIX/lib/libcxxabi/src"
-fi
-if [ ! -d "$ZIG_LIBCXXABI" ]; then
-  echo "[build.sh] error: ZIG_LIBCXXABI=$ZIG_LIBCXXABI is not a directory" >&2
+# Locate `zig`. Real wasm-EH (`-fwasm-exceptions` + linked libcxxabi)
+# requires zig 0.17+ — earlier wasm-ld releases reject the
+# __cpp_exception wasm tag with "undefined tag symbol cannot be weak"
+# even when the compiler emits it correctly. Prefer ZIG_BIN env
+# override; fall back to whichever zig is on PATH.
+ZIG_BIN="${ZIG_BIN:-$(command -v zig || true)}"
+if [ -z "$ZIG_BIN" ]; then
+  echo "[build.sh] error: zig not found on PATH; install zig 0.17+ or set ZIG_BIN" >&2
   exit 1
 fi
-LIBCXXABI=()
+ZIG_VERSION_STR="$("$ZIG_BIN" version)"
+case "$ZIG_VERSION_STR" in
+  0.16.*|0.15.*|0.14.*|0.13.*)
+    echo "[build.sh] error: zig $ZIG_VERSION_STR can't link the __cpp_exception wasm tag." >&2
+    echo "[build.sh]        Install zig 0.17+ and either swap your PATH or set" >&2
+    echo "[build.sh]        ZIG_BIN=/path/to/zig-0.17/zig before re-running." >&2
+    echo "[build.sh]        Pre-built downloads: https://ziglang.org/download/" >&2
+    exit 1
+    ;;
+esac
 
-# Compile flags. -fno-exceptions because wasm32-freestanding doesn't have
-# C++ EH, and KJ has its own assert-style fallback when KJ_NO_EXCEPTIONS=1.
+# Build the C++ exception runtime archive (libcxxabi + libunwind +
+# __cpp_exception tag, all compiled with -fwasm-exceptions). Idempotent:
+# the inner script reuses .o files when source mtime hasn't changed.
+ZIG_BIN="$ZIG_BIN" bash cpp/build_eh_runtime.sh
+
+# Compile flags. -fwasm-exceptions enables real C++ EH lowering through
+# the WebAssembly exception-handling proposal (try_table opcodes).
+# Requires:
+#   - -mcpu=generic+exception_handling+reference_types so LLVM emits
+#     wasm-EH instead of falling back to legacy cleanuppad/cleanupret IR
+#     the wasm backend can't lower.
+#   - -frtti so kj::Exception's typeinfo is emitted; catch
+#     (kj::Exception&) needs it for the runtime type check.
+#   - zig-out/eh_runtime.a linked in (built above).
 # bench mode includes 256-element function-pointer tables for BigUser
 # helpers (cpp_make_big_user_bytes, cpp_big_user_emit_json, etc). Off by
 # default — production users don't need them.
@@ -161,22 +181,29 @@ FLAGS=(
   -Oz
   -DCW_BENCH=$BENCH_MODE
   -std=c++23
-  -fexceptions
-  -fno-rtti
+  -fwasm-exceptions
+  -mcpu=generic+exception_handling+reference_types
+  -frtti
   -fno-threadsafe-statics
   -fno-stack-protector
   -fno-unwind-tables
   -fno-asynchronous-unwind-tables
   -fdata-sections
   -ffunction-sections
-  -flto
+  # -flto removed: with LTO + zig's auto-linked libcxxabi.a (which
+  # ships cxa_noexception.o = no-op __cxa_throw stub), our locally-built
+  # cxa_exception.o (real wasm-EH __cxa_throw) gets silently dropped
+  # during LTO module merging. Without LTO the ordinary archive
+  # resolution picks our .o first since it's passed as a direct input.
   -fmerge-all-constants
   -D_WASI_EMULATED_SIGNAL
   -D_WASI_EMULATED_MMAN
   -DKJ_USE_MAIN=0
   -DKJ_NO_LIBDL=1
   -DNDEBUG
-  -DKJ_NO_RTTI
+  # KJ_NO_RTTI removed: -fwasm-exceptions needs RTTI on so the typeinfo
+  # for kj::Exception is generated and catch (kj::Exception&) can do its
+  # runtime type check.
   -DKJ_NO_STACK_TRACES_IN_RELEASE=1
   -I"$CAPNP_SRC"
   -Icpp
@@ -407,12 +434,14 @@ if [ "$BENCH_MODE" = "1" ]; then
   WRAPPER+=("${WRAPPER_BENCH_ONLY[@]}")
 fi
 
-zig c++ "${FLAGS[@]}" \
-  -I"$ZIG_LIBCXXABI/../include" \
+"$ZIG_BIN" c++ "${FLAGS[@]}" \
   "${KJ_SOURCES[@]}" \
   "${CAPNP_SOURCES[@]}" \
   "${WRAPPER[@]}" \
-  "${LIBCXXABI[@]}" \
+  zig-out/eh_runtime/cxa_exception.o \
+  zig-out/eh_runtime/cxa_personality.o \
+  zig-out/eh_runtime/Unwind-wasm.o \
+  zig-out/eh_runtime/eh_tag.o \
   -o "$OUT"
 
 echo "Built: $OUT"
@@ -423,7 +452,9 @@ OPT_OUT=zig-out/capnp_cpp.opt.wasm
 wasm-opt "$OUT" \
   -Oz --converge \
   --strip-debug --strip-producers --strip-target-features \
-  --enable-bulk-memory --enable-simd --enable-sign-ext --enable-nontrapping-float-to-int \
+  --enable-bulk-memory --enable-bulk-memory-opt \
+  --enable-simd --enable-sign-ext --enable-nontrapping-float-to-int \
+  --enable-exception-handling --enable-reference-types \
   -o "$OPT_OUT"
 echo "Optimized: $OPT_OUT"
 ls -la "$OPT_OUT"

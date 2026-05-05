@@ -8,6 +8,8 @@
 // No CAPNP_BIN, no version skew. The compiler shipped here matches the
 // runtime in dist/inlined.mjs because they're built from the same vendor/.
 
+#include <exception>
+#include <cstdio>
 #include <capnp/compiler/compiler.h>
 #include <capnp/compiler/lexer.h>
 #include <capnp/compiler/parser.h>
@@ -210,6 +212,9 @@ uint32_t capnpc_compile(uint32_t root_idx) {
     return static_cast<uint32_t>(bytes.size());
   } catch (kj::Exception& e) {
     reporter.addError(0, 0, e.getDescription());
+    return 0;
+  } catch (std::exception& e) {
+    reporter.addError(0, 0, kj::heapString(e.what() ? e.what() : "std::exception"));
     return 0;
   } catch (...) {
     reporter.addError(0, 0, kj::StringPtr("capnpc_compile: unknown C++ exception"));
@@ -443,6 +448,11 @@ static kj::String shortNameOf(kj::StringPtr displayName) {
 }
 
 uint32_t capnpc_extract_structs() {
+  // Wrap in try/catch so a malformed CodeGeneratorRequest (e.g. from a
+  // schema with bad generic bindings caught only at validation time)
+  // surfaces as a return-0 + error string the JS side can read via
+  // capnpc_get_errors, instead of an uncaught WebAssembly.Exception.
+  try {
   // Read length prefix from start of capnpc_in.
   uint32_t reqLen;
   std::memcpy(&reqLen, capnpc_in, 4);
@@ -575,6 +585,13 @@ uint32_t capnpc_extract_structs() {
   if ((uint32_t)out.size() > CAPNPC_CAP) return 0;
   std::memcpy(capnpc_out, out.begin(), out.size());
   return static_cast<uint32_t>(out.size());
+  } catch (kj::Exception& e) {
+    if (g_errors) g_errors->add(kj::str("0-0: ", e.getDescription()));
+    return 0;
+  } catch (...) {
+    if (g_errors) g_errors->add(kj::heapString("0-0: capnpc_extract_structs: unknown C++ exception"));
+    return 0;
+  }
 }
 
 // Extract interface metadata from the buffered CodeGeneratorRequest. Emits a
@@ -589,6 +606,11 @@ uint32_t capnpc_extract_structs() {
 //   ]}
 // The u64 fields are quoted strings so JS BigInt(s) reads them losslessly.
 uint32_t capnpc_extract_interfaces() {
+  // Same try/catch story as capnpc_extract_structs: a malformed
+  // CodeGeneratorRequest can throw kj::Exception during validation; we
+  // surface it via g_errors instead of letting it cross into JS as
+  // an uncaught WebAssembly.Exception.
+  try {
   uint32_t reqLen;
   std::memcpy(&reqLen, capnpc_in, 4);
   if (reqLen + 4 > CAPNPC_CAP) return 0;
@@ -635,6 +657,13 @@ uint32_t capnpc_extract_interfaces() {
   if ((uint32_t)out.size() > CAPNPC_CAP) return 0;
   std::memcpy(capnpc_out, out.begin(), out.size());
   return static_cast<uint32_t>(out.size());
+  } catch (kj::Exception& e) {
+    if (g_errors) g_errors->add(kj::str("0-0: ", e.getDescription()));
+    return 0;
+  } catch (...) {
+    if (g_errors) g_errors->add(kj::heapString("0-0: capnpc_extract_interfaces: unknown C++ exception"));
+    return 0;
+  }
 }
 
 }  // extern "C"

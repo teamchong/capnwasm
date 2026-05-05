@@ -3,12 +3,11 @@
 // inside FlatArrayMessageReader so the limits enforce on wasm-side
 // pointer dereferences, not just JS-side parsing.
 //
-// Limit violations land as wasm `unreachable` traps because the wasm
-// build doesn't link a real C++ exception unwinder (LLVM 21's wasm
-// backend can't lower cleanupret for object-typed throws — see
-// cpp/eh_runtime.cpp for the writeup). The throw stubs use
-// __builtin_trap so callers see a clean RuntimeError and there's no
-// libc++abi stderr noise to silence anymore.
+// With the real wasm-EH runtime linked in, kj::Exception throws unwind
+// out of wasm into JS as `WebAssembly.Exception` instances. These match
+// the regex via class name; the legacy `RuntimeError("unreachable")`
+// path is kept as an accepted fallback for environments where wasm-EH
+// isn't available (older engines, custom build).
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
@@ -31,17 +30,29 @@ test("ReaderOptions: defaults open a normal message just fine", async () => {
   assert.equal(r.get("inner").x, 42);
 });
 
+// Match either real wasm-EH (WebAssembly.Exception) or legacy trap
+// (RuntimeError "unreachable").
+function isLimitViolation(err) {
+  if (typeof WebAssembly !== "undefined" && WebAssembly.Exception && err instanceof WebAssembly.Exception) return true;
+  if (err && err.constructor && err.constructor.name === "Exception") return true;
+  if (err && /unreachable|trap|RuntimeError|aborted/i.test(String(err.message ?? err))) return true;
+  return false;
+}
+
 test("ReaderOptions: tight traversal limit traps on dereference", async () => {
   const cpp = await loadWasm();
   const msg = encodeDynamic(cpp, Outer, { inner: { x: 42 } });
   cpp.setReaderOptions({ traversalLimitInWords: 1 });
   try {
-    assert.throws(() => {
+    let caught = null;
+    try {
       const r = openDynamic(cpp, Outer, msg);
       // Force the lazy pointer dereference. Without forcing, the bound
       // check might not fire until a later access.
       r.get("inner")?.x;
-    }, /unreachable|trap|RuntimeError|aborted|undefined/i);
+    } catch (err) { caught = err; }
+    assert.ok(caught, "expected an exception from a tight traversal limit");
+    assert.ok(isLimitViolation(caught), `unexpected error: ${caught}`);
   } finally {
     cpp.resetReaderOptions();
   }
@@ -52,10 +63,13 @@ test("ReaderOptions: tight nestingLimit traps when descending into a child struc
   const msg = encodeDynamic(cpp, Outer, { inner: { x: 42 } });
   cpp.setReaderOptions({ nestingLimit: 1 });
   try {
-    assert.throws(() => {
+    let caught = null;
+    try {
       const r = openDynamic(cpp, Outer, msg);
       r.get("inner");
-    }, /unreachable|trap|RuntimeError|aborted|undefined/i);
+    } catch (err) { caught = err; }
+    assert.ok(caught, "expected an exception from a tight nestingLimit");
+    assert.ok(isLimitViolation(caught), `unexpected error: ${caught}`);
   } finally {
     cpp.resetReaderOptions();
   }
@@ -78,9 +92,11 @@ test("ReaderOptions: undefined fields keep their existing values", async () => {
   cpp.setReaderOptions({ traversalLimitInWords: 1 });
   cpp.setReaderOptions({ nestingLimit: 100 });
   const msg = encodeDynamic(cpp, Outer, { inner: { x: 1 } });
-  assert.throws(() => {
+  let caught = null;
+  try {
     const r = openDynamic(cpp, Outer, msg);
     r.get("inner")?.x;
-  }, /unreachable|trap|RuntimeError|aborted|undefined/i);
+  } catch (err) { caught = err; }
+  assert.ok(caught && isLimitViolation(caught), `expected limit violation, got: ${caught}`);
   cpp.resetReaderOptions();
 });
