@@ -42,8 +42,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install binaryen (wasm-opt)
-        run: sudo apt-get update && sudo apt-get install -y binaryen
+      - name: Install recent binaryen (wasm-opt)
+        # Ubuntu's apt binaryen is v108 — too old to recognise
+        # `--enable-bulk-memory-opt`, which our build passes since
+        # zig 0.17/LLVM 22 emits bulk-memory-opt ops by default.
+        # Fetch a recent precompiled release instead.
+        run: |
+          set -e
+          BINARYEN_VERSION=124
+          BINARYEN_TARBALL="binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/${BINARYEN_TARBALL}" \
+            -o /tmp/binaryen.tar.gz
+          sudo tar -xzf /tmp/binaryen.tar.gz -C /usr/local --strip-components=1
+          wasm-opt --version
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -65,21 +76,8 @@ jobs:
           path: ~/.local/share/capnwasm-zig
           key: capnwasm-zig-${{ runner.os }}-${{ runner.arch }}-0.17.0-dev.251
 
-      - name: Diagnostic — runner environment
-        run: |
-          echo "=== uname ==="
-          uname -a
-          echo "=== tar version ==="
-          tar --version | head -1
-          echo "=== xz available? ==="
-          which xz || echo "(no xz)"
-          echo "=== binaryen wasm-opt version ==="
-          wasm-opt --version || echo "(wasm-opt missing)"
-          echo "=== free disk ==="
-          df -h $HOME | head -3
-
       - name: Install zig 0.17 + rebuild wasm
-        run: bash -x scripts/install-zig-eh.sh
+        run: bash scripts/install-zig-eh.sh
 
       - name: Verify dist/ matches committed artifacts
         run: |
