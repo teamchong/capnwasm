@@ -35,6 +35,7 @@ struct Probe {
   f32s @3 :List(Float32);
   f64s @4 :List(Float64);
   i64s @5 :List(Int64);
+  chunks @6 :List(Data);
 }
 `;
 
@@ -52,7 +53,8 @@ const PROBE = defineSchema({
   f32s: { kind: "listFloat32", slot: 3 },
   f64s: { kind: "listFloat64", slot: 4 },
   i64s: { kind: "listInt64",   slot: 5 },
-}, { dataWords: 0, ptrWords: 6 });
+  chunks: { kind: "listData", slot: 6 },
+}, { dataWords: 0, ptrWords: 7 });
 
 let mod;
 let cpp;
@@ -192,6 +194,19 @@ test("view(): Int64 list returns BigInt64Array with BigInt elements", () => {
   assert.ok(v instanceof BigInt64Array, "List(Int64).view() returns BigInt64Array");
   assert.equal(v.length, i64.length);
   for (let i = 0; i < i64.length; i++) assert.equal(v[i], i64[i]);
+  r.dispose();
+});
+
+test("List(Data): at(i) reads pointer-list elements without cursor growth", () => {
+  const chunks = [];
+  for (let i = 0; i < 512; i++) chunks.push(new Uint8Array([i & 0xff, (i * 3) & 0xff]));
+  const bytes = buildBytes({ chunks });
+  const r = mod.openProbe(cpp, bytes);
+  const list = r.chunks;
+  assert.equal(list.length, chunks.length);
+  for (let i = 0; i < list.length; i++) {
+    assert.deepEqual(Array.from(list.at(i)), Array.from(chunks[i]));
+  }
   r.dispose();
 });
 

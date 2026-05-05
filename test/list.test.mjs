@@ -196,6 +196,31 @@ test("List<Struct>: at(i) reads correct fields for every element, not just at(0)
   ]);
 });
 
+test("List<Text>: at(i) walks large lists without cursor growth", async () => {
+  const { defineSchema, buildDynamic } = await import(
+    pathToFileURL(resolve(ROOT, "js", "dynamic.mjs")).href);
+  const POST = defineSchema({
+    title:   { kind: "text",       slot: 0 },
+    tags:    { kind: "listStruct", slot: 1, element: defineSchema({
+      name:   { kind: "text",   slot: 0 },
+      weight: { kind: "uint32", offset: 0 },
+    }, { dataWords: 1, ptrWords: 1 }) },
+    scores:  { kind: "listUint32", slot: 2 },
+    authors: { kind: "listText",   slot: 3 },
+  }, { dataWords: 0, ptrWords: 4 });
+  const authors = [];
+  for (let i = 0; i < 2000; i++) authors.push(`author-${i}`);
+  const b = buildDynamic(cpp, POST);
+  b.set("authors", authors);
+  const r = gen.openPost(cpp, b.finalize());
+  const list = r.authors;
+  assert.equal(list.length, authors.length);
+  let total = 0;
+  for (let i = 0; i < list.length; i++) total += list.at(i).length;
+  assert.equal(total, authors.reduce((n, s) => n + s.length, 0));
+  r.dispose();
+});
+
 test("List<Struct>: element reader survives another open on the same CapnCpp", async () => {
   // The whole point of safe-by-default readers: a reader handed to user code
   // must keep returning the same fields even if the runtime is asked to open

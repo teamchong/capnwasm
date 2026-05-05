@@ -835,6 +835,34 @@ function generateJs(structs, schemaName) {
   lines.push(`  if (!msgEnd) return undefined;`);
   lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
   lines.push(`  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;`);
+  lines.push(`  return _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);`);
+  lines.push(`}`);
+  lines.push("");
+  lines.push(`function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {`);
+  lines.push(`  if (!msgEnd) return undefined;`);
+  lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
+  lines.push(`  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;`);
+  lines.push(`  return _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);`);
+  lines.push(`}`);
+  lines.push("");
+  lines.push(`function _jsReadListPointerPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {`);
+  lines.push(`  if (!msgEnd) return undefined;`);
+  lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
+  lines.push(`  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;`);
+  lines.push(`  const word0 = dv.getUint32(ptrAddr, true);`);
+  lines.push(`  const word1 = dv.getUint32(ptrAddr + 4, true);`);
+  lines.push(`  if (word0 === 0 && word1 === 0) return { elementsBase: 0, count: 0 };`);
+  lines.push(`  if ((word0 & 3) !== 1) return undefined;`);
+  lines.push(`  if ((word1 & 7) !== 6) return undefined;`);
+  lines.push(`  const offset = dv.getInt32(ptrAddr, true) >> 2;`);
+  lines.push(`  const count = word1 >>> 3;`);
+  lines.push(`  const elementsBase = ptrAddr + 8 + offset * 8;`);
+  lines.push(`  if (elementsBase < msgStart || elementsBase + count * 8 > msgEnd) return undefined;`);
+  lines.push(`  return { elementsBase, count };`);
+  lines.push(`}`);
+  lines.push("");
+  lines.push(`function _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd) {`);
+  lines.push(`  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;`);
   lines.push(`  const word0 = dv.getUint32(ptrAddr, true);`);
   lines.push(`  const word1 = dv.getUint32(ptrAddr + 4, true);`);
   lines.push(`  if (word0 === 0 && word1 === 0) return null;`);
@@ -850,9 +878,7 @@ function generateJs(structs, schemaName) {
   lines.push(`  return SHARED_TEXT_DECODER.decode(u8.subarray(target, target + len));`);
   lines.push(`}`);
   lines.push("");
-  lines.push(`function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {`);
-  lines.push(`  if (!msgEnd) return undefined;`);
-  lines.push(`  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;`);
+  lines.push(`function _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd) {`);
   lines.push(`  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;`);
   lines.push(`  const word0 = dv.getUint32(ptrAddr, true);`);
   lines.push(`  const word1 = dv.getUint32(ptrAddr + 4, true);`);
@@ -2501,8 +2527,7 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
   // trap. We delay the wasm open into the cursor-fallback branch only,
   // matching what the struct-list path already does.
   const isPrimWithView = PRIMITIVE_LIST_GETTERS[innerType] && PRIMITIVE_LIST_VIEWS[innerType];
-  const eagerOpen = (innerType === "Text" || innerType === "Data" ||
-                     (PRIMITIVE_LIST_GETTERS[innerType] && !isPrimWithView));
+  const eagerOpen = PRIMITIVE_LIST_GETTERS[innerType] && !isPrimWithView;
   if (eagerOpen) {
     lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
   }
@@ -2621,7 +2646,39 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
     return lines;
   }
   if (innerType === "Text") {
-    lines.push(`const decoder = SHARED_TEXT_DECODER;`);
+    lines.push(`const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;`);
+    lines.push(`let _desc = null;`);
+    lines.push(`if (_msgEnd) {`);
+    lines.push(`  if (reader._u8.buffer !== cpp.memory.buffer) {`);
+    lines.push(`    reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+    lines.push(`    reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
+    lines.push(`  }`);
+    lines.push(`  _desc = _jsReadListPointerPtr(reader._u8, reader._dv, reader._dataPtr, ${parentDataWords}, ${ptrIndex}, _msgStart, _msgEnd);`);
+    lines.push(`}`);
+    lines.push(`if (_desc) {`);
+    lines.push(`  const _count = _desc.count;`);
+    lines.push(`  const _baseByte = _desc.elementsBase;`);
+    lines.push(`  return {`);
+    lines.push(`    length: _count,`);
+    lines.push(`    at(i) {`);
+    lines.push(`      if (i < 0 || i >= _count) return undefined;`);
+    lines.push(`      if (reader._u8.buffer !== cpp.memory.buffer) {`);
+    lines.push(`        reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+    lines.push(`        reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
+    lines.push(`      }`);
+    lines.push(`      const v = _jsReadTextPtrAt(reader._u8, reader._dv, _baseByte + i * 8, _msgStart, _msgEnd);`);
+    lines.push(`      if (v !== undefined) return v ?? "";`);
+    lines.push(`      _ensureCapnwasmReader(reader);`);
+    lines.push(`      cpp._exports.cpp_any_open_list(${ptrIndex});`);
+    lines.push(`      const len = cpp._exports.cpp_any_list_get_text(i);`);
+    lines.push(`      if (len === 0) return "";`);
+    lines.push(`      const out = cpp._outPtr;`);
+    lines.push(`      return decodeAscii(cpp._u8.subarray(out, out + len));`);
+    lines.push(`    },`);
+    lines.push(`    *[Symbol.iterator]() { for (let i = 0; i < _count; i++) yield this.at(i); },`);
+    lines.push(`  };`);
+    lines.push(`}`);
+    lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
     lines.push(`return {`);
     lines.push(`  length: size,`);
   lines.push(`  at(i) {`);
@@ -2638,6 +2695,38 @@ function generateListGetter(ptrIndex, innerType, parentDataWords) {
     return lines;
   }
   if (innerType === "Data") {
+    lines.push(`const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;`);
+    lines.push(`let _desc = null;`);
+    lines.push(`if (_msgEnd) {`);
+    lines.push(`  if (reader._u8.buffer !== cpp.memory.buffer) {`);
+    lines.push(`    reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+    lines.push(`    reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
+    lines.push(`  }`);
+    lines.push(`  _desc = _jsReadListPointerPtr(reader._u8, reader._dv, reader._dataPtr, ${parentDataWords}, ${ptrIndex}, _msgStart, _msgEnd);`);
+    lines.push(`}`);
+    lines.push(`if (_desc) {`);
+    lines.push(`  const _count = _desc.count;`);
+    lines.push(`  const _baseByte = _desc.elementsBase;`);
+    lines.push(`  return {`);
+    lines.push(`    length: _count,`);
+    lines.push(`    at(i) {`);
+    lines.push(`      if (i < 0 || i >= _count) return undefined;`);
+    lines.push(`      if (reader._u8.buffer !== cpp.memory.buffer) {`);
+    lines.push(`        reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);`);
+    lines.push(`        reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;`);
+    lines.push(`      }`);
+    lines.push(`      const v = _jsReadDataPtrAt(reader._u8, reader._dv, _baseByte + i * 8, _msgStart, _msgEnd);`);
+    lines.push(`      if (v !== undefined) return v ?? new Uint8Array(0);`);
+    lines.push(`      _ensureCapnwasmReader(reader);`);
+    lines.push(`      cpp._exports.cpp_any_open_list(${ptrIndex});`);
+    lines.push(`      const len = cpp._exports.cpp_any_list_get_data(i);`);
+    lines.push(`      const out = cpp._outPtr;`);
+    lines.push(`      return cpp._u8.slice(out, out + len);`);
+    lines.push(`    },`);
+    lines.push(`    *[Symbol.iterator]() { for (let i = 0; i < _count; i++) yield this.at(i); },`);
+    lines.push(`  };`);
+    lines.push(`}`);
+    lines.push(`const size = cpp._exports.cpp_any_open_list(${ptrIndex});`);
     lines.push(`return {`);
     lines.push(`  length: size,`);
   lines.push(`  at(i) {`);
