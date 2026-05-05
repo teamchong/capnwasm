@@ -18,8 +18,10 @@
 #include <new>
 #include <cstdlib>
 
-// Note: __cxa_allocate_exception and __cxa_throw are provided by linking
-// zig's libcxxabi cxa_exception.cpp directly into the build (see build.sh).
+// Note: __cxa_allocate_exception and __cxa_throw are provided by
+// cpp/eh_runtime.cpp's trap-on-throw stubs in the browser/runtime wasm.
+// The separate schema-compiler wasm links real libcxxabi+libunwind because
+// it catches kj::Exception in C++.
 
 extern "C" {
 

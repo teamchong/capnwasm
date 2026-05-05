@@ -3,11 +3,9 @@
 // inside FlatArrayMessageReader so the limits enforce on wasm-side
 // pointer dereferences, not just JS-side parsing.
 //
-// With the real wasm-EH runtime linked in, kj::Exception throws unwind
-// out of wasm into JS as `WebAssembly.Exception` instances. These match
-// the regex via class name; the legacy `RuntimeError("unreachable")`
-// path is kept as an accepted fallback for environments where wasm-EH
-// isn't available (older engines, custom build).
+// The browser/runtime wasm uses trap-on-throw exception ABI stubs to keep
+// bundle size down. The schema compiler wasm is the artifact that links real
+// wasm-EH because it catches kj::Exception in C++.
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
@@ -30,8 +28,8 @@ test("ReaderOptions: defaults open a normal message just fine", async () => {
   assert.equal(r.get("inner").x, 42);
 });
 
-// Match either real wasm-EH (WebAssembly.Exception) or legacy trap
-// (RuntimeError "unreachable").
+// Match either real wasm-EH (WebAssembly.Exception, for custom builds) or the
+// default trap path (RuntimeError "unreachable" / aborted).
 function isLimitViolation(err) {
   if (typeof WebAssembly !== "undefined" && WebAssembly.Exception && err instanceof WebAssembly.Exception) return true;
   if (err && err.constructor && err.constructor.name === "Exception") return true;

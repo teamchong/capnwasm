@@ -116,14 +116,15 @@ CAPNP_SOURCES=(
 )
 
 # Production runtime: only the wrapper itself + the schema.capnp generated
-# code (used by the RPC layer for rpc.capnp accessors). The C++ exception
-# runtime (`__cxa_throw`, `__gxx_personality_wasm0`, etc.) used to live in
-# cpp/eh_runtime.cpp as trap-on-throw stubs; it now comes from the real
-# libcxxabi+libunwind variant built by cpp/build_eh_runtime.sh and linked
-# in via zig-out/eh_runtime.a.
+# code (used by the RPC layer for rpc.capnp accessors). This wasm does not
+# catch C++ exceptions, so it uses tiny trap-on-throw ABI stubs instead of
+# linking libcxxabi+libunwind. The separate schema-compiler wasm built by
+# cpp/build_capnpc.sh still links the real wasm-EH runtime because it catches
+# kj::Exception and reports schema errors cleanly.
 # Test-only schemas (typed/big/conformance) compile in only when BENCH_MODE=1.
 WRAPPER=(
   cpp/wrapper.cpp
+  cpp/eh_runtime.cpp
   cpp/avatar.cpp
 )
 WRAPPER_BENCH_ONLY=(
@@ -132,10 +133,9 @@ WRAPPER_BENCH_ONLY=(
   cpp/conformance_schema.capnp.c++
 )
 
-# Locate `zig`. Real wasm-EH (`-fwasm-exceptions` + linked libcxxabi)
-# requires zig 0.17+ — earlier wasm-ld releases reject the
-# __cpp_exception wasm tag with "undefined tag symbol cannot be weak"
-# even when the compiler emits it correctly. Resolution order:
+# Locate `zig`. We keep the runtime and compiler builds on the same zig 0.17+
+# toolchain: cpp/build_capnpc.sh needs its wasm-ld for real wasm-EH, and using
+# one pinned toolchain avoids browser/runtime drift across artifacts. Resolution order:
 #   1. ZIG_BIN env var (explicit override)
 #   2. .capnwasm-zig symlink in repo root (set up by
 #      scripts/install-zig-eh.sh — recommended path)
@@ -155,27 +155,18 @@ fi
 ZIG_VERSION_STR="$("$ZIG_BIN" version)"
 case "$ZIG_VERSION_STR" in
   0.16.*|0.15.*|0.14.*|0.13.*)
-    echo "[build.sh] error: zig $ZIG_VERSION_STR can't link the __cpp_exception wasm tag." >&2
+    echo "[build.sh] error: zig $ZIG_VERSION_STR is too old for capnwasm's pinned wasm toolchain." >&2
     echo "[build.sh]        Run: bash scripts/install-zig-eh.sh" >&2
     echo "[build.sh]        (downloads zig 0.17 to ~/.local/share/capnwasm-zig/)" >&2
     exit 1
     ;;
 esac
 
-# Build the C++ exception runtime archive (libcxxabi + libunwind +
-# __cpp_exception tag, all compiled with -fwasm-exceptions). Idempotent:
-# the inner script reuses .o files when source mtime hasn't changed.
-ZIG_BIN="$ZIG_BIN" bash cpp/build_eh_runtime.sh
-
-# Compile flags. -fwasm-exceptions enables real C++ EH lowering through
-# the WebAssembly exception-handling proposal (try_table opcodes).
-# Requires:
-#   - -mcpu=generic+exception_handling+reference_types so LLVM emits
-#     wasm-EH instead of falling back to legacy cleanuppad/cleanupret IR
-#     the wasm backend can't lower.
-#   - -frtti so kj::Exception's typeinfo is emitted; catch
-#     (kj::Exception&) needs it for the runtime type check.
-#   - zig-out/eh_runtime.a linked in (built above).
+# Compile flags. Runtime wasm uses normal C++ exception codegen plus
+# cpp/eh_runtime.cpp's trap-on-throw ABI stubs. That keeps public browser
+# bundles small. Do not switch this back to -fwasm-exceptions unless this
+# wrapper grows real C++ catch sites; otherwise libcxxabi+libunwind adds
+# ~32 KB gzip for no browser-visible benefit.
 # bench mode includes 256-element function-pointer tables for BigUser
 # helpers (cpp_make_big_user_bytes, cpp_big_user_emit_json, etc). Off by
 # default — production users don't need them.
@@ -190,29 +181,22 @@ FLAGS=(
   -Oz
   -DCW_BENCH=$BENCH_MODE
   -std=c++23
-  -fwasm-exceptions
-  -mcpu=generic+exception_handling+reference_types
-  -frtti
+  -fexceptions
+  -fno-rtti
   -fno-threadsafe-statics
   -fno-stack-protector
   -fno-unwind-tables
   -fno-asynchronous-unwind-tables
   -fdata-sections
   -ffunction-sections
-  # -flto removed: with LTO + zig's auto-linked libcxxabi.a (which
-  # ships cxa_noexception.o = no-op __cxa_throw stub), our locally-built
-  # cxa_exception.o (real wasm-EH __cxa_throw) gets silently dropped
-  # during LTO module merging. Without LTO the ordinary archive
-  # resolution picks our .o first since it's passed as a direct input.
+  -flto
   -fmerge-all-constants
   -D_WASI_EMULATED_SIGNAL
   -D_WASI_EMULATED_MMAN
   -DKJ_USE_MAIN=0
   -DKJ_NO_LIBDL=1
   -DNDEBUG
-  # KJ_NO_RTTI removed: -fwasm-exceptions needs RTTI on so the typeinfo
-  # for kj::Exception is generated and catch (kj::Exception&) can do its
-  # runtime type check.
+  -DKJ_NO_RTTI
   -DKJ_NO_STACK_TRACES_IN_RELEASE=1
   -I"$CAPNP_SRC"
   -Icpp
@@ -447,10 +431,6 @@ fi
   "${KJ_SOURCES[@]}" \
   "${CAPNP_SOURCES[@]}" \
   "${WRAPPER[@]}" \
-  zig-out/eh_runtime/cxa_exception.o \
-  zig-out/eh_runtime/cxa_personality.o \
-  zig-out/eh_runtime/Unwind-wasm.o \
-  zig-out/eh_runtime/eh_tag.o \
   -o "$OUT"
 
 echo "Built: $OUT"

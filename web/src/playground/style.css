@@ -369,6 +369,10 @@ nav a:hover {
   border-bottom: 1px solid #25313a;
 }
 
+.general-metrics thead th:not(:first-child) {
+  text-align: right;
+}
+
 .general-metrics tbody th {
   color: #b9c5cc;
   font-weight: 600;

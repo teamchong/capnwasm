@@ -197,6 +197,7 @@ h1 .dim {
   font-size: 0.62rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 .inline-compare {

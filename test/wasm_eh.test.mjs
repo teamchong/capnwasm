@@ -1,9 +1,9 @@
-// Real C++ exception handling through wasm-EH. With the upstream
-// libcxxabi+libunwind variant linked in (cpp/build_eh_runtime.sh +
-// cpp/eh_tag.s), kj::Exception throws unwind cleanly out of the wasm
-// module instead of trapping. The schema compiler captures bad-input
-// errors via its reporter and surfaces them as JS `Error` instances
-// with the exception's description text.
+// Real C++ exception handling through wasm-EH in the schema compiler wasm.
+// capnpc.wasm links the upstream libcxxabi+libunwind variant
+// (cpp/build_eh_runtime.sh + cpp/eh_tag.s), catches kj::Exception inside
+// C++, and surfaces bad-input reports as JS `Error` instances with the
+// exception's description text. The browser/runtime wasm stays smaller and
+// uses trap-on-throw stubs because cpp/wrapper.cpp has no C++ catch sites.
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";

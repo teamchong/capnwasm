@@ -1,9 +1,10 @@
 #!/bin/bash
 # Install zig 0.17.0-dev for capnwasm wasm rebuilds.
 #
-# Why we ship a custom installer: capnwasm's wasm-EH support
-# (cpp/build_eh_runtime.sh) needs zig 0.17+ for its wasm-ld to resolve
-# the `__cpp_exception` wasm tag. zig 0.16 can't link real wasm-EH.
+# Why we ship a custom installer: capnwasm's schema-compiler wasm-EH support
+# (cpp/build_capnpc.sh -> cpp/build_eh_runtime.sh) needs zig 0.17+ for
+# wasm-ld to resolve the `__cpp_exception` wasm tag. zig 0.16 can't link
+# real wasm-EH.
 # zig 0.17 isn't a stable release yet, so mise's zig plugin doesn't
 # track it and `mise install zig@0.17` doesn't work. Until 0.17 ships
 # stable + mise picks it up, this script handles the installation
