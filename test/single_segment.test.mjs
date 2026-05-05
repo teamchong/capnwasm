@@ -200,9 +200,12 @@ test("validateSingleSegment accepts an empty single-segment message", () => {
 
 // ---- Error type identity ---------------------------------------------------
 
-test("MultiSegmentMessageError is a real Error subclass", () => {
+test("CapnwasmFramingError is a real Error subclass and the legacy alias resolves to it", async () => {
+  const { CapnwasmFramingError } = await import("../dist/inlined.mjs");
   const err = new MultiSegmentMessageError("test");
   assert.ok(err instanceof Error);
-  assert.equal(err.name, "MultiSegmentMessageError");
+  assert.ok(err instanceof CapnwasmFramingError);
+  assert.equal(err.name, "CapnwasmFramingError");
   assert.equal(err.message, "test");
+  assert.equal(MultiSegmentMessageError, CapnwasmFramingError);
 });

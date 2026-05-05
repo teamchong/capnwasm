@@ -40,7 +40,7 @@ console.log(r.name);                // "Alice" — read directly from WebAssembl
 `openUser` acquires a wasm reader slot and copies the bytes into linear memory once. Field reads then go through one of two paths:
 
 - **Primitives + Text + Data + primitive lists + `List<Struct>`**: pure JS, via `DataView` over `cpp.memory.buffer`. No wasm boundary call.
-- **Edge cases (FAR pointers, multi-segment, capabilities)**: rejected at open time (M1) or fall back to the upstream Cap'n Proto C++ decoder.
+- **Multi-segment / FAR pointers / capabilities**: opened by the upstream Cap'n Proto C++ runtime via `FlatArrayMessageReader`. JS fast paths apply inside segment 0; cross-segment / FAR cases automatically fall back to C++.
 
 `using` runs the reader's `dispose` at scope exit. On older runtimes, call `r.dispose()` explicitly or use `withReader(cpp, bytes, openUser, (r) => ...)`.
 

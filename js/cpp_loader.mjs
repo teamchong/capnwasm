@@ -9,12 +9,23 @@
 //
 // Public readers pass framed messages to the wasm/C++ runtime. C++ is the
 // source of truth for frame parsing and segment metadata.
-export class MultiSegmentMessageError extends Error {
+/**
+ * Thrown when a buffer cannot be opened as a Cap'n Proto framed message.
+ * The legacy name `MultiSegmentMessageError` is preserved as an alias for
+ * back-compat; both names refer to the same class.
+ */
+export class CapnwasmFramingError extends Error {
   constructor(message = "invalid Cap'n Proto framed message") {
     super(message);
-    this.name = "MultiSegmentMessageError";
+    this.name = "CapnwasmFramingError";
   }
 }
+
+/**
+ * @deprecated Use `CapnwasmFramingError`. Kept so existing imports keep working
+ * while the public name transitions.
+ */
+export const MultiSegmentMessageError = CapnwasmFramingError;
 
 // M3 slot pool exhaustion is a non-throwing path: _acquireSlot returns
 // null when the pool is full and callers fall back to the managed-
@@ -33,14 +44,14 @@ export function validateSingleSegment(bytes) {
   const len = bytes.length;
   if (len < 8) {
     if (!bytes || typeof len !== "number") {
-      throw new MultiSegmentMessageError("expected Uint8Array-like input");
+      throw new CapnwasmFramingError("expected Uint8Array-like input");
     }
-    throw new MultiSegmentMessageError(
+    throw new CapnwasmFramingError(
       `framed message too small: got ${len} bytes, need at least 8`,
     );
   }
   if (len & 7) {
-    throw new MultiSegmentMessageError(
+    throw new CapnwasmFramingError(
       `framed message length must be a multiple of 8, got ${len}`,
     );
   }
@@ -453,11 +464,36 @@ export class CapnCpp {
   get _f32()     { if (this.#f32 === null || this.#f32.buffer !== this.#memory.buffer) this.#refreshTypedViews(this.#memory.buffer); return this.#f32; }
   get _f64()     { if (this.#f64 === null || this.#f64.buffer !== this.#memory.buffer) this.#refreshTypedViews(this.#memory.buffer); return this.#f64; }
 
-  // M1: Single-segment ABI surface. Exposed as an instance method so
-  // codegen + dynamic readers can call `cpp._validateSingleSegment(bytes)`
-  // without importing the helper directly. Throws MultiSegmentMessageError
-  // on rejection.
+  // Framing-shape check exposed as an instance method so codegen + dynamic
+  // readers can call `cpp._validateSingleSegment(bytes)` without importing
+  // the helper directly. Multi-segment frames are accepted; this only
+  // catches obviously-bad shapes (too short, unaligned).
   _validateSingleSegment(bytes) { return validateSingleSegment(bytes); }
+
+  /**
+   * Pack a framed Cap'n Proto message using upstream `serialize-packed.h`.
+   * Returns a new Uint8Array containing the packed bytes. Throws if the
+   * message is malformed or the output exceeds the wasm scratch buffer.
+   */
+  packMessage(bytes) {
+    if (bytes.length > this.#cap) throw new Error("input larger than scratch buffer");
+    this.#u8().set(bytes, this.#inPtr);
+    const len = this.#exports.cpp_msg_pack(bytes.length) >>> 0;
+    if (!len) throw new Error("cpp_msg_pack failed");
+    return this.#u8().slice(this.#outPtr, this.#outPtr + len);
+  }
+
+  /**
+   * Unpack a packed Cap'n Proto message produced by `packMessage` (or any
+   * upstream packed encoder) back into a framed Cap'n Proto message.
+   */
+  unpackMessage(bytes) {
+    if (bytes.length > this.#cap) throw new Error("input larger than scratch buffer");
+    this.#u8().set(bytes, this.#inPtr);
+    const len = this.#exports.cpp_msg_unpack(bytes.length) >>> 0;
+    if (!len) throw new Error("cpp_msg_unpack failed");
+    return this.#u8().slice(this.#outPtr, this.#outPtr + len);
+  }
 }
 
 function zero() { return 0; }

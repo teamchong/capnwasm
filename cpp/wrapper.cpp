@@ -7,6 +7,7 @@
 #include "conformance_schema.capnp.h"
 #include "vendor/capnp/rpc.capnp.h"
 #include <capnp/serialize.h>
+#include <capnp/serialize-packed.h>
 #include <capnp/message.h>
 #include <capnp/any.h>
 #include <kj/array.h>
@@ -128,6 +129,82 @@ uint32_t cpp_msg_validate_single_segment(const uint8_t* bytes, uint32_t bytes_le
   uint32_t payload_words = (bytes_len - 8u) / 8u;
   if (first_seg_words != payload_words) return 4;
   return 0;
+}
+
+// =======================================================================================
+// Packed encoding round-trip helpers.
+//
+// Pack a framed Cap'n Proto message in cpp_in into packed form in cpp_out,
+// and unpack packed bytes in cpp_in into framed form in cpp_out. Both
+// operations rely on upstream capnp::serialize-packed; capnwasm just exposes
+// thin C-ABI entry points so JS does not have to implement the packing
+// algorithm.
+namespace {
+
+class MemoryInputStream : public kj::InputStream {
+public:
+  MemoryInputStream(const uint8_t* data, size_t len) : data_(data), len_(len) {}
+  size_t tryRead(kj::ArrayPtr<kj::byte> buffer, size_t minBytes) override {
+    size_t n = kj::min(buffer.size(), len_ - pos_);
+    if (n == 0) return 0;
+    std::memcpy(buffer.begin(), data_ + pos_, n);
+    pos_ += n;
+    return n;
+  }
+private:
+  const uint8_t* data_;
+  size_t len_;
+  size_t pos_ = 0;
+};
+
+class MemoryOutputStream : public kj::OutputStream {
+public:
+  MemoryOutputStream(uint8_t* dest, size_t cap) : dest_(dest), cap_(cap) {}
+  void write(kj::ArrayPtr<const kj::byte> data) override {
+    if (overflowed_) return;
+    if (pos_ + data.size() > cap_) { overflowed_ = true; return; }
+    std::memcpy(dest_ + pos_, data.begin(), data.size());
+    pos_ += data.size();
+  }
+  size_t bytesWritten() const { return pos_; }
+  bool overflowed() const { return overflowed_; }
+private:
+  uint8_t* dest_;
+  size_t cap_;
+  size_t pos_ = 0;
+  bool overflowed_ = false;
+};
+
+}  // namespace
+
+// Pack `bytes_len` framed bytes from cpp_in into cpp_out. Returns the
+// number of bytes written, or 0 on failure / overflow.
+uint32_t cpp_msg_pack(uint32_t bytes_len) {
+  auto words = kj::ArrayPtr<const capnp::word>(
+      reinterpret_cast<const capnp::word*>(cpp_in),
+      bytes_len / sizeof(capnp::word));
+  capnp::FlatArrayMessageReader reader(words);
+  capnp::MallocMessageBuilder builder;
+  builder.setRoot(reader.getRoot<capnp::AnyPointer>());
+  MemoryOutputStream out(cpp_out, SCRATCH_CAP);
+  capnp::writePackedMessage(out, builder);
+  if (out.overflowed()) return 0;
+  return static_cast<uint32_t>(out.bytesWritten());
+}
+
+// Unpack `bytes_len` packed bytes from cpp_in into framed bytes in cpp_out.
+// Returns bytes written, or 0 on failure / overflow.
+uint32_t cpp_msg_unpack(uint32_t bytes_len) {
+  MemoryInputStream in(cpp_in, bytes_len);
+  kj::BufferedInputStreamWrapper buffered(in);
+  capnp::PackedMessageReader reader(buffered);
+  capnp::MallocMessageBuilder builder;
+  builder.setRoot(reader.getRoot<capnp::AnyPointer>());
+  auto framed = capnp::messageToFlatArray(builder);
+  auto framedBytes = framed.asBytes();
+  if (framedBytes.size() > SCRATCH_CAP) return 0;
+  std::memcpy(cpp_out, framedBytes.begin(), framedBytes.size());
+  return static_cast<uint32_t>(framedBytes.size());
 }
 
 // Serialize a tape (in cpp_in[0..tape_len], same byte format as src/tape.zig)

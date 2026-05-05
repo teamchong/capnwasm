@@ -35,6 +35,9 @@ jobs:
       - name: Install browser test dependencies
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Install upstream Cap'n Proto CLI for interop tests
+        run: sudo apt-get update && sudo apt-get install -y capnproto
+
       - name: Generate web test schemas
         run: pnpm -C web run codegen
 

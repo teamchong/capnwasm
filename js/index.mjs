@@ -6,6 +6,7 @@
 export {
   load,
   CapnCpp,
+  CapnwasmFramingError,
   MultiSegmentMessageError,
   validateSingleSegment,
 } from "../dist/inlined.mjs";

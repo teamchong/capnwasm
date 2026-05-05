@@ -86,7 +86,9 @@ KJ_SOURCES=(
   "$CAPNP_SRC/kj/memory.c++"
   # encoding.c++ removed — UTF-16/32 / wide / hex / URI helpers; capnwasm
   # works in UTF-8 only and does encode/decode on the JS side via TextEncoder.
-  # io.c++ removed — only referenced from POSIX paths in exception.c++ we no-op.
+  # io.c++ now needed because serialize-packed.c++ uses the buffered I/O
+  # stream wrappers for packed-encoding round trips.
+  "$CAPNP_SRC/kj/io.c++"
   "$CAPNP_SRC/kj/mutex.c++"
   # time.c++ skipped: no time syscalls needed for serialize/deserialize.
   "$CAPNP_SRC/kj/arena.c++"
@@ -103,6 +105,7 @@ CAPNP_SOURCES=(
   "$CAPNP_SRC/capnp/any.c++"
   "$CAPNP_SRC/capnp/message.c++"
   "$CAPNP_SRC/capnp/serialize.c++"
+  "$CAPNP_SRC/capnp/serialize-packed.c++"
   "$CAPNP_SRC/capnp/rpc.capnp.c++"
   # list.c++/stream.capnp.c++ removed — list is template-only at our usage
   # level; stream.capnp pulls in code we never call.
@@ -187,6 +190,8 @@ FLAGS=(
   -Wl,--export=cpp_abi_version
   -Wl,--export=cpp_msg_alloc
   -Wl,--export=cpp_msg_free
+  -Wl,--export=cpp_msg_pack
+  -Wl,--export=cpp_msg_unpack
   # cpp_msg_validate_single_segment exists in C++ for foreign-language
   # client use but is not exported in the slim wasm because no such
   # client lives in this repo yet (M6). The JS path uses pure-JS
