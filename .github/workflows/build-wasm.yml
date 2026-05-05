@@ -65,8 +65,21 @@ jobs:
           path: ~/.local/share/capnwasm-zig
           key: capnwasm-zig-${{ runner.os }}-${{ runner.arch }}-0.17.0-dev.251
 
+      - name: Diagnostic — runner environment
+        run: |
+          echo "=== uname ==="
+          uname -a
+          echo "=== tar version ==="
+          tar --version | head -1
+          echo "=== xz available? ==="
+          which xz || echo "(no xz)"
+          echo "=== binaryen wasm-opt version ==="
+          wasm-opt --version || echo "(wasm-opt missing)"
+          echo "=== free disk ==="
+          df -h $HOME | head -3
+
       - name: Install zig 0.17 + rebuild wasm
-        run: bash scripts/install-zig-eh.sh
+        run: bash -x scripts/install-zig-eh.sh
 
       - name: Verify dist/ matches committed artifacts
         run: |
