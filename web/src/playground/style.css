@@ -275,11 +275,13 @@ nav a:hover {
   color: #fff;
 }
 
-#rpc-bench-section {
+#rpc-bench-section,
+#general-bench-section {
   margin-top: 32px;
 }
 
-#rpc-bench-section .section-title {
+#rpc-bench-section .section-title,
+#general-bench-section .section-title {
   margin: 0 0 12px;
   font-size: 0.92rem;
   letter-spacing: 0.04em;
@@ -287,7 +289,15 @@ nav a:hover {
   color: #ffa726;
 }
 
-#rpc-controls {
+.section-copy {
+  margin: 0 0 14px;
+  color: #9aa6ad;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+#rpc-controls,
+#general-controls {
   display: flex;
   gap: 14px;
   align-items: center;
@@ -315,13 +325,15 @@ nav a:hover {
   font-size: 0.78rem;
 }
 
-#rpc-status {
+#rpc-status,
+#general-status {
   color: #8d99a2;
   font-size: 0.78rem;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
-#rpc-summary {
+#rpc-summary,
+#general-summary {
   margin-top: 16px;
   padding: 14px 16px;
   border-radius: 12px;
@@ -334,6 +346,33 @@ nav a:hover {
 #rpc-summary.win  { border-color: rgba(102, 187, 106, 0.4); color: #6fbf73; }
 #rpc-summary.lose { border-color: rgba(255, 167, 38, 0.4); color: #ffa726; }
 #rpc-summary strong { color: #fff; }
+#general-summary.win  { border-color: rgba(102, 187, 106, 0.4); color: #6fbf73; }
+#general-summary.lose { border-color: rgba(255, 167, 38, 0.4); color: #ffa726; }
+#general-summary strong { color: #fff; }
+
+.general-metrics {
+  background: #141414;
+  border: 1px solid #222;
+  border-radius: 12px;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+}
+
+.general-metrics th,
+.general-metrics td {
+  padding: 9px 12px;
+}
+
+.general-metrics thead th {
+  color: #d6dee3;
+  border-bottom: 1px solid #25313a;
+}
+
+.general-metrics tbody th {
+  color: #b9c5cc;
+  font-weight: 600;
+}
 
 .summary-title {
   text-align: center;

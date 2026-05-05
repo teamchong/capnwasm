@@ -10,6 +10,34 @@ function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) 
   if (!msgEnd) return undefined;
   const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
   if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  return _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);
+}
+
+function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  return _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);
+}
+
+function _jsReadListPointerPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return { elementsBase: 0, count: 0 };
+  if ((word0 & 3) !== 1) return undefined;
+  if ((word1 & 7) !== 6) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const count = word1 >>> 3;
+  const elementsBase = ptrAddr + 8 + offset * 8;
+  if (elementsBase < msgStart || elementsBase + count * 8 > msgEnd) return undefined;
+  return { elementsBase, count };
+}
+
+function _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd) {
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
   const word0 = dv.getUint32(ptrAddr, true);
   const word1 = dv.getUint32(ptrAddr + 4, true);
   if (word0 === 0 && word1 === 0) return null;
@@ -25,9 +53,7 @@ function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) 
   return SHARED_TEXT_DECODER.decode(u8.subarray(target, target + len));
 }
 
-function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
-  if (!msgEnd) return undefined;
-  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+function _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd) {
   if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
   const word0 = dv.getUint32(ptrAddr, true);
   const word1 = dv.getUint32(ptrAddr + 4, true);
@@ -39,6 +65,26 @@ function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) 
   const target = ptrAddr + 8 + offset * 8;
   if (target < msgStart || target + count > msgEnd) return undefined;
   return u8.slice(target, target + count);
+}
+
+const _ELEM_BYTES_TO_SIZE_CODE = { 1: 2, 2: 3, 4: 4, 8: 5 };
+function _jsReadListPrimPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd, elemBytes) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return { elementsBase: 0, count: 0 };
+  if ((word0 & 3) !== 1) return undefined;
+  const elemSizeCode = word1 & 7;
+  const expectedCode = _ELEM_BYTES_TO_SIZE_CODE[elemBytes];
+  if (elemSizeCode !== expectedCode) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const elementCount = word1 >>> 3;
+  const elementsBase = ptrAddr + 8 + offset * 8;
+  if (elementsBase + elementCount * elemBytes > msgEnd) return undefined;
+  if (elementsBase < msgStart) return undefined;
+  return { elementsBase, count: elementCount };
 }
 
 function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
@@ -491,9 +537,11 @@ function _ensureCapnwasmReader(reader) {
       reader._gen = cpp._generation ?? 0;
       reader._u8 = cpp._u8;
       reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
     } else if (reader._dv && reader._dv.buffer !== cpp.memory.buffer) {
       reader._u8 = cpp._u8;
       reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
     }
     return;
   }
@@ -504,6 +552,7 @@ function _ensureCapnwasmReader(reader) {
     reader._gen = reader._cpp._generation ?? 0;
     reader._u8 = reader._cpp._u8;
     reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    reader._u16 = reader._cpp._u16; reader._i16 = reader._cpp._i16; reader._u32 = reader._cpp._u32; reader._i32 = reader._cpp._i32; reader._f32 = reader._cpp._f32; reader._f64 = reader._cpp._f64;
     return;
   }
   if (reader._msg) {
@@ -511,6 +560,7 @@ function _ensureCapnwasmReader(reader) {
     reader._gen = reader._cpp._generation ?? 0;
     reader._u8 = reader._cpp._u8;
     reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    reader._u16 = reader._cpp._u16; reader._i16 = reader._cpp._i16; reader._u32 = reader._cpp._u32; reader._i32 = reader._cpp._i32; reader._f32 = reader._cpp._f32; reader._f64 = reader._cpp._f64;
     return;
   }
   throw new StaleReaderError();
@@ -730,8 +780,15 @@ export class PostParamsReader {
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
-    this._u8 = cpp._u8;
-    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
     this._disposed = false;
   }
 
@@ -812,8 +869,15 @@ export class ChatMessageReader {
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
-    this._u8 = cpp._u8;
-    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
     this._disposed = false;
   }
 
@@ -917,8 +981,15 @@ export class GetSinceParamsReader {
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
-    this._u8 = cpp._u8;
-    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
     this._disposed = false;
   }
 
@@ -976,8 +1047,15 @@ export class ChatMessageListReader {
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
-    this._u8 = cpp._u8;
-    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
     this._disposed = false;
   }
 
@@ -1017,6 +1095,7 @@ export class ChatMessageListReader {
             msgStart: _msgStart,
             msgEnd: _msgEnd,
             gen: cpp._generation ?? 0,
+            parent: reader,
             rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(0); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); },
           });
         },

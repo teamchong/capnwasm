@@ -8,7 +8,8 @@
 // @ts-ignore — generated module, no .d.ts wired into tsconfig yet.
 import { load } from "../../../js/browser.mjs";
 // @ts-ignore — generated reader/builder for the demo schema.
-import { openUser } from "./users.capnp.gen.mjs";
+import { openUser, openUserList, openNumericProbe } from "./users.capnp.gen.mjs";
+import { defineSchema, encodeDynamic, openDynamic } from "../../../js/dynamic.mjs";
 import { deserialize as cwbDeserialize } from "capnweb";
 import { runRpcBench, probeRpcServer } from "../rpc/bench";
 
@@ -67,6 +68,8 @@ applyUrlParams();
 type Phase = { fetchMs: number; decodeMs: number; renderMs: number; bytes: number };
 
 let cpp: any = null;
+const ENC = new TextEncoder();
+const DEC = new TextDecoder();
 
 async function ensureWasm() {
   if (cpp) return cpp;
@@ -243,6 +246,43 @@ function fmtEgress(bytesPerRequest: number, recordsPerRequest: number) {
 function median(xs: number[]) {
   const s = [...xs].sort((a, b) => a - b);
   return s[Math.floor(s.length / 2)];
+}
+
+function timed(fn: () => unknown, { warmMs = 80, budgetMs = 80, trials = 3 } = {}) {
+  const warmEnd = performance.now() + warmMs;
+  while (performance.now() < warmEnd) fn();
+  const results: number[] = [];
+  for (let t = 0; t < trials; t++) {
+    let iters = 0;
+    const t0 = performance.now();
+    const end = t0 + budgetMs;
+    while (performance.now() < end) { fn(); iters++; }
+    results.push(((performance.now() - t0) * 1000) / iters);
+  }
+  return median(results);
+}
+
+type GeneralRow = { key: string; capnpUs: number; jsonUs: number; capnpBytes: number; jsonBytes: number };
+
+function fmtUs(us: number) {
+  if (us < 1) return `${(us * 1000).toFixed(0)} ns`;
+  if (us < 1000) return `${us.toFixed(0)} µs`;
+  return `${(us / 1000).toFixed(2)} ms`;
+}
+
+function fillGeneralRow(row: GeneralRow) {
+  const ratio = row.jsonUs / row.capnpUs;
+  const capnpWin = row.capnpUs <= row.jsonUs;
+  const jsonWin = row.jsonUs < row.capnpUs;
+  const set = (id: string, text: string, win = false) => {
+    const el = $(id);
+    el.textContent = text;
+    el.className = win ? "win" : "";
+  };
+  set(`general-${row.key}-capnp`, fmtUs(row.capnpUs), capnpWin);
+  set(`general-${row.key}-json`, fmtUs(row.jsonUs), jsonWin);
+  set(`general-${row.key}-ratio`, ratio >= 1 ? `${ratio.toFixed(2)}× faster` : `${(1 / ratio).toFixed(2)}× slower`, capnpWin);
+  set(`general-${row.key}-bytes`, `${fmtBytes(row.capnpBytes)} capnp · ${fmtBytes(row.jsonBytes)} JSON`, row.capnpBytes <= row.jsonBytes);
 }
 
 async function runBench() {
@@ -441,5 +481,196 @@ async function runRpcAfterFetch() {
     serverDot.classList.add("down");
     serverMsg.innerHTML = `RPC server reachable but bench errored. See summary below.`;
     console.warn("RPC bench failed", err);
+    return;
   }
+  try {
+    await runGeneralAfterRpc();
+  } catch (err) {
+    const generalStatus = document.getElementById("general-status");
+    const generalSummary = document.getElementById("general-summary");
+    if (generalStatus) generalStatus.textContent = "general suite failed";
+    if (generalSummary) {
+      generalSummary.className = "lose";
+      generalSummary.textContent = `General suite failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    console.warn("General playground suite failed", err);
+  }
+}
+
+// ---- General workload suite (runs after RPC to avoid benchmark overlap) --
+
+async function runGeneralAfterRpc() {
+  const status = document.getElementById("general-status");
+  const summary = document.getElementById("general-summary");
+  if (!status || !summary) return;
+  const ids = ["small", "sparse", "view", "dynamic", "list"];
+  for (const key of ids) {
+    for (const suffix of ["capnp", "json", "ratio", "bytes"]) {
+      const el = document.getElementById(`general-${key}-${suffix}`);
+      if (el) { el.textContent = "running…"; el.className = "running"; }
+    }
+  }
+  summary.className = "";
+  summary.textContent = "";
+  status.textContent = "Running general workloads…";
+
+  await ensureWasm();
+  const rows = [
+    runGeneralSmall(),
+    runGeneralSparse(),
+    runGeneralNumericView(),
+    runGeneralDynamicList(),
+    runGeneralListScan(),
+  ];
+  for (const row of rows) fillGeneralRow(row);
+
+  const wins = rows.filter((r) => r.capnpUs <= r.jsonUs).length;
+  summary.className = wins >= 3 ? "win" : "lose";
+  summary.innerHTML = `<strong>General suite complete.</strong> capnwasm wins ${wins} of ${rows.length} browser CPU/wire shapes. This section is the general-usage surface; the fetch table above is the end-to-end User-record workload.`;
+  status.textContent = "general suite done";
+}
+
+function runGeneralSmall(): GeneralRow {
+  const schema = defineSchema({
+    id: { kind: "uint32", offset: 0 },
+    score: { kind: "float64", offset: 8 },
+    name: { kind: "text", slot: 0 },
+    email: { kind: "text", slot: 1 },
+    flag: { kind: "bool", bitOffset: 32 },
+  }, { dataWords: 2, ptrWords: 2 });
+  const obj = { id: 42, score: 3.14159, name: "alice", email: "alice@example.com", flag: true };
+  const capnpBytes = encodeDynamic(cpp, schema, obj);
+  const jsonBytes = ENC.encode(JSON.stringify(obj));
+  const capnpUs = timed(() => {
+    const r = openDynamic(cpp, schema, capnpBytes);
+    const v = r.get("id") + r.get("score") + r.get("name").length + r.get("email").length + (r.get("flag") ? 1 : 0);
+    r.dispose();
+    return v;
+  });
+  const jsonUs = timed(() => {
+    const o = JSON.parse(DEC.decode(jsonBytes));
+    return o.id + o.score + o.name.length + o.email.length + (o.flag ? 1 : 0);
+  });
+  return { key: "small", capnpUs, jsonUs, capnpBytes: capnpBytes.length, jsonBytes: jsonBytes.length };
+}
+
+function runGeneralSparse(): GeneralRow {
+  const fields: Record<string, any> = {};
+  const obj: Record<string, number> = {};
+  for (let i = 0; i < 256; i++) {
+    fields[`f${i}`] = { kind: "uint32", offset: i * 4 };
+    obj[`f${i}`] = (i * 31) >>> 0;
+  }
+  const schema = defineSchema(fields, { dataWords: 128, ptrWords: 0 });
+  const capnpBytes = encodeDynamic(cpp, schema, obj);
+  const jsonBytes = ENC.encode(JSON.stringify(obj));
+  const picks = ["f5", "f50", "f100", "f150", "f250"];
+  const capnpUs = timed(() => {
+    const r = openDynamic(cpp, schema, capnpBytes);
+    let sum = 0;
+    for (const k of picks) sum += r.get(k);
+    r.dispose();
+    return sum;
+  });
+  const jsonUs = timed(() => {
+    const o = JSON.parse(DEC.decode(jsonBytes));
+    let sum = 0;
+    for (const k of picks) sum += o[k];
+    return sum;
+  });
+  return { key: "sparse", capnpUs, jsonUs, capnpBytes: capnpBytes.length, jsonBytes: jsonBytes.length };
+}
+
+function numericValues(n: number) {
+  const values = new Array(n);
+  for (let i = 0; i < n; i++) values[i] = Math.sin(i) * 1000 + i;
+  return values;
+}
+
+function runGeneralNumericView(): GeneralRow {
+  const schema = defineSchema({ f64s: { kind: "listFloat64", slot: 0 } }, { dataWords: 0, ptrWords: 1 });
+  const values = numericValues(1000);
+  const capnpBytes = encodeDynamic(cpp, schema, { f64s: values });
+  const jsonBytes = ENC.encode(JSON.stringify({ f64s: values }));
+  const capnpUs = timed(() => {
+    const r = openNumericProbe(cpp, capnpBytes);
+    const v = r.f64s.view();
+    let sum = 0;
+    for (let i = 0; i < v.length; i++) sum += v[i];
+    r.dispose();
+    return sum;
+  });
+  const jsonUs = timed(() => {
+    const o = JSON.parse(DEC.decode(jsonBytes));
+    let sum = 0;
+    for (let i = 0; i < o.f64s.length; i++) sum += o.f64s[i];
+    return sum;
+  });
+  return { key: "view", capnpUs, jsonUs, capnpBytes: capnpBytes.length, jsonBytes: jsonBytes.length };
+}
+
+function runGeneralDynamicList(): GeneralRow {
+  const schema = defineSchema({ f64s: { kind: "listFloat64", slot: 0 } }, { dataWords: 0, ptrWords: 1 });
+  const values = numericValues(1000);
+  const capnpBytes = encodeDynamic(cpp, schema, { f64s: values });
+  const jsonBytes = ENC.encode(JSON.stringify({ f64s: values }));
+  const capnpUs = timed(() => {
+    const r = openDynamic(cpp, schema, capnpBytes);
+    const list = r.get("f64s");
+    let sum = 0;
+    for (let i = 0; i < list.length; i++) sum += list[i];
+    r.dispose();
+    return sum;
+  });
+  const jsonUs = timed(() => {
+    const o = JSON.parse(DEC.decode(jsonBytes));
+    let sum = 0;
+    for (let i = 0; i < o.f64s.length; i++) sum += o.f64s[i];
+    return sum;
+  });
+  return { key: "dynamic", capnpUs, jsonUs, capnpBytes: capnpBytes.length, jsonBytes: jsonBytes.length };
+}
+
+function runGeneralListScan(): GeneralRow {
+  const user = defineSchema({
+    id: { kind: "uint64", offset: 0 },
+    name: { kind: "text", slot: 0 },
+    email: { kind: "text", slot: 1 },
+    joinedAtMs: { kind: "uint64", offset: 8 },
+    active: { kind: "bool", bitOffset: 128 },
+    avatar: { kind: "data", slot: 2 },
+  }, { dataWords: 3, ptrWords: 3 });
+  const listSchema = defineSchema({
+    users: { kind: "listStruct", slot: 0, element: user },
+  }, { dataWords: 0, ptrWords: 1 });
+  const users = [];
+  for (let i = 0; i < 200; i++) {
+    users.push({
+      id: i + 1,
+      name: `user-${i}`,
+      email: `user-${i}@example.com`,
+      joinedAtMs: 1700000000000 + i,
+      active: i % 3 !== 0,
+    });
+  }
+  const capnpBytes = encodeDynamic(cpp, listSchema, { users });
+  const jsonBytes = ENC.encode(JSON.stringify({ users }));
+  const capnpUs = timed(() => {
+    const r = openUserList(cpp, capnpBytes);
+    const rows = r.users;
+    let sum = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const u = rows.at(i);
+      sum += u.name.length + (u.active ? 1 : 0);
+    }
+    r.dispose();
+    return sum;
+  });
+  const jsonUs = timed(() => {
+    const o = JSON.parse(DEC.decode(jsonBytes));
+    let sum = 0;
+    for (let i = 0; i < o.users.length; i++) sum += o.users[i].name.length + (o.users[i].active ? 1 : 0);
+    return sum;
+  });
+  return { key: "list", capnpUs, jsonUs, capnpBytes: capnpBytes.length, jsonBytes: jsonBytes.length };
 }

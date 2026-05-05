@@ -41,9 +41,9 @@ export declare class GetSinceParamsReader {
 
 export declare class ChatMessageListReader {
   constructor(cpp: CapnCpp);
-  readonly items: { readonly length: number; at(i: number): ChatMessageReader | undefined };
+  readonly items: { readonly length: number; at(i: number): ChatMessageReader | undefined; [Symbol.iterator](): IterableIterator<ChatMessageReader> };
   toObject(): {
-    items: { readonly length: number; at(i: number): ChatMessageReader | undefined };
+    items: { readonly length: number; at(i: number): ChatMessageReader | undefined; [Symbol.iterator](): IterableIterator<ChatMessageReader> };
   };
   draft<T>(fn: (draft: any) => T): T;
 }

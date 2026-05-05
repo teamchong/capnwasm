@@ -119,6 +119,7 @@
     "pretest": "node scripts/ensure-playwright-chromium.mjs",
     "test": "node --test test/*.test.mjs",
     "test:browser": "node --test test/browser_*.test.mjs",
+    "check:playground": "node scripts/check_playground.mjs",
     "install:browsers": "playwright install chromium",
     "build:web": "pnpm -C web build",
     "deploy:dryrun": "pnpm run build:web && wrangler deploy --dry-run --outdir=.wrangler/dryrun",

@@ -33,3 +33,7 @@ struct CountParams {
 struct BlobReply {
   data @0 :Data;
 }
+
+struct NumericProbe {
+  f64s @0 :List(Float64);
+}

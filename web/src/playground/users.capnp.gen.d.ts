@@ -23,9 +23,9 @@ export declare class UserReader {
 
 export declare class UserListReader {
   constructor(cpp: CapnCpp);
-  readonly users: { readonly length: number; at(i: number): UserReader | undefined };
+  readonly users: { readonly length: number; at(i: number): UserReader | undefined; [Symbol.iterator](): IterableIterator<UserReader> };
   toObject(): {
-    users: { readonly length: number; at(i: number): UserReader | undefined };
+    users: { readonly length: number; at(i: number): UserReader | undefined; [Symbol.iterator](): IterableIterator<UserReader> };
   };
   draft<T>(fn: (draft: any) => T): T;
 }
@@ -44,6 +44,15 @@ export declare class BlobReplyReader {
   readonly data: Uint8Array;
   toObject(): {
     data: Uint8Array;
+  };
+  draft<T>(fn: (draft: any) => T): T;
+}
+
+export declare class NumericProbeReader {
+  constructor(cpp: CapnCpp);
+  readonly f64s: { readonly length: number; at(i: number): number | undefined; view(): Float64Array; [Symbol.iterator](): IterableIterator<number> };
+  toObject(): {
+    f64s: { readonly length: number; at(i: number): number | undefined; view(): Float64Array; [Symbol.iterator](): IterableIterator<number> };
   };
   draft<T>(fn: (draft: any) => T): T;
 }

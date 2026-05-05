@@ -212,6 +212,66 @@
 
       <div id="rpc-summary" role="status" aria-live="polite"></div>
     </section>
+
+    <section id="general-bench-section" aria-labelledby="general-bench-title">
+      <h2 id="general-bench-title" class="section-title">General workload suite (auto-runs after RPC)</h2>
+      <p class="section-copy">
+        Same browser, same wasm runtime, no network. These rows cover the common shapes the fetch demo does not:
+        sparse metadata, numeric <code>view()</code>, dynamic schemas, and list scans.
+      </p>
+      <div id="general-controls" class="rpc-controls">
+        <span id="general-status" role="status" aria-live="polite" aria-atomic="true">Waiting for RPC bench…</span>
+      </div>
+      <table class="metrics general-metrics">
+        <thead>
+          <tr>
+            <th>workload</th>
+            <th>capnwasm</th>
+            <th>JSON</th>
+            <th>ratio</th>
+            <th>wire bytes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th>small object</th>
+            <td id="general-small-capnp">&mdash;</td>
+            <td id="general-small-json">&mdash;</td>
+            <td id="general-small-ratio">&mdash;</td>
+            <td id="general-small-bytes">&mdash;</td>
+          </tr>
+          <tr>
+            <th>sparse wide object</th>
+            <td id="general-sparse-capnp">&mdash;</td>
+            <td id="general-sparse-json">&mdash;</td>
+            <td id="general-sparse-ratio">&mdash;</td>
+            <td id="general-sparse-bytes">&mdash;</td>
+          </tr>
+          <tr>
+            <th>numeric list <code>view()</code></th>
+            <td id="general-view-capnp">&mdash;</td>
+            <td id="general-view-json">&mdash;</td>
+            <td id="general-view-ratio">&mdash;</td>
+            <td id="general-view-bytes">&mdash;</td>
+          </tr>
+          <tr>
+            <th>dynamic numeric list</th>
+            <td id="general-dynamic-capnp">&mdash;</td>
+            <td id="general-dynamic-json">&mdash;</td>
+            <td id="general-dynamic-ratio">&mdash;</td>
+            <td id="general-dynamic-bytes">&mdash;</td>
+          </tr>
+          <tr>
+            <th>list scan</th>
+            <td id="general-list-capnp">&mdash;</td>
+            <td id="general-list-json">&mdash;</td>
+            <td id="general-list-ratio">&mdash;</td>
+            <td id="general-list-bytes">&mdash;</td>
+          </tr>
+        </tbody>
+      </table>
+      <div id="general-summary" role="status" aria-live="polite"></div>
+    </section>
   </div>
 
   <script type="module" src="./src/playground/main.ts"></script>

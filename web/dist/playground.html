@@ -14,14 +14,15 @@
   <meta name="twitter:description" content="Live three-way bench, your browser." />
   <meta name="twitter:image" content="/og-image.svg" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <script type="module" crossorigin src="/assets/playground-DMwlawMh.js"></script>
+  <script type="module" crossorigin src="/assets/playground-Dc2uGgsw.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/main-Cu9W4HMG.js">
-  <link rel="modulepreload" crossorigin href="/assets/browser-CdLt3aNE.js">
-  <link rel="modulepreload" crossorigin href="/assets/users.capnp.gen-DeP1nKl0.js">
+  <link rel="modulepreload" crossorigin href="/assets/browser-DRNs01nt.js">
+  <link rel="modulepreload" crossorigin href="/assets/users.capnp.gen-B2qUaRrc.js">
+  <link rel="modulepreload" crossorigin href="/assets/dynamic-DCibpzhO.js">
   <link rel="modulepreload" crossorigin href="/assets/index-CasVqFRb.js">
-  <link rel="modulepreload" crossorigin href="/assets/conformance_schema.gen-CrkfxS8b.js">
+  <link rel="modulepreload" crossorigin href="/assets/conformance_schema.gen-S4hmyMcS.js">
   <link rel="stylesheet" crossorigin href="/assets/main-DrXRrRXI.css">
-  <link rel="stylesheet" crossorigin href="/assets/playground-C5CMGl5w.css">
+  <link rel="stylesheet" crossorigin href="/assets/playground-Bex4vtgb.css">
 </head>
 <body>
   <aside class="network-tip" aria-label="Network throttle tip">
@@ -216,6 +217,66 @@
       </div>
 
       <div id="rpc-summary" role="status" aria-live="polite"></div>
+    </section>
+
+    <section id="general-bench-section" aria-labelledby="general-bench-title">
+      <h2 id="general-bench-title" class="section-title">General workload suite (auto-runs after RPC)</h2>
+      <p class="section-copy">
+        Same browser, same wasm runtime, no network. These rows cover the common shapes the fetch demo does not:
+        sparse metadata, numeric <code>view()</code>, dynamic schemas, and list scans.
+      </p>
+      <div id="general-controls" class="rpc-controls">
+        <span id="general-status" role="status" aria-live="polite" aria-atomic="true">Waiting for RPC bench…</span>
+      </div>
+      <table class="metrics general-metrics">
+        <thead>
+          <tr>
+            <th>workload</th>
+            <th>capnwasm</th>
+            <th>JSON</th>
+            <th>ratio</th>
+            <th>wire bytes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th>small object</th>
+            <td id="general-small-capnp">&mdash;</td>
+            <td id="general-small-json">&mdash;</td>
+            <td id="general-small-ratio">&mdash;</td>
+            <td id="general-small-bytes">&mdash;</td>
+          </tr>
+          <tr>
+            <th>sparse wide object</th>
+            <td id="general-sparse-capnp">&mdash;</td>
+            <td id="general-sparse-json">&mdash;</td>
+            <td id="general-sparse-ratio">&mdash;</td>
+            <td id="general-sparse-bytes">&mdash;</td>
+          </tr>
+          <tr>
+            <th>numeric list <code>view()</code></th>
+            <td id="general-view-capnp">&mdash;</td>
+            <td id="general-view-json">&mdash;</td>
+            <td id="general-view-ratio">&mdash;</td>
+            <td id="general-view-bytes">&mdash;</td>
+          </tr>
+          <tr>
+            <th>dynamic numeric list</th>
+            <td id="general-dynamic-capnp">&mdash;</td>
+            <td id="general-dynamic-json">&mdash;</td>
+            <td id="general-dynamic-ratio">&mdash;</td>
+            <td id="general-dynamic-bytes">&mdash;</td>
+          </tr>
+          <tr>
+            <th>list scan</th>
+            <td id="general-list-capnp">&mdash;</td>
+            <td id="general-list-json">&mdash;</td>
+            <td id="general-list-ratio">&mdash;</td>
+            <td id="general-list-bytes">&mdash;</td>
+          </tr>
+        </tbody>
+      </table>
+      <div id="general-summary" role="status" aria-live="polite"></div>
     </section>
   </div>
 

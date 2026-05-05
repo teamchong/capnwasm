@@ -10,6 +10,34 @@ function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) 
   if (!msgEnd) return undefined;
   const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
   if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  return _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);
+}
+
+function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  return _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd);
+}
+
+function _jsReadListPointerPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return { elementsBase: 0, count: 0 };
+  if ((word0 & 3) !== 1) return undefined;
+  if ((word1 & 7) !== 6) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const count = word1 >>> 3;
+  const elementsBase = ptrAddr + 8 + offset * 8;
+  if (elementsBase < msgStart || elementsBase + count * 8 > msgEnd) return undefined;
+  return { elementsBase, count };
+}
+
+function _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd) {
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
   const word0 = dv.getUint32(ptrAddr, true);
   const word1 = dv.getUint32(ptrAddr + 4, true);
   if (word0 === 0 && word1 === 0) return null;
@@ -25,9 +53,7 @@ function _jsReadTextPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) 
   return SHARED_TEXT_DECODER.decode(u8.subarray(target, target + len));
 }
 
-function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
-  if (!msgEnd) return undefined;
-  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+function _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd) {
   if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
   const word0 = dv.getUint32(ptrAddr, true);
   const word1 = dv.getUint32(ptrAddr + 4, true);
@@ -39,6 +65,26 @@ function _jsReadDataPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) 
   const target = ptrAddr + 8 + offset * 8;
   if (target < msgStart || target + count > msgEnd) return undefined;
   return u8.slice(target, target + count);
+}
+
+const _ELEM_BYTES_TO_SIZE_CODE = { 1: 2, 2: 3, 4: 4, 8: 5 };
+function _jsReadListPrimPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd, elemBytes) {
+  if (!msgEnd) return undefined;
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return { elementsBase: 0, count: 0 };
+  if ((word0 & 3) !== 1) return undefined;
+  const elemSizeCode = word1 & 7;
+  const expectedCode = _ELEM_BYTES_TO_SIZE_CODE[elemBytes];
+  if (elemSizeCode !== expectedCode) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const elementCount = word1 >>> 3;
+  const elementsBase = ptrAddr + 8 + offset * 8;
+  if (elementsBase + elementCount * elemBytes > msgEnd) return undefined;
+  if (elementsBase < msgStart) return undefined;
+  return { elementsBase, count: elementCount };
 }
 
 function _jsReadListStructPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
@@ -491,9 +537,11 @@ function _ensureCapnwasmReader(reader) {
       reader._gen = cpp._generation ?? 0;
       reader._u8 = cpp._u8;
       reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
     } else if (reader._dv && reader._dv.buffer !== cpp.memory.buffer) {
       reader._u8 = cpp._u8;
       reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
     }
     return;
   }
@@ -504,6 +552,7 @@ function _ensureCapnwasmReader(reader) {
     reader._gen = reader._cpp._generation ?? 0;
     reader._u8 = reader._cpp._u8;
     reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    reader._u16 = reader._cpp._u16; reader._i16 = reader._cpp._i16; reader._u32 = reader._cpp._u32; reader._i32 = reader._cpp._i32; reader._f32 = reader._cpp._f32; reader._f64 = reader._cpp._f64;
     return;
   }
   if (reader._msg) {
@@ -511,6 +560,7 @@ function _ensureCapnwasmReader(reader) {
     reader._gen = reader._cpp._generation ?? 0;
     reader._u8 = reader._cpp._u8;
     reader._dv = (reader._cpp._dv && reader._cpp._dv()) || new DataView(reader._cpp._u8.buffer);
+    reader._u16 = reader._cpp._u16; reader._i16 = reader._cpp._i16; reader._u32 = reader._cpp._u32; reader._i32 = reader._cpp._i32; reader._f32 = reader._cpp._f32; reader._f64 = reader._cpp._f64;
     return;
   }
   throw new StaleReaderError();
@@ -730,8 +780,15 @@ export class UserReader {
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
-    this._u8 = cpp._u8;
-    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
     this._disposed = false;
   }
 
@@ -840,8 +897,15 @@ export class UserListReader {
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
-    this._u8 = cpp._u8;
-    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
     this._disposed = false;
   }
 
@@ -881,6 +945,7 @@ export class UserListReader {
             msgStart: _msgStart,
             msgEnd: _msgEnd,
             gen: cpp._generation ?? 0,
+            parent: reader,
             rebind: () => { _ensureCapnwasmReader(reader); cpp._exports.cpp_any_open_list(0); cpp._exports.cpp_any_enter_list_at(i); cpp._bumpGeneration(); },
           });
         },
@@ -940,8 +1005,15 @@ export class CountParamsReader {
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
-    this._u8 = cpp._u8;
-    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
     this._disposed = false;
   }
 
@@ -962,7 +1034,7 @@ export class CountParamsReader {
 
   get n() {
     _ensureCapnwasmReader(this);
-    return this._dataPtr ? this._dv.getUint32(this._dataPtr + 0, true) : this._exp.cpp_any_uint32_at(0, 0);
+    return this._dataPtr ? this._u32[(this._dataPtr + 0) >>> 2] : this._exp.cpp_any_uint32_at(0, 0);
   }
 
   static _FIELDS = {
@@ -999,8 +1071,15 @@ export class BlobReplyReader {
     this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
     this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
     this._dataPtr = dataPtr | 0;
-    this._u8 = cpp._u8;
-    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
     this._disposed = false;
   }
 
@@ -1052,10 +1131,122 @@ if (typeof Symbol.dispose === "symbol") {
   BlobReplyReader.prototype[Symbol.dispose] = BlobReplyReader.prototype.dispose;
 }
 
+export class NumericProbeReader {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, dataPtr, opts = undefined) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    this._msg = opts && opts.msg ? opts.msg : null;
+    this._rebind = opts && opts.rebind ? opts.rebind : null;
+    this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
+    this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._dataPtr = dataPtr | 0;
+    if (opts && opts.parent) {
+      const _p = opts.parent;
+      this._u8 = _p._u8; this._dv = _p._dv;
+      this._u16 = _p._u16; this._i16 = _p._i16; this._u32 = _p._u32; this._i32 = _p._i32; this._f32 = _p._f32; this._f64 = _p._f64;
+    } else {
+      this._u8 = cpp._u8;
+      this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+      this._u16 = cpp._u16; this._i16 = cpp._i16; this._u32 = cpp._u32; this._i32 = cpp._i32; this._f32 = cpp._f32; this._f64 = cpp._f64;
+    }
+    this._disposed = false;
+  }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    if (this._slotHandle) {
+      this._cpp._releaseSlot(this._slotHandle);
+      this._slotHandle = null;
+    } else if (this._msg) {
+      this._cpp._freeMessage(this._msg);
+      this._msg = null;
+    }
+    this._dataPtr = 0;
+    this._rebind = null;
+  }
+
+
+  get f64s() {
+    _ensureCapnwasmReader(this);
+    const reader = this;
+    const cpp = this._cpp;
+    const _msgStart = reader._msgStart, _msgEnd = reader._msgEnd;
+    let _desc = null;
+    if (_msgEnd) {
+      _desc = _jsReadListPrimPtr(reader._u8, reader._dv, reader._dataPtr, 0, 0, _msgStart, _msgEnd, 8);
+    }
+    if (_desc) {
+      const _count = _desc.count;
+      const _baseByte = _desc.elementsBase;
+      const _baseIdx = _baseByte >>> 3;
+      return {
+        length: _count,
+        at(i) {
+          if (i < 0 || i >= _count) return undefined;
+          let v = reader._f64[_baseIdx + i];
+          if (v !== undefined) return v;
+          if (reader._f64.buffer !== cpp.memory.buffer) {
+            reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+            reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
+          }
+          return reader._f64[_baseIdx + i];
+        },
+        *[Symbol.iterator]() { for (let i = 0; i < _count; i++) yield this.at(i); },
+        view() {
+          if (reader._f64.buffer !== cpp.memory.buffer) {
+            reader._u8 = cpp._u8; reader._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+            reader._u16 = cpp._u16; reader._i16 = cpp._i16; reader._u32 = cpp._u32; reader._i32 = cpp._i32; reader._f32 = cpp._f32; reader._f64 = cpp._f64;
+          }
+          return reader._f64.subarray(_baseIdx, _baseIdx + _count);
+        },
+      };
+    }
+    // Cursor-based fallback: unsafe reader, no _msgEnd, or pointer decode failed.
+    const size = cpp._exports.cpp_any_open_list(0);
+    return {
+      length: size,
+      at(i) {
+        if (i < 0 || i >= size) return undefined;
+        _ensureCapnwasmReader(reader);
+        cpp._exports.cpp_any_open_list(0);
+        return ((bits) => { _F64_VIEW_U32[0] = Number(bits & 0xFFFFFFFFn) >>> 0; _F64_VIEW_U32[1] = Number(bits >> 32n) >>> 0; return _F64_VIEW_F64[0]; })(cpp._exports.cpp_any_list_get_float64_bits(i));
+      },
+      *[Symbol.iterator]() { for (let i = 0; i < size; i++) yield this.at(i); },
+      view() { throw new Error("view() requires a slot-pool reader; got an unsafe / cursor-only reader"); },
+    };
+  }
+
+  static _FIELDS = {
+    f64s: {"kind":-1,"off":0,"type":"List(Float64)"},
+  };
+
+  draft(fn) {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _runDraft(this._cpp, NumericProbeReader._FIELDS, fn);
+  }
+
+  toObject() {
+    _ensureCapnwasmReader(this);
+    if (this._rebind) this._rebind();
+    return _capnwasmPick(this._cpp, NumericProbeReader._FIELDS, Object.keys(NumericProbeReader._FIELDS));
+  }
+}
+if (typeof Symbol.dispose === "symbol") {
+  NumericProbeReader.prototype[Symbol.dispose] = NumericProbeReader.prototype.dispose;
+}
+
 _STRUCT_FIELDS["User"] = UserReader._FIELDS;
 _STRUCT_FIELDS["UserList"] = UserListReader._FIELDS;
 _STRUCT_FIELDS["CountParams"] = CountParamsReader._FIELDS;
 _STRUCT_FIELDS["BlobReply"] = BlobReplyReader._FIELDS;
+_STRUCT_FIELDS["NumericProbe"] = NumericProbeReader._FIELDS;
 
 export class UserBuilder {
   static _DATA_WORDS = 3;
@@ -1320,6 +1511,53 @@ export class BlobReplyBuilder {
   }
 }
 
+export class NumericProbeBuilder {
+  static _DATA_WORDS = 0;
+  static _PTR_WORDS = 1;
+  constructor(cpp, opts) {
+    this._cpp = cpp;
+    this._exp = cpp._exports;
+    if (!opts || !opts.preinitialized) {
+      if (this._exp.cpp_any_builder_init(0, 1) !== 1) {
+        throw new Error("cpp_any_builder_init failed");
+      }
+    }
+    this._dataPtr = (opts && opts.dataPtr !== undefined)
+      ? opts.dataPtr : this._exp.cpp_any_builder_data_ptr();
+    this._u8 = cpp._u8;
+    this._dv = (cpp._dv && cpp._dv()) || new DataView(cpp._u8.buffer);
+  }
+
+
+  /**
+   * Apply fields from a plain JS object to this builder. Same shape
+   * as JSON.stringify on the wire side: pass any object whose keys
+   * match the schema field names. Missing keys are skipped, unknown
+   * keys are ignored. Returns `this` for chaining.
+   */
+  fromObject(o) {
+    if (o == null) return this;
+    // f64s: List(Float64). No Builder setter yet (list / struct ref); skipped by fromObject
+    return this;
+  }
+
+  /**
+   * Build a NumericProbe from a plain JS object in one call.
+   * Shorthand for `new NumericProbeBuilder(cpp).fromObject(o)`.
+   */
+  static from(cpp, o) {
+    return new NumericProbeBuilder(cpp).fromObject(o);
+  }
+
+  /** Serialize the message to framed Cap'n Proto bytes. */
+  toBytes() {
+    const len = this._exp.cpp_any_builder_finalize();
+    if (!len) throw new Error("cpp_any_builder_finalize failed");
+    const out = this._cpp._outPtr;
+    return this._cpp._u8.slice(out, out + len);
+  }
+}
+
 /**
  * Open framed Cap'n Proto bytes for typed access. Returns a UserReader.
  */
@@ -1394,5 +1632,24 @@ export function openBlobReplyUnsafe(cpp, bytes) {
 /** Begin building a new BlobReply message. Returns a BlobReplyBuilder. */
 export function buildBlobReply(cpp) {
   return new BlobReplyBuilder(cpp);
+}
+
+/**
+ * Open framed Cap'n Proto bytes for typed access. Returns a NumericProbeReader.
+ */
+export function openNumericProbe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, false);
+  return new NumericProbeReader(cpp, opened.dataPtr, opened);
+}
+
+/** Open bytes through the shared scratch buffer. Faster, but the reader is valid only until the next CapnCpp message open. */
+export function openNumericProbeUnsafe(cpp, bytes) {
+  const opened = _openCapnwasmMessage(cpp, bytes, true);
+  return new NumericProbeReader(cpp, opened.dataPtr, opened);
+}
+
+/** Begin building a new NumericProbe message. Returns a NumericProbeBuilder. */
+export function buildNumericProbe(cpp) {
+  return new NumericProbeBuilder(cpp);
 }
 
