@@ -1,0 +1,75 @@
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+test/list.test.mjs
+  a40863a2008f4bc3 48,120,127,132,144,171,179,199,204,234-236,244-245
+web/src/landing/main.ts
+  a40863a2008f4bc3 190-191
+docs/notes-from-the-trenches.md
+  a40863a2008f4bc3 221,231,233,241,243,245
+test/interop_alltypes.test.mjs
+  a40863a2008f4bc3 149-152
+web/dist/editor.html
+  a40863a2008f4bc3 9,12
+web/src/chat/capnwasm-pane.ts
+  a40863a2008f4bc3 211-217,219
+web/dist/index.html
+  a40863a2008f4bc3 17,20-21
+bin/capnwasm.mjs
+  a40863a2008f4bc3 1142-1143,1176-1192,1248-1256,1264,1283-1287,1542-1544,2889-2890,2893,2895-2896,2943-2946,2970,2976-2980,2983-2985,3015,3031-3036,3061-3062,3068,3072,3074-3075,3082-3085,3087,3089-3090,3110-3111,3117,3122-3123,3130-3133,3136-3137,3144-3145,3148-3149,3184,3197-3198,3273-3275
+web/dist/assets/conformance_schema.gen-CRsgKf7J.js
+  a40863a2008f4bc3 1-2
+web/dist/vs-capnweb.html
+  a40863a2008f4bc3 17,20-22
+test/m3_slot_pool.test.mjs
+  a40863a2008f4bc3 116,118,122-124,129,132-133,135,138,141,143,152,156-157,160
+web/dist/playground.html
+  a40863a2008f4bc3 17,20,23
+docs/decode-model.md
+  a40863a2008f4bc3 145
+test/m5_5_list_struct.test.mjs
+  a40863a2008f4bc3 3-5,8-11,14-15,90,93-100,104,107-112,116,119,129,178,180,185,187,190-191
+test/list_view.test.mjs
+  a40863a2008f4bc3 12,15,84,156,160,162,166,193,200-202,204
+web/dist/render-bench.html
+  a40863a2008f4bc3 9,12-13
+bench/m8_attribution.mjs
+  a40863a2008f4bc3 117,120,135,177,205,208
+bench/list_view.mjs
+  a40863a2008f4bc3 6,14-15,38-40,81,85,100,103
+web/dist/assets/chat-CyD9miJ_.js
+  a40863a2008f4bc3 1-8
+test/draft.test.mjs
+  a40863a2008f4bc3 125-154,509,511,537-540
+docs/vs-capnweb.md
+  a40863a2008f4bc3 221
+web/dist/assets/typed_schema.gen-BGDMuIU3.js
+  a40863a2008f4bc3 1-2
+web/dist/assets/users.capnp.gen-DXMVdlev.js
+  a40863a2008f4bc3 1-2
+web/dist/assets/index-VCv2uT3P.js
+  a40863a2008f4bc3 1
+web/dist/chat.html
+  a40863a2008f4bc3 64
+web/src/playground/main.ts
+  a40863a2008f4bc3 660,663
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "a3c9e2ae1da97f19cffb741edf0105980cb86ce6",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 288,
+      "total_deletions": 443,
+      "accepted_lines": 288,
+      "overriden_lines": 0
+    }
+  }
+}
