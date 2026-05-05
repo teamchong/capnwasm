@@ -73,18 +73,25 @@ WRAPPER=(
 )
 
 # Locate zig. Real wasm-EH requires zig 0.17+; see cpp/build.sh for
-# the rationale and the same version check.
-ZIG_BIN="${ZIG_BIN:-$(command -v zig || true)}"
+# the rationale. Resolution order: ZIG_BIN, .capnwasm-zig symlink,
+# zig on PATH.
+if [ -z "${ZIG_BIN:-}" ]; then
+  if [ -x ".capnwasm-zig/zig" ]; then
+    ZIG_BIN="$(cd .capnwasm-zig && pwd)/zig"
+  else
+    ZIG_BIN="$(command -v zig || true)"
+  fi
+fi
 if [ -z "$ZIG_BIN" ]; then
-  echo "[build_capnpc.sh] error: zig not found on PATH; install zig 0.17+ or set ZIG_BIN" >&2
+  echo "[build_capnpc.sh] error: zig not found." >&2
+  echo "[build_capnpc.sh]        Run: bash scripts/install-zig-eh.sh" >&2
   exit 1
 fi
 ZIG_VERSION_STR="$("$ZIG_BIN" version)"
 case "$ZIG_VERSION_STR" in
   0.16.*|0.15.*|0.14.*|0.13.*)
     echo "[build_capnpc.sh] error: zig $ZIG_VERSION_STR can't link the __cpp_exception wasm tag." >&2
-    echo "[build_capnpc.sh]        Install zig 0.17+ and either swap your PATH or set" >&2
-    echo "[build_capnpc.sh]        ZIG_BIN=/path/to/zig-0.17/zig before re-running." >&2
+    echo "[build_capnpc.sh]        Run: bash scripts/install-zig-eh.sh" >&2
     exit 1
     ;;
 esac
@@ -170,7 +177,11 @@ ls -la "$OPT_OUT"
 # on load. Saves ~460 KB unpacked vs the raw .wasm; gzip is universal,
 # and the CLI is the only consumer (load happens once per `gen` call).
 mkdir -p dist
-gzip -9c "$OPT_OUT" > dist/capnpc.wasm.gz
+# -n omits the original filename + mtime from the gzip header, which
+# would otherwise change every build and produce non-byte-identical
+# dist/ artifacts. The CI build-wasm workflow asserts byte-identity
+# against the committed copy, so determinism here matters.
+gzip -9nc "$OPT_OUT" > dist/capnpc.wasm.gz
 echo "Compressed to: dist/capnpc.wasm.gz"
 ls -la dist/capnpc.wasm.gz
 # Remove any stale uncompressed file from earlier builds.

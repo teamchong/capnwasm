@@ -135,20 +135,29 @@ WRAPPER_BENCH_ONLY=(
 # Locate `zig`. Real wasm-EH (`-fwasm-exceptions` + linked libcxxabi)
 # requires zig 0.17+ — earlier wasm-ld releases reject the
 # __cpp_exception wasm tag with "undefined tag symbol cannot be weak"
-# even when the compiler emits it correctly. Prefer ZIG_BIN env
-# override; fall back to whichever zig is on PATH.
-ZIG_BIN="${ZIG_BIN:-$(command -v zig || true)}"
+# even when the compiler emits it correctly. Resolution order:
+#   1. ZIG_BIN env var (explicit override)
+#   2. .capnwasm-zig symlink in repo root (set up by
+#      scripts/install-zig-eh.sh — recommended path)
+#   3. zig on PATH
+if [ -z "${ZIG_BIN:-}" ]; then
+  if [ -x ".capnwasm-zig/zig" ]; then
+    ZIG_BIN="$(cd .capnwasm-zig && pwd)/zig"
+  else
+    ZIG_BIN="$(command -v zig || true)"
+  fi
+fi
 if [ -z "$ZIG_BIN" ]; then
-  echo "[build.sh] error: zig not found on PATH; install zig 0.17+ or set ZIG_BIN" >&2
+  echo "[build.sh] error: zig not found." >&2
+  echo "[build.sh]        Run: bash scripts/install-zig-eh.sh" >&2
   exit 1
 fi
 ZIG_VERSION_STR="$("$ZIG_BIN" version)"
 case "$ZIG_VERSION_STR" in
   0.16.*|0.15.*|0.14.*|0.13.*)
     echo "[build.sh] error: zig $ZIG_VERSION_STR can't link the __cpp_exception wasm tag." >&2
-    echo "[build.sh]        Install zig 0.17+ and either swap your PATH or set" >&2
-    echo "[build.sh]        ZIG_BIN=/path/to/zig-0.17/zig before re-running." >&2
-    echo "[build.sh]        Pre-built downloads: https://ziglang.org/download/" >&2
+    echo "[build.sh]        Run: bash scripts/install-zig-eh.sh" >&2
+    echo "[build.sh]        (downloads zig 0.17 to ~/.local/share/capnwasm-zig/)" >&2
     exit 1
     ;;
 esac

@@ -1,0 +1,85 @@
+name: build-wasm
+
+# Reproduces the local wasm rebuild path in CI:
+#   1. Installs zig 0.17 via scripts/install-zig-eh.sh (downloads to
+#      ~/.local/share/capnwasm-zig/, drops .capnwasm-zig symlink in
+#      the repo root that cpp/build*.sh look for).
+#   2. Installs binaryen so wasm-opt is on PATH.
+#   3. Runs cpp/build.sh + cpp/build_capnpc.sh + the JS build_inlined
+#      scripts.
+#   4. Diffs the resulting dist/ against the committed copy and fails
+#      if they drifted — this is how we catch regressions in the wasm
+#      build (e.g. someone edits cpp/wrapper.cpp without re-running
+#      the install script locally).
+#
+# Triggered manually or whenever cpp/, scripts/install-zig-eh.sh, or
+# js/build_inlined.mjs / js/build_codegen_inlined.mjs change. The main
+# `tests` workflow doesn't rebuild wasm — it imports dist/inlined.mjs
+# directly, which is faster but blind to wasm regressions; this
+# workflow plugs that gap.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cpp/**"
+      - "scripts/install-zig-eh.sh"
+      - "js/build_inlined.mjs"
+      - "js/build_codegen_inlined.mjs"
+      - ".github/workflows/build-wasm.yml"
+  pull_request:
+    paths:
+      - "cpp/**"
+      - "scripts/install-zig-eh.sh"
+      - "js/build_inlined.mjs"
+      - "js/build_codegen_inlined.mjs"
+      - ".github/workflows/build-wasm.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install binaryen (wasm-opt)
+        run: sudo apt-get update && sudo apt-get install -y binaryen
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache zig 0.17 download
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/capnwasm-zig
+          key: capnwasm-zig-${{ runner.os }}-${{ runner.arch }}-0.17.0-dev.251
+
+      - name: Install zig 0.17 + rebuild wasm
+        run: bash scripts/install-zig-eh.sh
+
+      - name: Verify dist/ matches committed artifacts
+        run: |
+          # The install script touches zig-out/ + dist/. We expect
+          # dist/ to match what's checked in, byte-for-byte. If the
+          # diff is non-empty, either the wasm source changed and the
+          # committed dist needs an update, or the build is no longer
+          # deterministic — both are real regressions.
+          if ! git diff --exit-code dist/; then
+            echo "::error::dist/ drifted after wasm rebuild." >&2
+            echo "Either commit the new dist/ artifacts or fix the build." >&2
+            exit 1
+          fi
+
+      - name: Run JS test suite against the freshly-built wasm
+        run: pnpm test

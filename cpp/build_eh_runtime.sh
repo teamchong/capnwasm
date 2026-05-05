@@ -22,17 +22,25 @@
 set -e
 cd "$(dirname "$0")/.."
 
-ZIG_BIN="${ZIG_BIN:-$(command -v zig || true)}"
+# Resolution order: ZIG_BIN, .capnwasm-zig symlink, zig on PATH.
+if [ -z "${ZIG_BIN:-}" ]; then
+  if [ -x ".capnwasm-zig/zig" ]; then
+    ZIG_BIN="$(cd .capnwasm-zig && pwd)/zig"
+  else
+    ZIG_BIN="$(command -v zig || true)"
+  fi
+fi
 if [ -z "$ZIG_BIN" ]; then
-  echo "[build_eh_runtime.sh] error: zig not found on PATH and ZIG_BIN unset" >&2
+  echo "[build_eh_runtime.sh] error: zig not found." >&2
+  echo "[build_eh_runtime.sh]        Run: bash scripts/install-zig-eh.sh" >&2
   exit 1
 fi
 ZIG_VERSION=$("$ZIG_BIN" version)
 case "$ZIG_VERSION" in
   0.16.*|0.15.*|0.14.*)
-    echo "[build_eh_runtime.sh] warn: zig $ZIG_VERSION may not link the __cpp_exception" >&2
-    echo "[build_eh_runtime.sh]       wasm tag. zig 0.17+ recommended; export ZIG_BIN" >&2
-    echo "[build_eh_runtime.sh]       to point at a newer install if linking fails." >&2
+    echo "[build_eh_runtime.sh] error: zig $ZIG_VERSION can't link __cpp_exception wasm tag." >&2
+    echo "[build_eh_runtime.sh]        Run: bash scripts/install-zig-eh.sh" >&2
+    exit 1
     ;;
 esac
 

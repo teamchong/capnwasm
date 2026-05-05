@@ -27,3 +27,4 @@ HANDOFF.md
 
 # Wrangler local state
 .wrangler/
+.capnwasm-zig
