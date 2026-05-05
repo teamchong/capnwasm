@@ -62,6 +62,21 @@ test("dynamic builder: listFloat64 round-trips with bit-equality", () => {
   assert.deepEqual(r.get("f"), [0.0, 3.14, -1.5e10, Infinity]);
 });
 
+test("dynamic reader: large Float64 list materializes without cursor churn", () => {
+  const Schema = defineSchema({
+    f: { kind: "listFloat64", slot: 0 },
+  }, { dataWords: 0, ptrWords: 1 });
+  const values = [];
+  for (let i = 0; i < 8000; i++) values.push(i + 0.5);
+  const bytes = encodeDynamic(cpp, Schema, { f: values });
+  const r = openDynamic(cpp, Schema, bytes);
+  const got = r.get("f");
+  assert.equal(got.length, values.length);
+  assert.equal(got[0], 0.5);
+  assert.equal(got[7999], 7999.5);
+  r.dispose();
+});
+
 test("dynamic builder: listBool packs as bits and round-trips", () => {
   const Schema = defineSchema({
     b: { kind: "listBool", slot: 0 },
@@ -78,6 +93,21 @@ test("dynamic builder: listText round-trips", () => {
   const bytes = encodeDynamic(cpp, Schema, { s: ["alpha", "beta", "γ-emoji-😀"] });
   const r = openDynamic(cpp, Schema, bytes);
   assert.deepEqual(r.get("s"), ["alpha", "beta", "γ-emoji-😀"]);
+});
+
+test("dynamic reader: large Text list materializes without cursor churn", () => {
+  const Schema = defineSchema({
+    s: { kind: "listText", slot: 0 },
+  }, { dataWords: 0, ptrWords: 1 });
+  const values = [];
+  for (let i = 0; i < 2000; i++) values.push(`text-${i}`);
+  const bytes = encodeDynamic(cpp, Schema, { s: values });
+  const r = openDynamic(cpp, Schema, bytes);
+  const got = r.pick(["s"]).s;
+  assert.equal(got.length, values.length);
+  assert.equal(got[0], "text-0");
+  assert.equal(got[1999], "text-1999");
+  r.dispose();
 });
 
 test("dynamic builder: listData round-trips raw bytes", () => {

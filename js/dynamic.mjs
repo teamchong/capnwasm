@@ -40,6 +40,8 @@ const _F64_BUF = new ArrayBuffer(8);
 const _F64_U32 = new Uint32Array(_F64_BUF);
 const _F64_F64 = new Float64Array(_F64_BUF);
 
+const _ELEM_BYTES_TO_SIZE_CODE = { 1: 2, 2: 3, 4: 4, 8: 5 };
+
 // Map JS-friendly kind names to the (kind, off-key) pair used by the
 // underlying cpp_any_batch_read API. The off-key tells `defineSchema` which
 // property of the user descriptor holds the offset.
@@ -62,12 +64,10 @@ const KIND_TABLE = {
   // bits, JS does the bit-cast through a typed-array view.
   float32: { wireKind: 3, offKey: "offset",    type: "float32" },
   float64: { wireKind: 4, offKey: "offset",    type: "float64" },
-  // List-of-primitive types. Reads happen through `cpp_any_open_list` +
-  // per-element `cpp_any_list_get_*`, materialized into a JS array. Lists
-  // are pointer-typed in the wire format, so they live at a slot index.
-  // Not in cpp_any_batch_read. These go through `_readSingle` even from
-  // pick(), which means N+1 wasm calls per list (open + size + N gets);
-  // codegen-emitted readers are unchanged and stay faster on hot paths.
+  // List types. Safe readers decode primitive/text/data lists directly
+  // from wasm.memory and materialize a JS array. Unsafe/cursor-only readers
+  // fall back to cpp_any_open_list + per-element wasm calls. Lists are not
+  // supported by cpp_any_batch_read, so pick() routes them through _readSingle.
   listUint8:   { wireKind: -1, offKey: "slot", type: "list",   element: "uint8" },
   listUint16:  { wireKind: -1, offKey: "slot", type: "list",   element: "uint16" },
   listUint32:  { wireKind: -1, offKey: "slot", type: "list",   element: "uint32" },
@@ -531,13 +531,13 @@ export function openDynamic(cpp, schema, bytes) {
   if (typeof cpp._acquireSlot === "function" && cpp._supportsReaderSlotPool && cpp._supportsReaderSlotPool()) {
     const acquired = cpp._acquireSlot(bytes);
     if (acquired) {
-      return new DynamicReader(cpp, schema, { slotIdx: acquired.slotIdx, slotHandle: acquired.handle, gen: cpp._generation });
+      return new DynamicReader(cpp, schema, { slotIdx: acquired.slotIdx, slotHandle: acquired.handle, dataPtr: acquired.dataPtr, msgStart: acquired.msgStart, msgEnd: acquired.msgEnd, gen: cpp._generation });
     }
   }
   if (typeof cpp._allocMessage === "function") {
     const msg = cpp._allocMessage(bytes);
-    cpp._openAnyMessage(msg);
-    return new DynamicReader(cpp, schema, { msg, gen: cpp._generation });
+    const dataPtr = cpp._openAnyMessage(msg);
+    return new DynamicReader(cpp, schema, { msg, dataPtr, msgStart: msg.ptr + 8, msgEnd: msg.ptr + msg.len, gen: cpp._generation });
   }
   return openDynamicUnsafe(cpp, schema, bytes);
 }
@@ -554,9 +554,9 @@ export function openDynamicUnsafe(cpp, schema, bytes) {
   // cpp_any_open returns the data section pointer (or 0 for an empty
   // struct. That's still a successful open). It only "fails" by
   // throwing inside the wasm if the bytes are malformed.
-  cpp._exports.cpp_any_open(bytes.length);
+  const dataPtr = cpp._exports.cpp_any_open(bytes.length);
   if (typeof cpp._bumpGeneration === "function") cpp._bumpGeneration();
-  return new DynamicReader(cpp, schema, { gen: cpp._generation ?? 0 });
+  return new DynamicReader(cpp, schema, { dataPtr, gen: cpp._generation ?? 0 });
 }
 
 /**
@@ -577,6 +577,11 @@ export class DynamicReader {
     this._slotIdx = opts && opts.slotIdx ? opts.slotIdx : 0;
     this._slotHandle = opts && opts.slotHandle ? opts.slotHandle : null;
     this._gen = opts && opts.gen !== undefined ? opts.gen : (cpp._generation ?? 0);
+    this._dataPtr = opts && opts.dataPtr !== undefined ? opts.dataPtr : 0;
+    this._msgStart = opts && opts.msgStart !== undefined ? opts.msgStart : 0;
+    this._msgEnd = opts && opts.msgEnd !== undefined ? opts.msgEnd : 0;
+    this._u8 = cpp._u8;
+    this._dv = cpp._dv ? cpp._dv() : new DataView(cpp._u8.buffer);
     // M4: dispose flag. False until dispose() runs. Subsequent reads
     // throw DisposedDynamicReaderError so use-after-dispose surfaces
     // immediately.
@@ -614,20 +619,32 @@ export class DynamicReader {
     if (this._slotIdx) {
       this._cpp._useSlot(this._slotIdx);
       this._gen = this._cpp._generation ?? 0;
+      this._refreshViews();
       return;
     }
-    if (this._gen === (this._cpp._generation ?? 0)) return;
+    if (this._gen === (this._cpp._generation ?? 0)) {
+      this._refreshViews();
+      return;
+    }
     // Pre-M3 fallback: managed-message rebind, or stale-throw for
     // unsafe / scoped readers.
     if (!this._msg) throw new StaleDynamicReaderError();
-    this._cpp._openAnyMessage(this._msg);
+    this._dataPtr = this._cpp._openAnyMessage(this._msg);
     this._gen = this._cpp._generation ?? 0;
+    this._refreshViews();
+  }
+
+  _refreshViews() {
+    if (this._u8.buffer !== this._cpp.memory.buffer) {
+      this._u8 = this._cpp._u8;
+      this._dv = this._cpp._dv ? this._cpp._dv() : new DataView(this._u8.buffer);
+    }
   }
 
   /** Pick a subset of fields in one wasm round trip. Order matches `names`. */
   pick(names) {
     this._ensureOpen();
-    return _batchPick(this._cpp, this._schema.fields, names);
+    return _batchPick(this._cpp, this._schema.fields, names, this);
   }
 
   /** Materialize every field in the schema. */
@@ -640,7 +657,7 @@ export class DynamicReader {
     this._ensureOpen();
     const desc = this._schema.fields[name];
     if (!desc) return undefined;
-    return _readSingle(this._cpp, desc);
+    return _readSingle(this._cpp, desc, this);
   }
 
   /**
@@ -658,14 +675,14 @@ export class DynamicReader {
         const desc = fields[name];
         if (!desc) return undefined;
         reader._ensureOpen();
-        return _readSingle(cpp, desc);
+        return _readSingle(cpp, desc, reader);
       },
       has(_, name) { return typeof name === "string" && fields[name] !== undefined; },
       ownKeys() { return Object.keys(fields); },
       getOwnPropertyDescriptor(_, name) {
         if (typeof name !== "string" || !fields[name]) return undefined;
         reader._ensureOpen();
-        return { enumerable: true, configurable: true, value: _readSingle(cpp, fields[name]) };
+        return { enumerable: true, configurable: true, value: _readSingle(cpp, fields[name], reader) };
       },
     });
     return this._proxy;
@@ -731,7 +748,7 @@ export function withReader(cpp, bytes, opener, fn) {
 
 // Single-field read. One wasm call. Use this for the Proxy path, or when
 // only one field is wanted.
-function _readSingle(cpp, desc) {
+function _readSingle(cpp, desc, reader = null) {
   const exp = cpp._exports;
   switch (desc.type) {
     case "text": {
@@ -785,9 +802,9 @@ function _readSingle(cpp, desc) {
       return (BigInt(hi) << 32n) | BigInt(lo);
     }
     case "bool":   return exp.cpp_any_bool_at(desc.off, 0) === 1;
-    case "list":       return _readList(cpp, desc);
-    case "struct":     return _readNestedStruct(cpp, desc);
-    case "listStruct": return _readListOfStructs(cpp, desc);
+    case "list":       return _readList(cpp, desc, reader);
+    case "struct":     return _readNestedStruct(cpp, desc, reader);
+    case "listStruct": return _readListOfStructs(cpp, desc, reader);
     default:           return undefined;
   }
 }
@@ -850,12 +867,133 @@ function _readListOfStructs(cpp, desc) {
   return out;
 }
 
+function _readListJs(reader, desc) {
+  const msgEnd = reader._msgEnd;
+  if (!msgEnd) return undefined;
+  reader._refreshViews();
+  const u8 = reader._u8;
+  const dv = reader._dv;
+  const dataPtr = reader._dataPtr;
+  const msgStart = reader._msgStart;
+  switch (desc.element) {
+    case "uint8":  return _readNumericListJs(u8, dv, dataPtr, 0, desc.off, msgStart, msgEnd, 1, Uint8Array, v => v);
+    case "int8":   return _readNumericListJs(u8, dv, dataPtr, 0, desc.off, msgStart, msgEnd, 1, Int8Array, v => v);
+    case "uint16": return _readNumericListJs(u8, dv, dataPtr, 0, desc.off, msgStart, msgEnd, 2, Uint16Array, v => v);
+    case "int16":  return _readNumericListJs(u8, dv, dataPtr, 0, desc.off, msgStart, msgEnd, 2, Int16Array, v => v);
+    case "uint32": return _readNumericListJs(u8, dv, dataPtr, 0, desc.off, msgStart, msgEnd, 4, Uint32Array, v => v >>> 0);
+    case "int32":  return _readNumericListJs(u8, dv, dataPtr, 0, desc.off, msgStart, msgEnd, 4, Int32Array, v => v | 0);
+    case "float32":return _readNumericListJs(u8, dv, dataPtr, 0, desc.off, msgStart, msgEnd, 4, Float32Array, v => v);
+    case "float64":return _readNumericListJs(u8, dv, dataPtr, 0, desc.off, msgStart, msgEnd, 8, Float64Array, v => v);
+    case "uint64": return _readBigIntListJs(u8, dv, dataPtr, desc.off, msgStart, msgEnd, BigUint64Array);
+    case "int64":  return _readBigIntListJs(u8, dv, dataPtr, desc.off, msgStart, msgEnd, BigInt64Array);
+    case "text":   return _readPointerListJs(u8, dv, dataPtr, desc.off, msgStart, msgEnd, _jsReadTextPtrAt, v => v ?? "");
+    case "data":   return _readPointerListJs(u8, dv, dataPtr, desc.off, msgStart, msgEnd, _jsReadDataPtrAt, v => v ?? new Uint8Array(0));
+    default: return undefined;
+  }
+}
+
+function _readListPrimPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd, elemBytes) {
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return { elementsBase: 0, count: 0 };
+  if ((word0 & 3) !== 1) return undefined;
+  if ((word1 & 7) !== _ELEM_BYTES_TO_SIZE_CODE[elemBytes]) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const count = word1 >>> 3;
+  const elementsBase = ptrAddr + 8 + offset * 8;
+  if (elementsBase < msgStart || elementsBase + count * elemBytes > msgEnd) return undefined;
+  return { elementsBase, count };
+}
+
+function _readNumericListJs(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd, elemBytes, Ctor, coerce) {
+  const d = _readListPrimPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd, elemBytes);
+  if (!d) return undefined;
+  if (d.count === 0) return [];
+  const view = new Ctor(u8.buffer, d.elementsBase, d.count);
+  const out = new Array(d.count);
+  for (let i = 0; i < d.count; i++) out[i] = coerce(view[i]);
+  return out;
+}
+
+function _readBigIntListJs(u8, dv, dataPtr, ptrIndex, msgStart, msgEnd, Ctor) {
+  const d = _readListPrimPtr(u8, dv, dataPtr, 0, ptrIndex, msgStart, msgEnd, 8);
+  if (!d) return undefined;
+  if (d.count === 0) return [];
+  const view = new Ctor(u8.buffer, d.elementsBase, d.count);
+  const out = new Array(d.count);
+  for (let i = 0; i < d.count; i++) {
+    const v = view[i];
+    out[i] = (v >= -9007199254740992n && v <= 9007199254740992n) ? Number(v) : v;
+  }
+  return out;
+}
+
+function _readListPointerPtr(u8, dv, dataPtr, dataWords, ptrIndex, msgStart, msgEnd) {
+  const ptrAddr = dataPtr + (dataWords + ptrIndex) * 8;
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return { elementsBase: 0, count: 0 };
+  if ((word0 & 3) !== 1 || (word1 & 7) !== 6) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const count = word1 >>> 3;
+  const elementsBase = ptrAddr + 8 + offset * 8;
+  if (elementsBase < msgStart || elementsBase + count * 8 > msgEnd) return undefined;
+  return { elementsBase, count };
+}
+
+function _readPointerListJs(u8, dv, dataPtr, ptrIndex, msgStart, msgEnd, readAt, normalize) {
+  const d = _readListPointerPtr(u8, dv, dataPtr, 0, ptrIndex, msgStart, msgEnd);
+  if (!d) return undefined;
+  const out = new Array(d.count);
+  for (let i = 0; i < d.count; i++) {
+    const v = readAt(u8, dv, d.elementsBase + i * 8, msgStart, msgEnd);
+    if (v === undefined) return undefined;
+    out[i] = normalize(v);
+  }
+  return out;
+}
+
+function _jsReadTextPtrAt(u8, dv, ptrAddr, msgStart, msgEnd) {
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return null;
+  if ((word0 & 3) !== 1) return undefined;
+  if ((word1 & 7) !== 2) return undefined;
+  const count = word1 >>> 3;
+  if (count === 0) return undefined;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const target = ptrAddr + 8 + offset * 8;
+  if (target < msgStart || target + count > msgEnd) return undefined;
+  const len = count - 1;
+  return len === 0 ? "" : SHARED_DECODER.decode(u8.subarray(target, target + len));
+}
+
+function _jsReadDataPtrAt(u8, dv, ptrAddr, msgStart, msgEnd) {
+  if (ptrAddr < msgStart || ptrAddr + 8 > msgEnd) return undefined;
+  const word0 = dv.getUint32(ptrAddr, true);
+  const word1 = dv.getUint32(ptrAddr + 4, true);
+  if (word0 === 0 && word1 === 0) return null;
+  if ((word0 & 3) !== 1) return undefined;
+  if ((word1 & 7) !== 2) return undefined;
+  const count = word1 >>> 3;
+  const offset = dv.getInt32(ptrAddr, true) >> 2;
+  const target = ptrAddr + 8 + offset * 8;
+  if (target < msgStart || target + count > msgEnd) return undefined;
+  return u8.slice(target, target + count);
+}
+
 // Materialize a list-of-primitive into a JS array. The wasm exposes a
 // single any_list_reader slot (last list opened), so opening another list
 // invalidates this one. Readers materialize the whole list before
 // returning, rather than handing back a lazy iterator that could outlive
 // the underlying state.
-function _readList(cpp, desc) {
+function _readList(cpp, desc, reader = null) {
+  const js = reader ? _readListJs(reader, desc) : undefined;
+  if (js !== undefined) return js;
   const exp = cpp._exports;
   const size = exp.cpp_any_open_list(desc.off);
   if (size === 0) return [];
@@ -937,7 +1075,7 @@ function _readList(cpp, desc) {
 // know about list types. The fallback is whole-pick: as soon as any field
 // is a list, we route every field through _readSingle. The fast batch
 // path stays intact for the common pure-primitive case.
-function _batchPick(cpp, fields, names) {
+function _batchPick(cpp, fields, names, reader = null) {
   const u8 = cpp._u8;
   // _dv() returns a buffer-cached DataView (refresh only on memory growth).
   // _auxPtr is a wasm-init constant we cache once on CapnCpp load.
@@ -962,7 +1100,7 @@ function _batchPick(cpp, fields, names) {
   }
   if (needsFallback) {
     const result = {};
-    for (let i = 0; i < count; i++) result[names[i]] = _readSingle(cpp, descs[i]);
+    for (let i = 0; i < count; i++) result[names[i]] = _readSingle(cpp, descs[i], reader);
     return result;
   }
 
