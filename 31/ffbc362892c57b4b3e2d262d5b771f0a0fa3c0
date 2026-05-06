@@ -1,0 +1,27 @@
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+web/dist/data/cf-endpoints.json
+  a40863a2008f4bc3 1
+web/scripts/build-globe-data.mjs
+  a40863a2008f4bc3 50,81,401,405-420
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "31ffbc362892c57b4b3e2d262d5b771f0a0fa3c0",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 21,
+      "total_deletions": 5,
+      "accepted_lines": 21,
+      "overriden_lines": 0
+    }
+  }
+}
