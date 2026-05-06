@@ -1,0 +1,55 @@
+web/src/playground/globe.css
+  a40863a2008f4bc3 109-141
+web/dist/openapi.html
+  a40863a2008f4bc3 42,44
+web/dist/assets/preload-helper-CLcXU_4U.js
+  a40863a2008f4bc3 1
+web/dist/assets/playground-BAkQz3Bt.js
+  a40863a2008f4bc3 1-2,4-9,19,28,33,38,59,67,70,72-77
+web/dist/assets/playground-DZclTSAh.css
+  a40863a2008f4bc3 1
+web/dist/editor.html
+  a40863a2008f4bc3 9,13-14
+web/dist/assets/_commonjsHelpers-Cpj98o6Y.js
+  a40863a2008f4bc3 1
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+web/package.json
+  a40863a2008f4bc3 21-23
+web/dist/assets/dynamic-C2bRRD_c.js
+  a40863a2008f4bc3 1
+web/dist/assets/openapi-DpSaRzLH.js
+  a40863a2008f4bc3 1-9,36-37
+web/dist/data/cf-endpoints.json
+  a40863a2008f4bc3 1
+web/dist/dynamic.html
+  a40863a2008f4bc3 20,23-24
+web/src/playground/globe.ts
+  a40863a2008f4bc3 91-94,203,360,374-377,430-432,434-436,442,445-473
+web/dist/playground.html
+  a40863a2008f4bc3 17,19,21
+web/dist/assets/globe-renderer-BXgWCotY.js
+  a40863a2008f4bc3 1-5133
+web/src/playground/globe-renderer.ts
+  a40863a2008f4bc3 1-198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "bb69eb5e05d64655c7e217f32780159316b39306",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 5548,
+      "total_deletions": 131,
+      "accepted_lines": 5548,
+      "overriden_lines": 0
+    }
+  }
+}
