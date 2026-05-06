@@ -47,6 +47,7 @@ const OUT = resolve(OUT_DIR, "cf-endpoints.json");
 const COUNTRIES_GEOJSON = resolve(OUT_DIR, "countries.geojson");
 const COUNTRIES_JSON = resolve(OUT_DIR, "countries.json");
 const SCHEMA_URL = "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json";
+const COUNTRIES_URL = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson";
 
 // Source order:
 //   1. The local fixture (gitignored 9.2 MB) when it exists — fastest,
@@ -77,6 +78,7 @@ if (existsSync(FIXTURE)) {
     console.error(`build-globe-data: fetch failed (${(err && (err.message || err.code)) || err}).`);
     console.error("build-globe-data: writing a 3-endpoint fallback so /playground still loads.");
     await writeFallback();
+    await writeCountriesJson();
     process.exit(0);
   }
 }
@@ -396,9 +398,23 @@ const payload = {
   endpoints,
 };
 await writeFile(OUT, JSON.stringify(payload));
-if (existsSync(COUNTRIES_GEOJSON)) {
-  await copyFile(COUNTRIES_GEOJSON, COUNTRIES_JSON);
-}
+await writeCountriesJson();
 const dt = ((Date.now() - t0) / 1000).toFixed(1);
 const sizeMB = (Buffer.byteLength(JSON.stringify(payload)) / 1024 / 1024).toFixed(2);
 console.error(`build-globe-data: ${endpoints.length} endpoints, ${tagSet.size} tags, ${sizeMB} MB → ${OUT} in ${dt}s`);
+
+async function writeCountriesJson() {
+  await mkdir(OUT_DIR, { recursive: true });
+  if (existsSync(COUNTRIES_GEOJSON)) {
+    await copyFile(COUNTRIES_GEOJSON, COUNTRIES_JSON);
+    return;
+  }
+  console.error(`build-globe-data: countries.geojson missing; fetching ${COUNTRIES_URL}…`);
+  try {
+    const res = await fetch(COUNTRIES_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await writeFile(COUNTRIES_JSON, await res.text());
+  } catch (err) {
+    console.error(`build-globe-data: country outline fetch failed (${(err && (err.message || err.code)) || err}); globe will render without land outlines.`);
+  }
+}
