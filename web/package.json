@@ -18,6 +18,8 @@
   },
   "dependencies": {
     "capnweb": "^0.7.0",
-    "highlight.js": "^11.11.1"
+    "globe.gl": "^2.45.3",
+    "highlight.js": "^11.11.1",
+    "three": "^0.184.0"
   }
 }

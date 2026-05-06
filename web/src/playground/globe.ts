@@ -88,6 +88,10 @@ async function loadEndpoints(): Promise<void> {
   els.count.textContent = `${endpoints.length} endpoints`;
   setStatus(`Loaded ${endpoints.length} endpoints across ${data.stats.tags} tags.`);
   renderList();
+  // If the globe is already mounted (race depending on fetch vs three.js
+  // load order) push the dataset; otherwise mountGlobe() will pick it up
+  // from the closure when it runs.
+  if (globeHandle) globeHandle.setEndpoints(toGlobeEndpoints(endpoints));
   if (endpoints.length > 0) selectEndpoint(endpoints[0]);
 }
 
@@ -196,6 +200,7 @@ function selectEndpoint(ep: Endpoint): void {
   setEditor(editorSources[currentLang]);
   els.fire.disabled = false;
   void runEditor("select");
+  globeHandle?.focus(ep.id);
 }
 
 // ---- SDK code templates -----------------------------------------------
@@ -352,7 +357,7 @@ function debouncedRun(): void {
 // their loading state and will be replaced with real interpreters
 // (micropython.wasm, mruby.wasm, yaegi-wasm) in a follow-up.
 
-async function runEditor(_reason: "select" | "input" | "fire"): Promise<string> {
+async function runEditor(reason: "select" | "input" | "fire"): Promise<string> {
   if (!selected) return "";
   const code = editorEl?.value ?? editorSources[currentLang];
   let result: string;
@@ -366,6 +371,10 @@ async function runEditor(_reason: "select" | "input" | "fire"): Promise<string> 
     result = `error: ${err instanceof Error ? err.message : String(err)}`;
   }
   els.preview.textContent = result || "(empty)";
+  // Fire a bubble on explicit fire only — doing it on every keystroke
+  // would mash the globe with bubbles. The preview area shows the live
+  // result on every input.
+  if (reason === "fire") globeHandle?.fireBubble(selected.id, result);
   return result;
 }
 
@@ -418,20 +427,50 @@ function bindLangTabs(): void {
 
 // ---- Globe canvas ------------------------------------------------------
 //
-// The actual orange globe (three.js / globe.gl) lazy-loads here. While
-// it's coming online the canvas shows a placeholder so the page is
-// never empty. We import the renderer dynamically so the inspector and
-// editor are usable on slow connections before three.js arrives.
+// The actual orange globe (three.js / globe.gl) lazy-loads here so the
+// inspector + editor stay usable on slow connections while three.js
+// (~150 KB gz) is in flight.
+
+import type { GlobeEndpoint, GlobeHandle } from "./globe-renderer.js";
+
+let globeHandle: GlobeHandle | null = null;
 
 async function mountGlobe(): Promise<void> {
   els.globeCanvas.innerHTML = `
     <div class="globe-placeholder">
       <span class="globe-spinner" aria-hidden="true"></span>
-      <span>Globe rendering coming online&hellip;</span>
+      <span>Loading globe&hellip;</span>
     </div>
   `;
-  // Real renderer is loaded by ./globe-renderer.ts (queued for next
-  // commit). For now we keep the placeholder visible.
+  let mod;
+  try {
+    mod = await import("./globe-renderer.js");
+  } catch (err) {
+    els.globeCanvas.innerHTML = `
+      <div class="globe-placeholder">
+        <span style="color:#ff7043">Globe failed to load.</span>
+        <span style="font-size:0.72rem;color:#6a7882">${(err as Error).message}</span>
+      </div>
+    `;
+    return;
+  }
+  els.globeCanvas.innerHTML = "";
+  globeHandle = mod.mountGlobeRenderer({
+    container:   els.globeCanvas,
+    bubbleLayer: els.bubbleLayer,
+    initial:     toGlobeEndpoints(endpoints),
+    onSelect:    (ep) => {
+      const real = endpoints.find((e) => e.id === ep.id);
+      if (real) selectEndpoint(real);
+    },
+  });
+}
+
+function toGlobeEndpoints(eps: Endpoint[]): GlobeEndpoint[] {
+  return eps.map((e) => ({
+    id: e.id, path: e.path, method: e.method, tag: e.tag,
+    lat: e.lat, lng: e.lng, pop: e.pop,
+  }));
 }
 
 // ---- Misc helpers ------------------------------------------------------

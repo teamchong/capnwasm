@@ -106,6 +106,39 @@ body {
   overflow: hidden;
 }
 
+.globe-bubble {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: rgba(255, 167, 38, 0.95);
+  color: #1a0a02;
+  border-radius: 14px;
+  padding: 8px 14px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.78rem;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 167, 38, 0.6);
+  white-space: pre-wrap;
+  max-width: 320px;
+  word-break: break-word;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  /* Anchor the bottom-center of the bubble to the dot, then translate
+     upward in the per-frame tick so it floats away from the source. */
+  transform-origin: bottom center;
+}
+
+.globe-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid rgba(255, 167, 38, 0.95);
+}
+
 .globe-placeholder {
   display: flex;
   flex-direction: column;
