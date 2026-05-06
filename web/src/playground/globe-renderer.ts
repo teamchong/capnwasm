@@ -137,8 +137,7 @@ export function mountGlobeRenderer(opts: MountOpts): GlobeHandle {
 
   // Lazy-fetch country borders so first paint isn't blocked.
   let geoFeatures: any[] | null = null;
-  fetch("/data/countries.geojson")
-    .then((r) => (r.ok ? r.json() : null))
+  fetchCountries()
     .then((g) => {
       if (!g || !Array.isArray(g.features)) return;
       geoFeatures = g.features.filter(
@@ -308,6 +307,14 @@ export function mountGlobeRenderer(opts: MountOpts): GlobeHandle {
   }
 
   return { fireBubble, showBubble, clearBubble, focus, resume, setEndpoints, destroy };
+}
+
+async function fetchCountries(): Promise<any | null> {
+  for (const path of ["/data/countries.json", "/data/countries.geojson"]) {
+    const r = await fetch(path);
+    if (r.ok) return r.json();
+  }
+  return null;
 }
 
 // ---- Projection helpers ------------------------------------------------

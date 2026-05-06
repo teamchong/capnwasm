@@ -55,6 +55,11 @@ try {
   );
   const dots = await page.locator(".globe-dots circle").count();
   if (dots < 1) errors.push(`globe rendered ${dots} endpoint dots`);
+  const countryAssetOk = await page.evaluate(async () => {
+    const r = await fetch("/data/countries.json");
+    return r.ok;
+  });
+  if (!countryAssetOk) errors.push("/data/countries.json did not load");
   const rows = await page.locator(".endpoint-row").count();
   if (rows !== dots) errors.push(`endpoint rail rendered ${rows} rows for ${dots} dots`);
   const globeTagline = await page.locator("#globe-tagline").count();

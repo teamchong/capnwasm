@@ -34,7 +34,7 @@
 // synthesize from the schema (resolving $ref) using a small faker that
 // looks at field name + type to pick a plausible value.
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { copyFile, readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,6 +44,8 @@ const REPO = resolve(HERE, "..", "..");
 const FIXTURE = resolve(REPO, "test/_fixtures/cloudflare-openapi.json");
 const OUT_DIR = resolve(HERE, "..", "public", "data");
 const OUT = resolve(OUT_DIR, "cf-endpoints.json");
+const COUNTRIES_GEOJSON = resolve(OUT_DIR, "countries.geojson");
+const COUNTRIES_JSON = resolve(OUT_DIR, "countries.json");
 const SCHEMA_URL = "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json";
 
 // Source order:
@@ -394,6 +396,9 @@ const payload = {
   endpoints,
 };
 await writeFile(OUT, JSON.stringify(payload));
+if (existsSync(COUNTRIES_GEOJSON)) {
+  await copyFile(COUNTRIES_GEOJSON, COUNTRIES_JSON);
+}
 const dt = ((Date.now() - t0) / 1000).toFixed(1);
 const sizeMB = (Buffer.byteLength(JSON.stringify(payload)) / 1024 / 1024).toFixed(2);
 console.error(`build-globe-data: ${endpoints.length} endpoints, ${tagSet.size} tags, ${sizeMB} MB → ${OUT} in ${dt}s`);
