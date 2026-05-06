@@ -1,0 +1,33 @@
+web/dist/playground.html
+  a40863a2008f4bc3 17
+web/src/playground/globe.ts
+  a40863a2008f4bc3 498-511,524-555
+scripts/smoke-globe.mjs
+  a40863a2008f4bc3 79-84
+web/dist/data/cf-endpoints.json
+  a40863a2008f4bc3 1
+scripts/check_playground.mjs
+  a40863a2008f4bc3 22-30
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "5bdb6482a4e76dc9e36de806226ea27f614dac56",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 87,
+      "total_deletions": 27,
+      "accepted_lines": 87,
+      "overriden_lines": 0
+    }
+  }
+}
