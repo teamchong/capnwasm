@@ -14,6 +14,12 @@ import { writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, basename, resolve, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  validateStructs,
+  scanRestAnnotations,
+  stripRestAnnotations,
+  buildRestApisFromAnnotations,
+} from "../js/capnp_text_parser.mjs";
 
 const PKG_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 
@@ -28,6 +34,12 @@ Usage:
   npx capnwasm openapi <spec.yaml|spec.json> [-o output.gen.mjs]
       Generate a typed REST client from an OpenAPI 3.x spec. Works against
       any service that publishes one (Stripe, GitHub, Twilio, etc.).
+
+  npx capnwasm convert <input> [-o output|-]
+      One-shot OpenAPI <-> Cap'n Proto. Direction inferred from extension:
+      .json/.yaml/.yml -> .capnp; .capnp -> .json/.yaml/.yml. Same parser
+      and emitter modules as the /openapi page, so CLI and browser produce
+      byte-identical output.
 
   npx capnwasm manifest <schema.capnp|schema.ts|spec.yaml|spec.json> [-o out.json|-]
       Emit canonical operation manifest as JSON. One stable shape across
@@ -451,40 +463,9 @@ function parsePaginated(arg) {
   return out;
 }
 
-/**
- * Cross-check that every field's type is either a known Cap'n Proto
- * primitive or a struct declared in the same file. Catches typos in
- * `// @capnp Foo` directives and forward references to non-existent types.
- */
-function validateStructs(structs) {
-  const declared = new Set(structs.map((s) => s.name));
-  for (const s of structs) {
-    for (const f of s.fields) {
-      if (validCapnpType(f.type, declared)) continue;
-      throw new Error(
-        `capnwasm: ${s.name}.${f.name}: type '${f.type}' is not a known ` +
-        `Cap'n Proto primitive nor a struct declared in this file.`
-      );
-    }
-  }
-}
-
-function validCapnpType(t, declared) {
-  if (typeof t !== "string") return false;
-  if (VALID_CAPNP_PRIMS.has(t)) return true;
-  if (declared.has(t)) return true;
-  // Capability(<Iface>) is the codegen tag for interface-typed fields.
-  // The inner name may be an unresolved interface (when only the struct
-  // shapes are declared in this file's struct table) or "AnyPointer".
-  // Either way the codegen knows what to do, so accept the wrapper.
-  if (t.startsWith("Capability(") && t.endsWith(")")) return true;
-  // List(X) is valid when X is; recurse so List(List(...)) chains work.
-  // Use balanced-paren matching since X may itself contain parens.
-  if (t.startsWith("List(") && t.endsWith(")")) {
-    return validCapnpType(t.slice(5, -1), declared);
-  }
-  return false;
-}
+// `validateStructs` and friends live in js/capnp_text_parser.mjs so the
+// CLI and the /openapi page agree on what the canonical capnp text parser
+// is. Imported above.
 
 // .capnp files are compiled via our wasm-built capnp schema compiler
 // (zig-out/capnpc.opt.wasm), so the same vendored sources produce both
@@ -541,165 +522,13 @@ export async function parseSchema(schemaPath) {
   return { structs, interfaces, restApis, typeInterfaces: [] };
 }
 
-// --- $Rest annotation scanner ----------------------------------------
-
-function scanRestAnnotations(text) {
-  // Map: `${ifaceName}.${methodName}` → { path, method }.
-  const out = new Map();
-  const stripped = text.replace(/#[^\n]*/g, "");
-  const ifaceRe = /\binterface\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/g;
-  let m;
-  while ((m = ifaceRe.exec(stripped))) {
-    const ifaceName = m[1];
-    let depth = 0;
-    let i = m.index + m[0].length - 1;
-    let end = -1;
-    for (; i < stripped.length; i++) {
-      const c = stripped[i];
-      if (c === "{") depth++;
-      else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
-    }
-    if (end < 0) continue;
-    const body = stripped.slice(m.index + m[0].length, end);
-    const methodRe = /\b([A-Za-z_][A-Za-z0-9_]*)\s*@\d+\s*\([^;]*?;/gs;
-    let mm;
-    while ((mm = methodRe.exec(body))) {
-      const decl = mm[0];
-      const path = decl.match(/\$Rest\.path\(\s*"([^"]+)"\s*\)/)?.[1];
-      const method = decl.match(/\$Rest\.method\(\s*"([^"]+)"\s*\)/)?.[1];
-      if (path && method) out.set(`${ifaceName}.${mm[1]}`, { path, method });
-    }
-  }
-  return out;
-}
-
-function stripRestAnnotations(text) {
-  // Remove every `$Rest.<name>(...)` annotation. The arg list can
-  // contain commas and quoted strings; this scanner walks parens to
-  // find the matching close.
-  const out = [];
-  let i = 0;
-  while (i < text.length) {
-    const idx = text.indexOf("$Rest.", i);
-    if (idx < 0) { out.push(text.slice(i)); break; }
-    out.push(text.slice(i, idx));
-    let j = idx + "$Rest.".length;
-    while (j < text.length && /[A-Za-z0-9_]/.test(text[j])) j++;
-    while (j < text.length && /\s/.test(text[j])) j++;
-    if (text[j] !== "(") { i = j; continue; }
-    let depth = 1;
-    j++;
-    let inStr = false;
-    while (j < text.length && depth > 0) {
-      const c = text[j];
-      if (inStr) {
-        if (c === "\\") { j += 2; continue; }
-        if (c === '"') inStr = false;
-      } else {
-        if (c === '"') inStr = true;
-        else if (c === "(") depth++;
-        else if (c === ")") depth--;
-      }
-      j++;
-    }
-    i = j;
-  }
-  return out.join("");
-}
-
-function buildRestApisFromAnnotations(annotations, interfaces, structs) {
-  const out = [];
-  for (const iface of interfaces ?? []) {
-    const methods = [];
-    for (const m of iface.methods ?? []) {
-      const ann = annotations.get(`${iface.name}.${m.name}`);
-      if (!ann?.path || !ann?.method) continue;
-      const paramsStruct  = structs.find((s) => s.name === `${m.name}$Params`);
-      const resultsStruct = structs.find((s) => s.name === `${m.name}$Results`);
-      const verb = ann.method.toUpperCase();
-      const { restParams, bodyEncoding } = deriveRestParams(paramsStruct, ann.path, verb);
-      methods.push({
-        name: m.name,
-        method: verb,
-        path: ann.path,
-        params: restParams,
-        // Carry the result struct's name so emit-openapi can reference
-        // it via $ref in the success response. capnp methods always
-        // produce a struct-typed result; AnyPointer would be a fallback.
-        // The struct name is sanitized (drops capnp's `$` separator)
-        // so the OpenAPI components.schemas key works in every
-        // downstream tool.
-        returnType: resultsStruct ? sanitizeOpenapiName(resultsStruct.name) : "unknown",
-        isAsyncIterable: false,
-        decode: null,
-        bodyEncoding,
-        paginated: null,
-      });
-    }
-    if (methods.length > 0) {
-      out.push({
-        name: iface.name,
-        baseUrl: "",
-        defaults: {},
-        methods,
-      });
-    }
-  }
-  return out;
-}
-
-function deriveRestParams(paramsStruct, pathTemplate, verb) {
-  // Map the params struct's fields onto REST param locations:
-  //   • any field whose name appears as `{name}` in the path → "path"
-  //   • for verbs that carry a body (POST/PUT/PATCH), every non-path
-  //     field goes into the request body. Per-field metadata records
-  //     `bodyProp: true` so emit-openapi knows to bundle them as
-  //     properties of an object schema.
-  //   • everything else (GET/HEAD/OPTIONS/DELETE) → "query"
-  const out = [];
-  if (!paramsStruct) return { restParams: out, bodyEncoding: null };
-  const pathTokens = new Set([...pathTemplate.matchAll(/\{(\w+)\}/g)].map((m) => m[1]));
-  const carriesBody = ["POST", "PUT", "PATCH"].includes(verb);
-  let bodyEncoding = null;
-  for (const f of paramsStruct.fields ?? []) {
-    let inLoc;
-    if (pathTokens.has(f.name)) {
-      inLoc = "path";
-    } else if (carriesBody) {
-      inLoc = "body";
-      bodyEncoding = "json";
-    } else {
-      inLoc = "query";
-    }
-    out.push({
-      // Capnp types pass through verbatim. emit-openapi knows how to
-      // render Float32 → {type:number, format:float}, Int32 →
-      // {type:integer, format:int32}, etc. Translating to TS-string
-      // primitives here would lose that precision.
-      name: f.name,
-      type: f.type ?? "unknown",
-      role: inLoc,
-      optional: inLoc !== "path",
-    });
-  }
-  return { restParams: out, bodyEncoding };
-}
-
-/**
- * Sanitize a capnp struct name for use as an OpenAPI components.schemas
- * key. Drops the `$` capnp uses between method-name and Params/Results
- * (e.g. `getPet$Results` → `GetPetResults`) and PascalCases the result
- * so the OpenAPI key reads naturally.
- */
-function sanitizeOpenapiName(name) {
-  return String(name)
-    .replace(/[^A-Za-z0-9]+/g, "_")
-    .split("_")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join("");
-}
-
+// `scanRestAnnotations`, `stripRestAnnotations`,
+// `buildRestApisFromAnnotations`, and the helpers `deriveRestParams` /
+// `sanitizeOpenapiName` they depend on all live in
+// js/capnp_text_parser.mjs. Two exact copies of this code drifted apart
+// once already (the CLI's `scanRestAnnotations` started stripping all
+// `#`-comments, which broke recovery of the `# HTTP <verb> <path>` form
+// that emit-capnp produces). Single source of truth from now on.
 
 /**
  * Assign each field its wire-format offset following Cap'n Proto's actual
@@ -3948,6 +3777,143 @@ async function cmdEmitOpenapi(argv) {
   else { await writeFile(output, json); console.log(`Wrote ${output}`); }
 }
 
+/**
+ * One-shot OpenAPI ↔ Cap'n Proto conversion.
+ *
+ *   npx capnwasm convert <input> [-o output]
+ *
+ * Direction is inferred from the input extension:
+ *   .json|.yaml|.yml  →  .capnp
+ *   .capnp            →  .json|.yaml|.yml   (output extension picks the format)
+ *
+ * Routes through the same manifest IR + emitter modules the /openapi page
+ * uses, so the CLI and the browser produce byte-identical output for the
+ * same input. YAML I/O lazy-imports the optional `yaml` package and surfaces
+ * a clear error when it's missing.
+ */
+async function cmdConvert(argv) {
+  let input = null;
+  let output = null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "-o" || a === "--output") output = argv[++i];
+    else if (!input) input = a;
+  }
+  if (!input) {
+    console.error("usage: npx capnwasm convert <input> [-o output|-]");
+    console.error("");
+    console.error("  Direction inferred from extension:");
+    console.error("    .json | .yaml | .yml   →  .capnp");
+    console.error("    .capnp                 →  .json | .yaml | .yml");
+    console.error("");
+    console.error("  -o output    output path. Use '-' for stdout. When omitted,");
+    console.error("               picks the opposite-direction default next to <input>.");
+    process.exit(1);
+  }
+  if (!existsSync(input)) {
+    console.error(`input not found: ${input}`);
+    process.exit(1);
+  }
+
+  const inExt = extname(input).toLowerCase();
+  const inputIsOpenapi = inExt === ".json" || inExt === ".yaml" || inExt === ".yml";
+  const inputIsCapnp = inExt === ".capnp";
+  if (!inputIsOpenapi && !inputIsCapnp) {
+    console.error(`unknown input extension: ${inExt || "(none)"}. Expected .json, .yaml, .yml, or .capnp`);
+    process.exit(1);
+  }
+
+  if (!output) {
+    const stem = basename(input, inExt);
+    const outDir = dirname(input);
+    output = inputIsOpenapi
+      ? resolve(outDir, `${stem}.capnp`)
+      : resolve(outDir, `${stem}.openapi.json`);
+  }
+  const outExt = output === "-"
+    ? (inputIsOpenapi ? ".capnp" : ".json")
+    : extname(output).toLowerCase();
+
+  const fs = await import("node:fs/promises");
+
+  // ---- OpenAPI → capnp ----------------------------------------------------
+  if (inputIsOpenapi) {
+    if (outExt && outExt !== ".capnp") {
+      console.error(`output extension '${outExt}' doesn't match the inferred direction (OpenAPI → capnp). Expected .capnp.`);
+      process.exit(1);
+    }
+    const text = await fs.readFile(input, "utf8");
+    let spec;
+    if (inExt === ".json") {
+      spec = JSON.parse(text);
+    } else {
+      try {
+        const yaml = await import("yaml");
+        spec = yaml.parse(text);
+      } catch {
+        console.error("YAML input requires the optional 'yaml' package: npm install yaml");
+        process.exit(1);
+      }
+    }
+    const { parseOpenApi } = await import("../js/openapi_parser.mjs");
+    const model = parseOpenApi(spec);
+    const { buildManifest } = await import("../js/manifest.mjs");
+    const manifest = buildManifest(model, {
+      source: { name: basename(input), format: "openapi", path: resolve(input) },
+    });
+    const { buildCapnp } = await import("../js/emit_capnp.mjs");
+    const result = buildCapnp(manifest);
+    if (output === "-") {
+      process.stdout.write(result.text);
+    } else {
+      await writeFile(output, result.text);
+      console.log(`Wrote ${output}`);
+    }
+    const s = result.summary;
+    console.error(`  ${s.structs} struct(s), ${s.enums} enum(s), ${s.interfaces} interface(s), ${s.methods} method(s)`);
+    if (s.dropped.length > 0) console.error(`  ${s.dropped.length} schema(s) dropped`);
+    return;
+  }
+
+  // ---- capnp → OpenAPI ----------------------------------------------------
+  const wantYaml = outExt === ".yaml" || outExt === ".yml";
+  const wantJson = outExt === ".json" || outExt === "" || (output === "-" && !wantYaml);
+  if (!wantYaml && !wantJson) {
+    console.error(`output extension '${outExt}' doesn't match the inferred direction (capnp → OpenAPI). Expected .json, .yaml, or .yml.`);
+    process.exit(1);
+  }
+
+  const model = await parseSchema(input);
+  const { buildManifest } = await import("../js/manifest.mjs");
+  const manifest = buildManifest(model, {
+    source: { name: basename(input), format: "capnp", path: resolve(input) },
+  });
+  const { buildOpenApi, buildOpenApiJson } = await import("../js/emit_openapi.mjs");
+
+  let outputText;
+  if (wantYaml) {
+    let yaml;
+    try {
+      yaml = await import("yaml");
+    } catch {
+      console.error("YAML output requires the optional 'yaml' package: npm install yaml");
+      process.exit(1);
+    }
+    outputText = yaml.stringify(buildOpenApi(manifest));
+  } else {
+    outputText = buildOpenApiJson(manifest);
+  }
+  if (output === "-") {
+    process.stdout.write(outputText);
+  } else {
+    await writeFile(output, outputText);
+    console.log(`Wrote ${output}`);
+  }
+  const opCount = (model.interfaces ?? []).reduce((n, i) => n + (i.methods?.length ?? 0), 0)
+                + (model.restApis   ?? []).reduce((n, a) => n + (a.methods?.length ?? 0), 0);
+  console.error(`  ${(model.structs ?? []).length} struct(s), ${(model.interfaces ?? []).length} interface(s), ${(model.restApis ?? []).length} REST API(s), ${opCount} operation(s)`);
+}
+
 /** Emit canonical .capnp from a manifest. */
 async function cmdEmitCapnp(argv) {
   let manifestPath = null;
@@ -4425,6 +4391,7 @@ async function main() {
     case "probe":    await cmdProbe(argv.slice(1)); return;
     case "compat":
     case "diff":     await cmdCompat(argv.slice(1)); return;
+    case "convert":      await cmdConvert(argv.slice(1)); return;
     case "emit-openapi": await cmdEmitOpenapi(argv.slice(1)); return;
     case "emit-capnp":   await cmdEmitCapnp(argv.slice(1)); return;
     case "emit-agents":  await cmdEmitAgents(argv.slice(1)); return;

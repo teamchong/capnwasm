@@ -32,6 +32,15 @@
     .dropzone:hover, .dropzone.drag { border-color:#4fc3f7; color:#cfd8dc; background:#0d1418; }
     .dropzone input[type="file"] { display:none; }
     .download-bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+    .cli-equiv { background:#0b1116; border:1px solid #1a2530; border-radius:8px; padding:10px 12px; margin:0 0 12px 0; font-family:ui-monospace,SFMono-Regular,monospace; font-size:12px; line-height:1.55; color:#cfd8df; overflow-x:auto; }
+    .cli-equiv .lbl { display:block; color:#778897; font-size:10.5px; text-transform:uppercase; letter-spacing:0.06em; font-weight:700; margin-bottom:6px; }
+    .cli-equiv .row { display:flex; gap:10px; align-items:flex-start; }
+    .cli-equiv .row + .row { margin-top:6px; }
+    .cli-equiv .prompt { color:#4fc3f7; user-select:none; flex:0 0 auto; }
+    .cli-equiv .cmd { white-space:pre-wrap; word-break:break-word; flex:1 1 auto; }
+    .cli-equiv .copy { background:transparent; color:#9aa6ad; border:1px solid #2d3c47; padding:2px 8px; border-radius:5px; font-size:10.5px; cursor:pointer; flex:0 0 auto; font-family:inherit; }
+    .cli-equiv .copy:hover { color:#cfd8df; border-color:#4fc3f7; }
+    .cli-equiv .copy.ok { color:#66bb6a; border-color:#66bb6a; }
   </style>
 </head>
 <body>
@@ -79,6 +88,10 @@
         </span>
         <button id="convert">Convert</button>
         <span id="status" class="status">Ready.</span>
+      </div>
+      <div class="cli-equiv" id="cli-equiv" aria-label="Equivalent npx command">
+        <span class="lbl">Same in your terminal</span>
+        <div id="cli-rows"></div>
       </div>
       <div class="grid">
         <div class="col">

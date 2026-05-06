@@ -28,3 +28,8 @@ HANDOFF.md
 # Wrangler local state
 .wrangler/
 .capnwasm-zig
+
+# Large external schemas pulled in for round-trip tests. The
+# openapi_cloudflare_roundtrip test skips when these are absent and
+# prints the curl command to fetch them.
+test/_fixtures/cloudflare-openapi.json

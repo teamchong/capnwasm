@@ -37,6 +37,7 @@ const directionRadios = document.querySelectorAll<HTMLInputElement>('input[name=
 const inputTitle = document.getElementById("input-title")!;
 const dropzoneText = document.getElementById("dropzone-text")!;
 const primaryOutTitle = document.getElementById("primary-out-title")!;
+const cliRows = document.getElementById("cli-rows")!;
 
 type Direction = "openapi-to-capnp" | "capnp-to-openapi";
 
@@ -187,6 +188,73 @@ function applyDirectionLabels() {
     // same .capnp text the user pasted, which is just visual noise).
     secondaryBlock.style.display = "none";
   }
+  updateCliEquiv();
+}
+
+function updateCliEquiv() {
+  // Show the equivalent `npx capnwasm convert` invocation for whatever
+  // is loaded in the input pane. The page and the CLI run the same
+  // parser/emitter modules, so the commands shown here produce
+  // byte-identical output to the in-browser conversion.
+  const stem = lastBaseName || (direction === "openapi-to-capnp" ? "spec" : "schema");
+  const inputName = direction === "openapi-to-capnp"
+    ? `${stem}.openapi.json`
+    : `${stem}.capnp`;
+  const rows: { cmd: string; note?: string }[] = [];
+  if (direction === "openapi-to-capnp") {
+    rows.push({
+      cmd: `npx capnwasm convert ${inputName}`,
+      note: `# emits ${stem}.capnp next to ${inputName}`,
+    });
+  } else {
+    rows.push({
+      cmd: `npx capnwasm convert ${inputName} -o ${stem}.openapi.yaml`,
+      note: `# YAML output (needs the optional 'yaml' npm package)`,
+    });
+    rows.push({
+      cmd: `npx capnwasm convert ${inputName} -o ${stem}.openapi.json`,
+      note: `# canonical JSON, no extra deps`,
+    });
+  }
+
+  const frag = document.createDocumentFragment();
+  for (const r of rows) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const prompt = document.createElement("span");
+    prompt.className = "prompt";
+    prompt.textContent = "$";
+    row.appendChild(prompt);
+    const cmd = document.createElement("span");
+    cmd.className = "cmd";
+    cmd.textContent = r.cmd;
+    if (r.note) {
+      cmd.appendChild(document.createElement("br"));
+      const note = document.createElement("span");
+      note.style.color = "#778897";
+      note.textContent = "  " + r.note;
+      cmd.appendChild(note);
+    }
+    row.appendChild(cmd);
+    const copy = document.createElement("button");
+    copy.className = "copy";
+    copy.type = "button";
+    copy.textContent = "copy";
+    copy.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      try {
+        await navigator.clipboard.writeText(r.cmd);
+        copy.textContent = "copied";
+        copy.classList.add("ok");
+        setTimeout(() => { copy.textContent = "copy"; copy.classList.remove("ok"); }, 1200);
+      } catch {
+        copy.textContent = "copy failed";
+      }
+    });
+    row.appendChild(copy);
+    frag.appendChild(row);
+  }
+  cliRows.replaceChildren(frag);
 }
 
 function loadSampleForDirection() {
@@ -299,7 +367,12 @@ async function loadFile(file: File) {
   }
   const text = await file.text();
   input.value = text;
-  lastBaseName = file.name.replace(/\.(json|ya?ml|capnp)$/i, "") || "spec";
+  // Strip the conventional `.openapi.json` / `.openapi.yaml` / `.capnp` /
+  // plain `.json` / `.yaml` / `.yml` suffix to recover the project stem.
+  lastBaseName = file.name
+    .replace(/\.openapi\.(json|ya?ml)$/i, "")
+    .replace(/\.(json|ya?ml|capnp)$/i, "") || "spec";
+  updateCliEquiv();
   await convert();
 }
 

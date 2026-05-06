@@ -30,6 +30,11 @@ function validCapnpType(t, declared) {
   if (typeof t !== "string") return false;
   if (VALID_CAPNP_PRIMS.has(t)) return true;
   if (declared.has(t)) return true;
+  // Capability(<Iface>) is the codegen tag for interface-typed fields.
+  // The inner name may be an unresolved interface (only struct shapes are
+  // declared in the file's struct table) or "AnyPointer". The codegen
+  // knows what to do, so accept the wrapper.
+  if (t.startsWith("Capability(") && t.endsWith(")")) return true;
   if (t.startsWith("List(") && t.endsWith(")")) {
     return validCapnpType(t.slice(5, -1), declared);
   }
