@@ -19,7 +19,15 @@ import { chromium } from "playwright";
 
 const url = process.env.PLAYGROUND_URL || "http://127.0.0.1:8787/playground";
 
-const browser = await chromium.launch({ headless: true });
+// Headless Chromium has the GPU disabled by default. The globe-renderer
+// (three.js / globe.gl) needs a WebGL context, so swap to SwiftShader
+// to give the test a software-rendered context. Without this the page
+// errors out with "Failed to acquire WebGL context" before the
+// inspector / editor finish loading.
+const browser = await chromium.launch({
+  headless: true,
+  args: ["--use-gl=swiftshader", "--enable-webgl"],
+});
 const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
 const errors = [];
 

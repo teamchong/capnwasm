@@ -495,6 +495,20 @@ async function mountGlobe(): Promise<void> {
       <span>Loading globe&hellip;</span>
     </div>
   `;
+  // Detect WebGL availability up front. Headless browsers and locked-
+  // down environments (e.g. corporate VDI, some CI runners) won't have
+  // a usable WebGL context. Render a graceful placeholder instead of
+  // letting three.js explode on every frame and stop the rest of the
+  // page from working.
+  if (!hasWebGL()) {
+    els.globeCanvas.innerHTML = `
+      <div class="globe-placeholder">
+        <span>WebGL unavailable in this browser.</span>
+        <span style="font-size:0.72rem;color:#6a7882">Inspector + editor still work below.</span>
+      </div>
+    `;
+    return;
+  }
   let mod;
   try {
     mod = await import("./globe-renderer.js");
@@ -507,16 +521,39 @@ async function mountGlobe(): Promise<void> {
     `;
     return;
   }
-  els.globeCanvas.innerHTML = "";
-  globeHandle = mod.mountGlobeRenderer({
-    container:   els.globeCanvas,
-    bubbleLayer: els.bubbleLayer,
-    initial:     toGlobeEndpoints(endpoints),
-    onSelect:    (ep) => {
-      const real = endpoints.find((e) => e.id === ep.id);
-      if (real) selectEndpoint(real);
-    },
-  });
+  try {
+    els.globeCanvas.innerHTML = "";
+    globeHandle = mod.mountGlobeRenderer({
+      container:   els.globeCanvas,
+      bubbleLayer: els.bubbleLayer,
+      initial:     toGlobeEndpoints(endpoints),
+      onSelect:    (ep) => {
+        const real = endpoints.find((e) => e.id === ep.id);
+        if (real) selectEndpoint(real);
+      },
+    });
+  } catch (err) {
+    // Three.js raised mid-init (typical when WebGL probe lied). Stop
+    // re-throwing on every frame; show a placeholder; let the rest of
+    // the page keep working.
+    globeHandle = null;
+    els.globeCanvas.innerHTML = `
+      <div class="globe-placeholder">
+        <span style="color:#ff7043">Globe init failed.</span>
+        <span style="font-size:0.72rem;color:#6a7882">${(err as Error).message}</span>
+      </div>
+    `;
+  }
+}
+
+function hasWebGL(): boolean {
+  try {
+    const c = document.createElement("canvas");
+    const gl = c.getContext("webgl2") ?? c.getContext("webgl") ?? c.getContext("experimental-webgl" as any);
+    return !!gl;
+  } catch {
+    return false;
+  }
 }
 
 function toGlobeEndpoints(eps: Endpoint[]): GlobeEndpoint[] {

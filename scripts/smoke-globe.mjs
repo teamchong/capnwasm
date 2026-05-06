@@ -76,7 +76,12 @@ const port = server.address().port;
 const url = `http://127.0.0.1:${port}/playground.html`;
 console.log(`smoke-globe: serving ${DIST} on ${url}`);
 
-const browser = await chromium.launch();
+// Force SwiftShader so headless Chromium has a WebGL context for
+// three.js / globe.gl. Without this the renderer errors out and the
+// downstream init never completes.
+const browser = await chromium.launch({
+  args: ["--use-gl=swiftshader", "--enable-webgl"],
+});
 const ctx = await browser.newContext();
 const page = await ctx.newPage();
 
