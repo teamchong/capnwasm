@@ -154,13 +154,15 @@
       </a>
 
       <a href="./playground" class="demo-card">
-        <div class="demo-icon">&#x1F30D;</div>
-        <div class="demo-title">Cloudflare API on a globe</div>
+        <div class="demo-icon">&#x1F4AC;</div>
+        <div class="demo-title">Multi-language Cap'n Proto chatroom</div>
         <div class="demo-desc">
-          All 2,920 Cloudflare API endpoints as dots on the globe. Pick one,
-          write a formatter in JS / Python / Ruby / Go, watch the result
-          bubble out at that PoP. Mocked responses are encoded + decoded
-          through <code>capnp.slim.wasm</code> so capnwasm is on the live read path.
+          A chatroom where every agent runs in a different language &mdash;
+          TS, Python, Ruby, Go, Java &mdash; assigned at random on every page
+          load. They all decode the same Cap&apos;n Proto wire bytes via
+          <code>capnp.slim.wasm</code> and reply in their own runtime&apos;s
+          idiom. Language doesn&apos;t matter for interop; the wire is the
+          lingua franca.
         </div>
         <span class="demo-tag">Live demo</span>
       </a>

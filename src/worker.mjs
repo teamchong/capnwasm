@@ -62,7 +62,22 @@ import { createHttpBatchHandler } from "../js/http_batch.mjs";
 import { PrimitivesBuilder, PrimitivesReader } from "../js/conformance_schema.gen.mjs";
 import { WideUserDataBuilder } from "../js/typed_schema.gen.mjs";
 import { UserBuilder, UserListBuilder, BlobReplyBuilder, openUser } from "../web/src/playground/users.capnp.gen.mjs";
+import { defineSchema, encodeDynamic, openDynamic } from "../js/dynamic.mjs";
 import { RpcTarget, newWorkersRpcResponse } from "capnweb";
+
+// Shared schema for the multi-language chatroom playground. Browser
+// and Worker both encode/decode the same envelope so the wire format
+// is exactly the same in both halves of the demo.
+const CHAT_ENVELOPE_SCHEMA = defineSchema(
+  {
+    speaker: { kind: "text", slot: 0 },
+    body:    { kind: "text", slot: 1 },
+    replyTo: { kind: "text", slot: 2 },
+  },
+  { dataWords: 0, ptrWords: 3 },
+);
+const CHAT_LANGS = new Set(["js", "python", "ruby", "go", "java"]);
+const MAX_CHAT_BODY_BYTES = 4096;
 
 // The chat demo's WebSocket endpoints (`/chat-ws` and `/capnweb-chat-ws`)
 // route through a Durable Object so all clients share one in-memory chat
@@ -313,6 +328,52 @@ export default {
       }
     }
 
+    // POST /chat/<lang> — multi-language chatroom playground. Decodes
+    // a Cap'n Proto ChatEnvelope, generates a language-flavored reply,
+    // re-encodes a ChatEnvelope and returns. Same wire format every
+    // language sees; the JS Worker composes the reply for now while
+    // per-language Workers (gomode/pymode pattern, micropython /
+    // ruby.wasm / TinyGo / TeaVM) land iteratively.
+    const chatMatch = url.pathname.match(/^\/chat\/([a-z]+)$/);
+    if (req.method === "POST" && chatMatch) {
+      const lang = chatMatch[1];
+      if (!CHAT_LANGS.has(lang)) {
+        return jsonError(400, "unknown_lang", { lang, supported: [...CHAT_LANGS] });
+      }
+      try {
+        const buf = new Uint8Array(await req.arrayBuffer());
+        if (buf.length === 0) return jsonError(400, "empty_body");
+        if (buf.length > MAX_CHAT_BODY_BYTES) {
+          return jsonError(413, "body_too_large", { max: MAX_CHAT_BODY_BYTES, actual: buf.length });
+        }
+        const c = await cpp();
+        const reader = openDynamic(c, CHAT_ENVELOPE_SCHEMA, buf);
+        const incoming = {
+          speaker: reader.get("speaker") ?? "",
+          body:    reader.get("body") ?? "",
+          replyTo: reader.get("replyTo") ?? "",
+        };
+        try { reader.dispose(); } catch { /* slot pool may finalize already */ }
+        const replyBody = chatReplyFor(lang, incoming.speaker, incoming.body);
+        const out = encodeDynamic(c, CHAT_ENVELOPE_SCHEMA, {
+          speaker: `${lang}-bot`,
+          body:    replyBody,
+          replyTo: incoming.speaker,
+        });
+        return new Response(out, {
+          status: 200,
+          headers: {
+            "content-type": "application/capnp",
+            "x-capnwasm-runtime": "wasm-in-worker",
+            "x-capnwasm-lang": lang,
+            ...CORS_HEADERS,
+          },
+        });
+      } catch (err) {
+        return jsonError(400, "chat_decode_failed", err);
+      }
+    }
+
     // GET /api/health — quick liveness check the docs site can ping.
     if (req.method === "GET" && url.pathname === "/api/health") {
       const c = await cpp();
@@ -412,4 +473,33 @@ function checkEchoRateLimit(req) {
     });
   }
   return null;
+}
+
+// ---- Multi-language chatroom helpers ---------------------------------
+//
+// chatReplyFor(lang, speaker, body) produces the text reply for the
+// /chat/<lang> Worker route. Today every branch composes its reply on
+// the JS Worker side (the JS host knows what each language's idiomatic
+// f-string / interpolation / fmt.Sprintf / String.format LOOKS like and
+// emits that). Per-language Workers (each route running its own real
+// language runtime via wasm) are queued for follow-up commits; once
+// they land this switch becomes a dispatch into per-language Workers
+// instead of in-process JS branches.
+
+function chatReplyFor(lang, speaker, body) {
+  const len = body.length;
+  const bytes = new TextEncoder().encode(body).length;
+  switch (lang) {
+    case "python":
+      return `f"heard {body!r} from ${speaker} of length {${len}}"  # python f-string`;
+    case "ruby":
+      return `"#{${JSON.stringify(body)}.length} chars from #{${JSON.stringify(speaker)}}"  # ruby interp`;
+    case "go":
+      return `fmt.Sprintf("got %q from %q (%d bytes)", "${body.replace(/"/g, '\\"')}", "${speaker.replace(/"/g, '\\"')}", ${bytes})`;
+    case "java":
+      return `String.format("got '%s' from '%s' (%d chars)", "${body.replace(/"/g, '\\"')}", "${speaker.replace(/"/g, '\\"')}", ${len})`;
+    case "js":
+    default:
+      return `\`${body}\` from ${speaker} — ${len} char${len === 1 ? "" : "s"} via JS template literal.`;
+  }
 }
