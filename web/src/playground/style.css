@@ -68,7 +68,7 @@ nav a:hover {
   text-decoration: underline;
 }
 
-#controls {
+#wb-controls {
   display: flex;
   justify-content: center;
   align-items: center;
@@ -81,7 +81,7 @@ nav a:hover {
   flex-wrap: wrap;
 }
 
-#run-btn {
+#wb-run-btn {
   background: #4fc3f7;
   color: #0a0a0a;
   border: 0;
@@ -93,18 +93,18 @@ nav a:hover {
   transition: background 0.2s;
 }
 
-#run-btn:hover:not(:disabled) {
+#wb-run-btn:hover:not(:disabled) {
   background: #29b6f6;
 }
 
-#run-btn:disabled {
+#wb-run-btn:disabled {
   cursor: not-allowed;
   /* Match the cell-pulse rhythm so the page reads as one coherent
      "I'm busy" state rather than a dead button next to live cells. */
   animation: cell-pulse 1.2s ease-in-out infinite;
 }
 
-#controls label {
+#wb-controls label {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -112,7 +112,7 @@ nav a:hover {
   color: #999;
 }
 
-#controls select {
+#wb-controls select {
   background: #0a0a0a;
   color: #e0e0e0;
   border: 1px solid #222;
@@ -122,13 +122,13 @@ nav a:hover {
   font-family: inherit;
 }
 
-#status {
+#wb-status {
   color: #888;
   font-size: 0.78rem;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
-#results {
+#wb-results {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
@@ -138,7 +138,7 @@ nav a:hover {
 @media (max-width: 1000px) {
   .network-tip { display: none; }
 
-  #results {
+  #wb-results {
     grid-template-columns: 1fr;
   }
 }
@@ -258,7 +258,7 @@ nav a:hover {
   background: rgba(255, 255, 255, 0.02);
 }
 
-#summary {
+#wb-summary {
   text-align: left;
   font-size: 0.85rem;
   color: #999;
@@ -274,17 +274,17 @@ nav a:hover {
   word-break: break-word;
 }
 
-#summary.win {
+#wb-summary.win {
   border-color: rgba(102, 187, 106, 0.3);
   color: #66bb6a;
 }
 
-#summary.lose {
+#wb-summary.lose {
   border-color: rgba(255, 167, 38, 0.3);
   color: #ffa726;
 }
 
-#summary strong {
+#wb-summary strong {
   color: #fff;
 }
 

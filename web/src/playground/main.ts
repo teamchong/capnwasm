@@ -15,12 +15,15 @@ import { deserialize as cwbDeserialize } from "capnweb";
 import { runRpcBench, probeRpcServer } from "../rpc/bench";
 
 const $ = (id: string) => document.getElementById(id)!;
-const status = $("status");
-const summary = $("summary");
-const runBtn = $("run-btn") as HTMLButtonElement;
-const workloadSel = $("workload-selector") as HTMLSelectElement;
-const countSel = $("count-selector") as HTMLSelectElement;
-const itersSel = $("iters-selector") as HTMLSelectElement;
+// IDs are prefixed `wb-` (wire-bench) so this module can live on the
+// /render-bench page alongside the render-bench's own `run-btn` /
+// `iters-selector` / `status` / `summary` without DOM clashes.
+const status = $("wb-status");
+const summary = $("wb-summary");
+const runBtn = $("wb-run-btn") as HTMLButtonElement;
+const workloadSel = $("wb-workload-selector") as HTMLSelectElement;
+const countSel = $("wb-count-selector") as HTMLSelectElement;
+const itersSel = $("wb-iters-selector") as HTMLSelectElement;
 
 // Cap the per-workload record count so users can't ask for 200 records
 // from the "blob" workload (only 50 fixtures are emitted).
@@ -455,8 +458,8 @@ async function runRpcAfterFetch() {
   const rpcStatus = document.getElementById("rpc-status");
   const rpcSummary = document.getElementById("rpc-summary");
   const rpcIters = document.getElementById("rpc-iters-selector") as HTMLSelectElement | null;
-  const serverDot = document.getElementById("server-dot");
-  const serverMsg = document.getElementById("server-msg");
+    const serverDot = document.getElementById("wb-server-dot");
+  const serverMsg = document.getElementById("wb-server-msg");
   if (!rpcStatus || !rpcSummary || !rpcIters || !serverDot || !serverMsg) return;
   const wsOrigin = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
   rpcStatus.textContent = "Probing RPC server…";

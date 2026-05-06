@@ -7,6 +7,10 @@
   <meta name="description" content="End-to-end RPC bench across capnweb vs capnwasm × WS vs HTTP × small/medium/large × cold/warm. Measures the full pipeline from cap.method() to forced DOM layout. Wins, losses, ties — all in one place." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="stylesheet" href="./src/render-bench/style.css" />
+  <!-- Wire-format bench moved here from /playground; uses the playground
+       stylesheet for the protocol cards / RPC / general-suite tables. -->
+  <link rel="stylesheet" href="./src/playground/style.css" />
+  <link rel="stylesheet" href="./src/rpc/style.css" />
   <link rel="stylesheet" href="./src/site-nav.css" />
 </head>
 <body>
@@ -197,6 +201,294 @@ render(`bytes: ${len}`);</code></pre>
       <div id="bench-blob" class="bench-block"></div>
     </section>
 
+    <!-- ============================================================
+         Wire-format bench (moved here from /playground when /playground
+         was redesigned as the Cloudflare-globe demo). All IDs in this
+         section are prefixed `wb-` so the existing render-bench DOM
+         (run-btn, iters-selector, status, summary, server-dot, …) and
+         the wire-bench DOM don't collide. The wire-bench JS module
+         (web/src/playground/main.ts) is loaded below.
+         ============================================================ -->
+    <section class="wire-bench-section" aria-labelledby="wire-bench-title">
+      <h2 id="wire-bench-title">Wire-format bench &mdash; live in your browser</h2>
+      <p>
+        Same in-browser pipeline that used to live on <code>/playground</code>:
+        REST/JSON, capnweb, and capnwasm side-by-side, fetching the same
+        fixtures, decoding, rendering. Below it: an RPC bench (auto-runs
+        after the fetch) and a general workload suite (auto-runs after RPC).
+      </p>
+
+      <div id="wb-controls">
+        <button id="wb-run-btn">Run benchmark</button>
+        <label>
+          <span>Workload:</span>
+          <select id="wb-workload-selector">
+            <option value="small">small (32 B avatars, 200 records max)</option>
+            <option value="blob" selected>blob (4 KB avatars, 50 records max)</option>
+          </select>
+        </label>
+        <label>
+          <span>Records:</span>
+          <select id="wb-count-selector">
+            <option value="10">10</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </label>
+        <label>
+          <span>Iterations:</span>
+          <select id="wb-iters-selector">
+            <option value="1">1</option>
+            <option value="3" selected>3 (median)</option>
+            <option value="10">10 (median)</option>
+          </select>
+        </label>
+        <span id="wb-status" role="status" aria-live="polite" aria-atomic="true"></span>
+      </div>
+
+      <div id="wb-results">
+        <div class="protocol" id="rest-col">
+          <div class="protocol-header">
+            <span class="protocol-name">REST / JSON</span>
+            <span class="protocol-tag">fetch &rarr; <code>JSON.parse</code> &rarr; <code>o.id</code> / <code>o.name</code> / &hellip;</span>
+          </div>
+          <table class="metrics">
+            <tr><th>fetch</th><td id="rest-fetch">&mdash;</td></tr>
+            <tr><th>decode</th><td id="rest-decode">&mdash;</td></tr>
+            <tr><th>render</th><td id="rest-render">&mdash;</td></tr>
+            <tr class="total"><th>total</th><td id="rest-total">&mdash;</td></tr>
+            <tr><th>wire bytes</th><td id="rest-bytes">&mdash;</td></tr>
+            <tr><th>egress @ 1k r/s</th><td id="rest-egress">&mdash;</td></tr>
+          </table>
+          <ul class="render-target" id="rest-list"></ul>
+        </div>
+
+        <div class="protocol" id="cwb-col">
+          <div class="protocol-header">
+            <span class="protocol-name">capnweb</span>
+            <span class="protocol-tag">fetch &rarr; <code>capnweb.deserialize</code> &rarr; <code>o.id</code> / <code>o.name</code> / &hellip;</span>
+          </div>
+          <table class="metrics">
+            <tr><th>fetch</th><td id="cwb-fetch">&mdash;</td></tr>
+            <tr><th>decode</th><td id="cwb-decode">&mdash;</td></tr>
+            <tr><th>render</th><td id="cwb-render">&mdash;</td></tr>
+            <tr class="total"><th>total</th><td id="cwb-total">&mdash;</td></tr>
+            <tr><th>wire bytes</th><td id="cwb-bytes">&mdash;</td></tr>
+            <tr><th>egress @ 1k r/s</th><td id="cwb-egress">&mdash;</td></tr>
+          </table>
+          <ul class="render-target" id="cwb-list"></ul>
+        </div>
+
+        <div class="protocol" id="capnp-col">
+          <div class="protocol-header">
+            <span class="protocol-name">capnwasm</span>
+            <span class="protocol-tag">fetch &rarr; <code>openUser(cpp, bytes)</code> &rarr; <code>r.id</code> / <code>r.name</code> / &hellip; &rarr; <code>r.dispose()</code></span>
+          </div>
+          <table class="metrics">
+            <tr><th>fetch</th><td id="capnp-fetch">&mdash;</td></tr>
+            <tr><th>decode</th><td id="capnp-decode">&mdash;</td></tr>
+            <tr><th>render</th><td id="capnp-render">&mdash;</td></tr>
+            <tr class="total"><th>total</th><td id="capnp-total">&mdash;</td></tr>
+            <tr><th>wire bytes</th><td id="capnp-bytes">&mdash;</td></tr>
+            <tr><th>egress @ 1k r/s</th><td id="capnp-egress">&mdash;</td></tr>
+          </table>
+          <ul class="render-target" id="capnp-list"></ul>
+        </div>
+      </div>
+
+      <div id="wb-summary" role="status" aria-live="polite"></div>
+
+      <section id="rpc-bench-section" aria-labelledby="rpc-bench-title">
+        <h3 id="rpc-bench-title" class="section-title">RPC bench (auto-runs after fetch)</h3>
+        <div id="wb-server-status" class="server-status" role="status" aria-live="polite">
+          <span id="wb-server-dot" class="dot" aria-hidden="true"></span>
+          <span id="wb-server-msg">Probing RPC server&hellip;</span>
+        </div>
+
+        <div id="rpc-controls" class="rpc-controls">
+          <label>
+            <span>RPC iterations:</span>
+            <select id="rpc-iters-selector">
+              <option value="1">1</option>
+              <option value="3" selected>3 (median)</option>
+              <option value="10">10 (median)</option>
+            </select>
+          </label>
+          <span id="rpc-status" role="status" aria-live="polite" aria-atomic="true"></span>
+        </div>
+
+        <div id="results-rpc">
+          <div class="workload-card">
+            <h4>Burst &mdash; 200 concurrent <code>echoU8</code> calls</h4>
+            <table class="metrics">
+              <tr>
+                <th>capnwasm</th>
+                <td id="burst-capnp" class="big">&mdash;</td>
+                <td id="burst-capnp-x" class="ratio">&mdash;</td>
+              </tr>
+              <tr>
+                <th>capnweb</th>
+                <td id="burst-cwb" class="big">&mdash;</td>
+                <td id="burst-cwb-x" class="ratio">&mdash;</td>
+              </tr>
+            </table>
+          </div>
+
+          <div class="workload-card">
+            <h4>Pipelining &mdash; <code>getChild() &rarr; echoU8()</code></h4>
+            <table class="metrics">
+              <tr>
+                <th>capnwasm</th>
+                <td id="pipe-capnp" class="big">&mdash;</td>
+                <td id="pipe-capnp-x" class="ratio">&mdash;</td>
+              </tr>
+              <tr>
+                <th>capnweb</th>
+                <td id="pipe-cwb" class="big">&mdash;</td>
+                <td id="pipe-cwb-x" class="ratio">&mdash;</td>
+              </tr>
+            </table>
+          </div>
+
+          <div class="workload-card">
+            <h4>Big binary &mdash; <code>echoBinary(64 KB)</code></h4>
+            <table class="metrics">
+              <tr>
+                <th>capnwasm</th>
+                <td id="blob-capnp" class="big">&mdash;</td>
+                <td id="blob-capnp-bytes">&mdash;</td>
+              </tr>
+              <tr>
+                <th>capnweb</th>
+                <td id="blob-cwb" class="big">&mdash;</td>
+                <td id="blob-cwb-bytes">&mdash;</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+
+        <div id="rpc-summary" role="status" aria-live="polite"></div>
+      </section>
+
+      <section id="general-bench-section" aria-labelledby="general-bench-title">
+        <h3 id="general-bench-title" class="section-title">General workload suite (auto-runs after RPC)</h3>
+        <p class="section-copy">
+          Same browser, same wasm runtime, no network. Each row spells out the
+          <em>exact</em> capnwasm and JSON expressions being timed so the comparison
+          is auditable from the page itself.
+        </p>
+        <div id="general-controls" class="rpc-controls">
+          <span id="general-status" role="status" aria-live="polite" aria-atomic="true">Waiting for RPC bench&hellip;</span>
+        </div>
+        <table class="metrics general-metrics">
+          <thead>
+            <tr>
+              <th>workload</th>
+              <th>capnwasm</th>
+              <th>JSON</th>
+              <th>ratio</th>
+              <th>wire bytes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="row-numbers">
+              <th><span class="row-title">Small struct &mdash; 5 fields, full read</span></th>
+              <td id="general-small-capnp">&mdash;</td>
+              <td id="general-small-json">&mdash;</td>
+              <td id="general-small-ratio">&mdash;</td>
+              <td id="general-small-bytes">&mdash;</td>
+            </tr>
+            <tr class="row-code-pair">
+              <td colspan="5">
+                <div class="code-pair">
+                  <pre class="code-pair-pane"><span class="code-pair-tag tag-capnwasm">capnwasm</span><code>const r = openUser(cpp, bytes);
+const v = Number(r.id) + r.name.length + r.email.length
+        + (r.active ? 1 : 0) + r.avatar.length;
+r.dispose();</code></pre>
+                  <pre class="code-pair-pane"><span class="code-pair-tag tag-json">JSON</span><code>const o = JSON.parse(text);
+return o.id + o.name.length + o.email.length
+     + (o.active ? 1 : 0) + o.avatar.length;</code></pre>
+                </div>
+              </td>
+            </tr>
+
+            <tr class="row-numbers">
+              <th><span class="row-title">Sparse struct &mdash; 17 fields present, 5 read</span></th>
+              <td id="general-sparse-capnp">&mdash;</td>
+              <td id="general-sparse-json">&mdash;</td>
+              <td id="general-sparse-ratio">&mdash;</td>
+              <td id="general-sparse-bytes">&mdash;</td>
+            </tr>
+            <tr class="row-code-pair">
+              <td colspan="5">
+                <div class="code-pair">
+                  <pre class="code-pair-pane"><span class="code-pair-tag tag-capnwasm">capnwasm</span><code>const r = openPrimitives(cpp, bytes);
+const sum = r.u8 + r.u32 + r.f64
+          + (r.flag0 ? 1 : 0) + r.text.length;
+r.dispose();</code></pre>
+                  <pre class="code-pair-pane"><span class="code-pair-tag tag-json">JSON</span><code>const o = JSON.parse(text);
+return o.u8 + o.u32 + o.f64
+     + (o.flag0 ? 1 : 0) + o.text.length;</code></pre>
+                </div>
+              </td>
+            </tr>
+
+            <tr class="row-numbers">
+              <th><span class="row-title">Numeric list &mdash; 1000 f64s, sum</span></th>
+              <td id="general-view-capnp">&mdash;</td>
+              <td id="general-view-json">&mdash;</td>
+              <td id="general-view-ratio">&mdash;</td>
+              <td id="general-view-bytes">&mdash;</td>
+            </tr>
+            <tr class="row-code-pair">
+              <td colspan="5">
+                <div class="code-pair">
+                  <pre class="code-pair-pane"><span class="code-pair-tag tag-capnwasm">capnwasm</span><code>const r = openNumericProbe(cpp, bytes);
+const v = r.f64s.view();    // zero-copy Float64Array
+let sum = 0;
+for (let i = 0; i &lt; v.length; i++) sum += v[i];
+r.dispose();</code></pre>
+                  <pre class="code-pair-pane"><span class="code-pair-tag tag-json">JSON</span><code>const o = JSON.parse(text);
+let sum = 0;
+for (let i = 0; i &lt; o.f64s.length; i++) sum += o.f64s[i];</code></pre>
+                </div>
+              </td>
+            </tr>
+
+            <tr class="row-numbers">
+              <th><span class="row-title">List scan &mdash; 200 rows, reduce over name + active</span></th>
+              <td id="general-list-capnp">&mdash;</td>
+              <td id="general-list-json">&mdash;</td>
+              <td id="general-list-ratio">&mdash;</td>
+              <td id="general-list-bytes">&mdash;</td>
+            </tr>
+            <tr class="row-code-pair">
+              <td colspan="5">
+                <div class="code-pair">
+                  <pre class="code-pair-pane"><span class="code-pair-tag tag-capnwasm">capnwasm</span><code>const r = openUserList(cpp, bytes);
+const sum = r.draft(p =&gt;
+  p.users.reduce(
+    (a, u) =&gt; a + u.name.length + (u.active ? 1 : 0),
+    0,
+  ),
+);
+r.dispose();</code></pre>
+                  <pre class="code-pair-pane"><span class="code-pair-tag tag-json">JSON</span><code>const o = JSON.parse(text);
+let sum = 0;
+for (let i = 0; i &lt; o.users.length; i++) {
+  sum += o.users[i].name.length
+       + (o.users[i].active ? 1 : 0);
+}</code></pre>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div id="general-summary" role="status" aria-live="polite"></div>
+      </section>
+    </section>
+
     <section>
       <h2>Methodology</h2>
       <ul>
@@ -224,6 +516,10 @@ render(`bytes: ${len}`);</code></pre>
     </div>
   </article>
   <script type="module" src="./src/render-bench/main.ts"></script>
+  <!-- Wire-format bench was moved here from /playground; this module
+       attaches to the wb-* IDs above and runs independently of the
+       render-bench pipeline. -->
+  <script type="module" src="./src/playground/main.ts"></script>
   <script type="module" src="./src/analytics/main.ts"></script>
 </body>
 </html>
