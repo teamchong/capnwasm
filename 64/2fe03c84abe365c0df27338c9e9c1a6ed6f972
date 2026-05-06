@@ -1,0 +1,29 @@
+web/dist/playground.html
+  a40863a2008f4bc3 17,24,234,242-243,249-264,270-285,291-295,297-299,301-307,313-331
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+web/playground.html
+  a40863a2008f4bc3 229,237-238,244-259,265-280,286-290,292-302,308-326
+web/src/playground/style.css
+  a40863a2008f4bc3 389-397,399,403,410-413,416-423,425,429,433-446,450-451,455,459-468,471,473,475,482-483
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "642fe03c84abe365c0df27338c9e9c1a6ed6f972",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 205,
+      "total_deletions": 116,
+      "accepted_lines": 205,
+      "overriden_lines": 0
+    }
+  }
+}
