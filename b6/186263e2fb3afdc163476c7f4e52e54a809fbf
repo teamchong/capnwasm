@@ -1,0 +1,47 @@
+web/dist/playground.html
+  a40863a2008f4bc3 17,21,86-89
+scripts/smoke-globe.mjs
+  a40863a2008f4bc3 133-144
+web/src/playground/globe.ts
+  a40863a2008f4bc3 54-55,66-70,210-232,258,260-263,265-266,403-407
+web/src/playground/globe.css
+  a40863a2008f4bc3 415-442
+web/dist/assets/playground-Tr0gRJAP.js
+  a40863a2008f4bc3 1-9,13-14,16-19,21-22,24,28-29,34,38-39,45,52-53,59-60,67,72,75,77
+web/playground.html
+  a40863a2008f4bc3 83-86
+web/dist/assets/dynamic-D4jjy1bG.js
+  a40863a2008f4bc3 1
+web/src/playground/runtime-capnwasm.ts
+  a40863a2008f4bc3 1-160
+web/dist/assets/dynamic-C1z_q_om.js
+  a40863a2008f4bc3 1
+web/dist/assets/runtime-capnwasm-CIXiQqni.js
+  a40863a2008f4bc3 1
+web/dist/data/cf-endpoints.json
+  a40863a2008f4bc3 1
+web/dist/dynamic.html
+  a40863a2008f4bc3 20,23
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "b6186263e2fb3afdc163476c7f4e52e54a809fbf",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 337,
+      "total_deletions": 92,
+      "accepted_lines": 337,
+      "overriden_lines": 0
+    }
+  }
+}
