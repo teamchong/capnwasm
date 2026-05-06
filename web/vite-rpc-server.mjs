@@ -24,9 +24,10 @@ import {
   PostParamsReader,
   ChatMessageBuilder,
   GetSinceParamsReader,
+  ChatMessageListBuilder,
 } from "./src/chat/chat.capnp.gen.mjs";
 import { WideUserDataBuilder, WideUserDataReader } from "../js/typed_schema.gen.mjs";
-import { defineSchema, buildDynamic } from "../js/dynamic.mjs";
+import { UserListBuilder, BlobReplyBuilder } from "./src/playground/users.capnp.gen.mjs";
 import { newWebSocketRpcSession, nodeHttpBatchRpcResponse, RpcTarget } from "capnweb";
 
 const IFC = 0xc0ffeec0ffeec0ffn;
@@ -45,26 +46,6 @@ const RENDER_IFC          = 0xb1a5c0deb1a5c0den;
 const RENDER_M_USER_LIST  = 0;  // params: CountParams { n }      → UserList
 const RENDER_M_METADATA   = 1;  // params: empty                   → WideUserData
 const RENDER_M_BLOB       = 2;  // params: CountParams { n }       → BlobReply
-
-// Inline schema for User (mirror of web/users.capnp). The codegen builder
-// can't write List(User) yet (the gen path skips struct lists in
-// fromObject), so the server hand-builds the response via buildDynamic.
-// Wire dimensions match the codegen reader on the client side, which is
-// what matters for round-trip correctness.
-const USER_SCHEMA = defineSchema({
-  id:         { kind: "uint64", offset: 0 },
-  joinedAtMs: { kind: "uint64", offset: 8 },
-  active:     { kind: "bool",   bitOffset: 128 }, // bit 128 == byte 16, bit 0
-  name:       { kind: "text",   slot: 0 },
-  email:      { kind: "text",   slot: 1 },
-  avatar:     { kind: "data",   slot: 2 },
-}, { dataWords: 3, ptrWords: 3 });
-const USER_LIST_SCHEMA = defineSchema({
-  users: { kind: "listStruct", slot: 0, element: USER_SCHEMA },
-}, { dataWords: 0, ptrWords: 1 });
-const BLOB_SCHEMA = defineSchema({
-  data: { kind: "data", slot: 0 },
-}, { dataWords: 0, ptrWords: 1 });
 
 function makeUser(i) {
   return {
@@ -99,20 +80,6 @@ const CHAT_IFC         = 0xc4a7c4a7c4a7c4a7n;
 const CHAT_M_POST      = 0;
 const CHAT_M_SUBSCR    = 1;
 const CHAT_M_GET_SINCE = 2;
-
-// Wire-shape mirror of the ChatMessage / ChatMessageList structs in
-// chat.capnp. Same dimensions as the codegen Builder's static fields.
-const CHAT_MESSAGE_SCHEMA = defineSchema({
-  id:     { kind: "uint64", offset: 0 },
-  author: { kind: "text",   slot: 0 },
-  text:   { kind: "text",   slot: 1 },
-  ts:     { kind: "uint64", offset: 8 },
-  image:  { kind: "data",   slot: 2 },
-}, { dataWords: 2, ptrWords: 3 });
-
-const CHAT_MESSAGE_LIST_SCHEMA = defineSchema({
-  items: { kind: "listStruct", slot: 0, element: CHAT_MESSAGE_SCHEMA },
-}, { dataWords: 0, ptrWords: 1 });
 
 const CHAT_HISTORY_LIMIT = 100;
 
@@ -229,15 +196,15 @@ function buildRegistry() {
   reg.register(CHAT_IFC, CHAT_M_GET_SINCE, (_t, ctx) => {
     const p = ctx.openParams(GetSinceParamsReader);
     const items = messagesSince(sideCapnwasm, Number(p.since));
-    const b = buildDynamic(ctx.cpp, CHAT_MESSAGE_LIST_SCHEMA);
-    b.set("items", items.map((m) => ({
+    const b = new ChatMessageListBuilder(ctx.cpp);
+    b.items = items.map((m) => ({
       id: BigInt(m.id),
       author: m.author,
       text: m.text,
       ts: BigInt(m.ts),
       image: m.image,
-    })));
-    return b.finalize();
+    }));
+    return b.toBytes();
   });
 
   // ---- render-bench methods --------------------------------------------
@@ -259,9 +226,9 @@ function buildRegistry() {
     const n = paramN(ctx.paramsBytes(), 100);
     const users = new Array(n);
     for (let i = 0; i < n; i++) users[i] = makeUser(i);
-    const b = buildDynamic(target.cpp, USER_LIST_SCHEMA);
-    b.set("users", users);
-    return b.finalize();
+    const b = new UserListBuilder(target.cpp);
+    b.users = users;
+    return b.toBytes();
   });
 
   reg.register(RENDER_IFC, RENDER_M_METADATA, (target, _ctx) => {
@@ -270,9 +237,9 @@ function buildRegistry() {
 
   reg.register(RENDER_IFC, RENDER_M_BLOB, (target, ctx) => {
     const n = paramN(ctx.paramsBytes(), 4096);
-    const b = buildDynamic(target.cpp, BLOB_SCHEMA);
-    b.set("data", makeBlob(n));
-    return b.finalize();
+    const b = new BlobReplyBuilder(target.cpp);
+    b.data = makeBlob(n);
+    return b.toBytes();
   });
 
   return reg;

@@ -594,6 +594,82 @@ function _capnwasmListProject(cpp, ptrIndex, fields, names, mapFn, bounds, filte
   return dec(u8, dv, out, rows, _LIST_HELPERS, mapFn, start, limit);
 }
 
+function _capnwasmListReduce(cpp, ptrIndex, fields, names, reducerFn, initial, bounds, filter) {
+  const projected = _capnwasmListProject(cpp, ptrIndex, fields, names, null, bounds, filter);
+  if (projected === null) return null;
+  return projected.reduce(reducerFn, initial);
+  const exp = cpp._exports;
+  if (typeof exp.cpp_any_list_project !== "function") return null;
+  if (filter && names.indexOf(filter.field) < 0) return null;
+  const entry = _getPickRequest(fields, names);
+  cpp._u8.set(entry.req, cpp._auxPtr);
+  const written = exp.cpp_any_list_project(ptrIndex, entry.req.length);
+  if (!written) return null;
+  const out = cpp._outPtr;
+  const u8 = cpp._u8;
+  const dv = new DataView(u8.buffer, out, written);
+  const rows = dv.getUint32(0, true);
+  const cols = dv.getUint32(4, true);
+  if (cols !== names.length) return null;
+  const descs = entry.descs;
+  let start = 0, limit = rows;
+  if (bounds) {
+    start = bounds[0] | 0;
+    if (start > rows) start = rows;
+    const requested = bounds[1];
+    if (requested !== Infinity) {
+      const max = requested | 0;
+      if (max < limit - start) limit = start + max;
+    }
+  }
+  let filterColIdx = -1;
+  if (filter) {
+    filterColIdx = names.indexOf(filter.field);
+    if (filterColIdx < 0 || (descs[filterColIdx] && descs[filterColIdx].type !== "bool")) filter = null;
+  }
+  const rowStride = names.length * 4;
+  let readPos = 8 + rows * rowStride;
+  const skipPayload = (cellBase) => {
+    for (let col = 0; col < cols; col++) {
+      const d = descs[col];
+      if (d.type === "text" || d.type === "data") { const h = dv.getUint32(cellBase + col * 4, true); if (h !== 0xFFFFFFFF) readPos += h; }
+      else if (d.type === "uint64" || d.type === "int64" || d.type === "float64") readPos += 8;
+    }
+  };
+  for (let row = 0; row < start; row++) skipPayload(8 + row * rowStride);
+  let acc = initial;
+  for (let row = start; row < limit; row++) {
+    const cellBase = 8 + row * rowStride;
+    if (filter) {
+      const pred = dv.getUint32(cellBase + filterColIdx * 4, true);
+      const reject = filter.kind === "truthy" ? pred === 0 : pred !== 0;
+      if (reject) { skipPayload(cellBase); continue; }
+    }
+    const item = {};
+    for (let col = 0; col < cols; col++) {
+      const h = dv.getUint32(cellBase + col * 4, true);
+      const d = descs[col];
+      switch (d.type) {
+        case "text": if (h === 0xFFFFFFFF) item[names[col]] = undefined; else if (h === 0) item[names[col]] = ""; else { item[names[col]] = decodeAscii(u8.subarray(out + readPos, out + readPos + h)); readPos += h; } break;
+        case "data": if (h === 0xFFFFFFFF) item[names[col]] = undefined; else { item[names[col]] = u8.slice(out + readPos, out + readPos + h); readPos += h; } break;
+        case "bool": item[names[col]] = h === 1; break;
+        case "uint8": case "uint16": item[names[col]] = h; break;
+        case "int8": item[names[col]] = (h << 24) >> 24; break;
+        case "int16": item[names[col]] = (h << 16) >> 16; break;
+        case "uint32": item[names[col]] = h >>> 0; break;
+        case "int32": item[names[col]] = h | 0; break;
+        case "float32": _F32_VIEW_U32[0] = h >>> 0; item[names[col]] = _F32_VIEW_F32[0]; break;
+        case "int64": { const lo = dv.getUint32(readPos, true); const hi = dv.getInt32(readPos + 4, true); item[names[col]] = (hi >= -0x200000 && hi <= 0x1FFFFF) ? hi * 4294967296 + lo : dv.getBigInt64(readPos, true); readPos += 8; break; }
+        case "uint64": { const lo = dv.getUint32(readPos, true) >>> 0; const hi = dv.getUint32(readPos + 4, true) >>> 0; item[names[col]] = (hi <= 0x001FFFFF) ? hi * 4294967296 + lo : ((BigInt(hi) << 32n) | BigInt(lo)); readPos += 8; break; }
+        case "float64": _F64_VIEW_U32[0] = dv.getUint32(readPos, true); _F64_VIEW_U32[1] = dv.getUint32(readPos + 4, true); item[names[col]] = _F64_VIEW_F64[0]; readPos += 8; break;
+        default: item[names[col]] = undefined;
+      }
+    }
+    acc = reducerFn(acc, item, row);
+  }
+  return acc;
+}
+
 const _STRUCT_FIELDS = Object.create(null);
 export class StaleReaderError extends Error {
   constructor(message = "Cap'n Proto reader is stale because the CapnCpp runtime opened another message") {
@@ -675,6 +751,7 @@ function _ensureCapnwasmReader(reader) {
 }
 const _LIST_MAP_TAG = Symbol("_capnwasm_listMap");
 const _LIST_MAP_SLICE_TAG = Symbol("_capnwasm_listMapSlice");
+const _LIST_REDUCE_TAG = Symbol("_capnwasm_listReduce");
 function _makeListMapTag(idx, slice) {
   const tag = [];
   tag[_LIST_MAP_TAG] = idx;
@@ -696,6 +773,29 @@ function _makeListMapTag(idx, slice) {
     return _makeListMapTag(idx, [newStart, newLimit]);
   }});
   return tag;
+}
+function _makeListReduceTag(idx) {
+  const tag = {};
+  tag[_LIST_REDUCE_TAG] = idx;
+  return tag;
+}
+function _dummyForDesc(desc) {
+  if (!desc) return undefined;
+  switch (desc.type) {
+    case "text": return "";
+    case "data": return new Uint8Array(0);
+    case "bool": return false;
+    default: return 0;
+  }
+}
+function _dummyAccumulator(initial) {
+  if (Array.isArray(initial)) return [];
+  if (initial && typeof initial === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(initial)) out[k] = Array.isArray(v) ? [] : (v && typeof v === "object" ? {} : v);
+    return out;
+  }
+  return initial;
 }
 function _parseSimplePredicate(fn) {
   let src;
@@ -731,6 +831,11 @@ function _isShapePreservingMap(fn, leafFields) {
 function _planRaw(fields, fn) {
   const selected = [];
   const seen = new Set();
+  const recordField = (schema, path) => {
+    const key = path.join(".");
+    if (!seen.has(key)) { seen.add(key); selected.push({ kind: "field", path }); }
+    return _dummyForDesc(schema[path[path.length - 1]]);
+  };
   const make = (schema, path) => new Proxy(Object.create(null), {
     get(_, name) {
       if (typeof name !== "string") return undefined;
@@ -746,6 +851,13 @@ function _planRaw(fields, fn) {
           selected.push(entry);
           return idx;
         };
+        const recordReduce = (reducerFn, initial, filter) => {
+          const idx = selected.length;
+          const entry = { kind: "listReduce", path: nextPath, inner: list[1], fn: reducerFn, initial };
+          if (filter) entry.filter = filter;
+          selected.push(entry);
+          return idx;
+        };
         const buildFusedProxy = (filter) => ({
           map(childFn) {
             const idx = recordMap(childFn, filter);
@@ -755,34 +867,43 @@ function _planRaw(fields, fn) {
             const parsed = _parseSimplePredicate(predicateFn);
             if (parsed) return buildFusedProxy(parsed);
             return buildSafeProxy();
+          },
+          reduce(reducerFn, initial) {
+            const idx = recordReduce(reducerFn, initial, filter);
+            return _makeListReduceTag(idx);
           }
         });
         const buildSafeProxy = () => ({
           map(childFn) { recordMap(childFn, null); return []; },
-          filter() { return buildSafeProxy(); }
+          filter() { return buildSafeProxy(); },
+          reduce(reducerFn, initial) { const idx = recordReduce(reducerFn, initial, null); return _makeListReduceTag(idx); }
         });
         return buildFusedProxy(null);
       }
       if (_STRUCT_FIELDS[desc.type]) return make(_STRUCT_FIELDS[desc.type], nextPath);
-      const key = nextPath.join(".");
-      if (!seen.has(key)) { seen.add(key); selected.push({ kind: "field", path: nextPath }); }
-      return undefined;
+      return recordField(schema, nextPath);
     }
   });
   const result = fn(make(fields, []));
   let outerListMapIdx = -1;
+  let outerListReduceIdx = -1;
   let outerSlice = null;
   if (result && typeof result === "object" && _LIST_MAP_TAG in result) {
     outerListMapIdx = result[_LIST_MAP_TAG];
     if (_LIST_MAP_SLICE_TAG in result) outerSlice = result[_LIST_MAP_SLICE_TAG];
   }
-  return { selected, outerListMapIdx, outerSlice };
+  if (result && typeof result === "object" && _LIST_REDUCE_TAG in result) {
+    outerListReduceIdx = result[_LIST_REDUCE_TAG];
+  }
+  return { selected, outerListMapIdx, outerListReduceIdx, outerSlice };
 }
-function _compilePlan(selected, outerListMapIdx, outerSlice) {
+function _compilePlan(selected, outerListMapIdx, outerSlice, outerListReduceIdx = -1) {
   const leaf = [];
   const nestedRaw = new Map();
   const listMapRaw = [];
+  const listReduceRaw = [];
   let outerListMapPos = -1;
+  let outerListReducePos = -1;
   for (let i = 0; i < selected.length; i++) {
     const item = selected[i];
     const head = item.path[0];
@@ -794,6 +915,11 @@ function _compilePlan(selected, outerListMapIdx, outerSlice) {
       const lmEntry = { name: head, inner: item.inner, fn: item.fn };
       if (item.filter) lmEntry.filter = item.filter;
       listMapRaw.push(lmEntry);
+    } else if (item.kind === "listReduce" && item.path.length === 1) {
+      if (i === outerListReduceIdx) outerListReducePos = listReduceRaw.length;
+      const lrEntry = { name: head, inner: item.inner, fn: item.fn, initial: item.initial };
+      if (item.filter) lrEntry.filter = item.filter;
+      listReduceRaw.push(lrEntry);
     } else {
       let entry = nestedRaw.get(head);
       if (!entry) { entry = []; nestedRaw.set(head, entry); }
@@ -810,11 +936,15 @@ function _compilePlan(selected, outerListMapIdx, outerSlice) {
       && _isShapePreservingMap(fn, innerPlan.leaf);
     return { name, inner, fn, filter, plan: innerPlan, shapePreserving };
   });
-  return { leaf, nested, listMap, outerListMapPos, outerSlice };
+  const listReduce = listReduceRaw.map(({ name, inner, fn, initial, filter }) => {
+    const innerPlan = _planDraft(_STRUCT_FIELDS[inner], (row) => { fn(_dummyAccumulator(initial), row, 0); return undefined; }).plan;
+    return { name, inner, fn, initial, filter, plan: innerPlan };
+  });
+  return { leaf, nested, listMap, listReduce, outerListMapPos, outerListReducePos, outerSlice };
 }
 function _planDraft(fields, fn) {
   const raw = _planRaw(fields, fn);
-  return { plan: _compilePlan(raw.selected, raw.outerListMapIdx, raw.outerSlice) };
+  return { plan: _compilePlan(raw.selected, raw.outerListMapIdx, raw.outerSlice, raw.outerListReduceIdx) };
 }
 function _getDraftPlan(fields, fn) {
   let perFields = _DRAFT_PLAN_CACHE.get(fields);
@@ -854,10 +984,32 @@ function _materializeDraft(cpp, fields, plan) {
     }
     out[item.name] = arr;
   }
+  for (let i = 0; i < plan.listReduce.length; i++) {
+    const item = plan.listReduce[i];
+    const desc = fields[item.name];
+    if (!desc || !_STRUCT_FIELDS[item.inner]) { out[item.name] = item.initial; continue; }
+    const innerFields = _STRUCT_FIELDS[item.inner];
+    if (item.plan.nested.length === 0 && item.plan.listMap.length === 0 && item.plan.listReduce.length === 0) {
+      const fast = _capnwasmListReduce(cpp, desc.off, innerFields, item.plan.leaf, item.fn, item.initial, null, item.filter);
+      if (fast !== null) { out[item.name] = fast; continue; }
+    }
+    const rows = _capnwasmListProject(cpp, desc.off, innerFields, item.plan.leaf);
+    if (rows === null) { out[item.name] = item.initial; continue; }
+    out[item.name] = rows.reduce(item.fn, item.initial);
+  }
   return out;
 }
 function _runDraft(cpp, fields, fn) {
   const plan = _getDraftPlan(fields, fn);
+  if (plan.outerListReducePos >= 0 && plan.listReduce.length > 0) {
+    const item = plan.listReduce[plan.outerListReducePos];
+    const desc = fields[item.name];
+    if (desc && _STRUCT_FIELDS[item.inner] && item.plan.nested.length === 0 && item.plan.listMap.length === 0 && item.plan.listReduce.length === 0) {
+      const innerFields = _STRUCT_FIELDS[item.inner];
+      const fast = _capnwasmListReduce(cpp, desc.off, innerFields, item.plan.leaf, item.fn, item.initial, plan.outerSlice, item.filter);
+      if (fast !== null) return fast;
+    }
+  }
   if (plan.outerListMapPos >= 0 && plan.listMap.length > 0) {
     const item = plan.listMap[plan.outerListMapPos];
     const desc = fields[item.name];
@@ -868,7 +1020,7 @@ function _runDraft(cpp, fields, fn) {
       if (fast !== null) return fast;
     }
   }
-  if (plan.nested.length === 0 && plan.listMap.length === 0) {
+  if (plan.nested.length === 0 && plan.listMap.length === 0 && plan.listReduce.length === 0) {
     return fn(_capnwasmPick(cpp, fields, plan.leaf));
   }
   return fn(_materializeDraft(cpp, fields, plan));

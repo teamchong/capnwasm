@@ -539,3 +539,70 @@ struct UserList {
   );
   assert.deepEqual(projected, [{ id: 11, name: "Grace" }]);
 });
+
+test("draft: list reduce aggregates projected rows", async () => {
+  const mod = await compile(`@0xb1f7c5e9c4e0214c;
+struct User {
+  name @0 :Text;
+  active @1 :Bool;
+}
+struct UserList {
+  users @0 :List(User);
+}`);
+  const cpp = await load();
+  const User = defineSchema({
+    name: { kind: "text", slot: 0 },
+    active: { kind: "bool", bitOffset: 0 },
+  }, { dataWords: 1, ptrWords: 1 });
+  const UserList = defineSchema({
+    users: { kind: "listStruct", slot: 0, element: User },
+  }, { dataWords: 0, ptrWords: 1 });
+  const bytes = buildDynamic(cpp, UserList).fromObject({
+    users: [
+      { name: "Ada", active: true },
+      { name: "Grace", active: false },
+      { name: "Lin", active: true },
+    ],
+  }).finalize();
+
+  const total = mod.openUserList(cpp, bytes).draft((r) =>
+    r.users.reduce((sum, u) => sum + u.name.length + (u.active ? 1 : 0), 0),
+  );
+
+  assert.equal(total, 3 + 1 + 5 + 0 + 3 + 1);
+});
+
+test("draft: list reduce handles object accumulators", async () => {
+  const mod = await compile(`@0xb1f7c5e9c4e0214d;
+struct User {
+  name @0 :Text;
+  active @1 :Bool;
+}
+struct UserList {
+  users @0 :List(User);
+}`);
+  const cpp = await load();
+  const User = defineSchema({
+    name: { kind: "text", slot: 0 },
+    active: { kind: "bool", bitOffset: 0 },
+  }, { dataWords: 1, ptrWords: 1 });
+  const UserList = defineSchema({
+    users: { kind: "listStruct", slot: 0, element: User },
+  }, { dataWords: 0, ptrWords: 1 });
+  const bytes = buildDynamic(cpp, UserList).fromObject({
+    users: [
+      { name: "Zoë", active: true },
+      { name: "李雷", active: false },
+    ],
+  }).finalize();
+
+  const got = mod.openUserList(cpp, bytes).draft((r) =>
+    r.users.reduce((acc, u) => {
+      acc.names.push(u.name);
+      if (u.active) acc.active++;
+      return acc;
+    }, { names: [], active: 0 }),
+  );
+
+  assert.deepEqual(got, { names: ["Zoë", "李雷"], active: 1 });
+});

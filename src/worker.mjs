@@ -22,9 +22,9 @@
 //        POST /api/echo        → accepts capnp bytes, decodes, re-encodes,
 //                                returns the round-tripped message
 //
-// Both endpoints exercise the precompiled-wasm + dynamic schema reader /
-// builder path. If those work in a Worker, the README's
-// "Workers-compatible at runtime" claim is live, not hypothetical.
+// Both endpoints exercise the precompiled-wasm + generated reader / builder
+// path. If those work in a Worker, the README's "Workers-compatible at
+// runtime" claim is live, not hypothetical.
 //
 // SECURITY / COST: this worker is a public demo on the author's
 // Cloudflare account. The library's defaults can stay permissive for
@@ -57,11 +57,11 @@
 
 import wasmModule from "../dist/capnp.slim.wasm";
 import { CapnCpp } from "../js/browser.mjs";
-import { defineSchema, buildDynamic, openDynamic } from "../js/dynamic.mjs";
 import { RpcSession, InterfaceRegistry, wsTransport } from "../js/rpc.mjs";
 import { createHttpBatchHandler } from "../js/http_batch.mjs";
 import { PrimitivesBuilder, PrimitivesReader } from "../js/conformance_schema.gen.mjs";
 import { WideUserDataBuilder } from "../js/typed_schema.gen.mjs";
+import { UserBuilder, UserListBuilder, BlobReplyBuilder, openUser } from "../web/src/playground/users.capnp.gen.mjs";
 import { RpcTarget, newWorkersRpcResponse } from "capnweb";
 
 // The chat demo's WebSocket endpoints (`/chat-ws` and `/capnweb-chat-ws`)
@@ -99,26 +99,6 @@ function cpp() {
 function newCpp() {
   return CapnCpp.load(wasmModule);
 }
-
-// User schema (same shape as web/users.capnp). Defined inline so the
-// worker has no codegen step. The dynamic builder/reader path is the
-// "no-codegen" entry capnwasm offers to runtime-schema consumers.
-const USER_SCHEMA = defineSchema({
-  id:         { kind: "uint64", offset: 0 },
-  name:       { kind: "text",   slot: 0 },
-  email:      { kind: "text",   slot: 1 },
-  joinedAtMs: { kind: "uint64", offset: 8 },
-  active:     { kind: "bool",   bitOffset: 128 },
-  avatar:     { kind: "data",   slot: 2 },
-}, { dataWords: 3, ptrWords: 3 });
-
-const USER_LIST_SCHEMA = defineSchema({
-  users: { kind: "listStruct", slot: 0, element: USER_SCHEMA },
-}, { dataWords: 0, ptrWords: 1 });
-
-const BLOB_SCHEMA = defineSchema({
-  data: { kind: "data", slot: 0 },
-}, { dataWords: 0, ptrWords: 1 });
 
 // Tiny synthetic-user generator so /api/users/:id always returns
 // something interesting. No DB; this exists to prove the wasm round-trip,
@@ -191,18 +171,18 @@ function buildRegistry() {
     const n = paramN(ctx.paramsBytes(), 100);
     const users = new Array(n);
     for (let i = 0; i < n; i++) users[i] = makeUser(i);
-    const b = buildDynamic(target.cpp, USER_LIST_SCHEMA);
-    b.set("users", users);
-    return b.finalize();
+    const b = new UserListBuilder(target.cpp);
+    b.users = users;
+    return b.toBytes();
   });
   reg.register(RENDER_IFC, RENDER_M_METADATA, (target) => {
     return new WideUserDataBuilder(target.cpp).fromObject(makeMetadata()).toBytes();
   });
   reg.register(RENDER_IFC, RENDER_M_BLOB, (target, ctx) => {
     const n = paramN(ctx.paramsBytes(), 4096);
-    const b = buildDynamic(target.cpp, BLOB_SCHEMA);
-    b.set("data", makeBlob(n));
-    return b.finalize();
+    const b = new BlobReplyBuilder(target.cpp);
+    b.data = makeBlob(n);
+    return b.toBytes();
   });
 
   return reg;
@@ -276,15 +256,8 @@ export default {
     if (req.method === "GET" && userMatch) {
       try {
         const c = await cpp();
-        const b = buildDynamic(c, USER_SCHEMA);
         const obj = synthesizeUser(userMatch[1]);
-        b.set("id", obj.id);
-        b.set("name", obj.name);
-        b.set("email", obj.email);
-        b.set("joinedAtMs", obj.joinedAtMs);
-        b.set("active", obj.active);
-        b.set("avatar", obj.avatar);
-        const bytes = b.finalize();
+        const bytes = UserBuilder.from(c, obj).toBytes();
         return new Response(bytes, {
           status: 200,
           headers: {
@@ -323,11 +296,10 @@ export default {
         }
         if (buf.length === 0) return jsonError(400, "empty_body");
         const c = await cpp();
-        const reader = openDynamic(c, USER_SCHEMA, buf);
+        const reader = openUser(c, buf);
         const obj = reader.toObject();
-        const b = buildDynamic(c, USER_SCHEMA);
-        for (const [k, v] of Object.entries(obj)) b.set(k, v);
-        const bytes = b.finalize();
+        reader.dispose();
+        const bytes = UserBuilder.from(c, obj).toBytes();
         return new Response(bytes, {
           status: 200,
           headers: {

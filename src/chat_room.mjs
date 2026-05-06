@@ -19,11 +19,11 @@ import { DurableObject } from "cloudflare:workers";
 import { CapnCpp } from "../js/browser.mjs";
 import { RpcSession, InterfaceRegistry, wsTransport } from "../js/rpc.mjs";
 import { createHttpBatchHandler } from "../js/http_batch.mjs";
-import { defineSchema, buildDynamic } from "../js/dynamic.mjs";
 import {
   PostParamsReader,
   ChatMessageBuilder,
   GetSinceParamsReader,
+  ChatMessageListBuilder,
 } from "../web/src/chat/chat.capnp.gen.mjs";
 import { RpcTarget, newWorkersWebSocketRpcResponse, newWorkersRpcResponse } from "capnweb";
 
@@ -31,23 +31,6 @@ const CHAT_IFC      = 0xc4a7c4a7c4a7c4a7n;
 const CHAT_M_POST   = 0;
 const CHAT_M_SUBSCR = 1;
 const CHAT_M_GET_SINCE = 2;
-
-// Wire-shape mirror of the ChatMessage / ChatMessageList structs in
-// chat.capnp. The codegen builder doesn't yet emit `fromObject`
-// support for List(Struct), so the REST/poll handler builds the
-// response with `buildDynamic` instead. Field offsets must match the
-// codegen Builder/Reader (2 data words + 3 ptr words; image at slot 2).
-const CHAT_MESSAGE_SCHEMA = defineSchema({
-  id:     { kind: "uint64", offset: 0 },
-  author: { kind: "text",   slot: 0 },
-  text:   { kind: "text",   slot: 1 },
-  ts:     { kind: "uint64", offset: 8 },
-  image:  { kind: "data",   slot: 2 },
-}, { dataWords: 2, ptrWords: 3 });
-
-const CHAT_MESSAGE_LIST_SCHEMA = defineSchema({
-  items: { kind: "listStruct", slot: 0, element: CHAT_MESSAGE_SCHEMA },
-}, { dataWords: 0, ptrWords: 1 });
 
 const CHAT_HISTORY_LIMIT = 100;
 const PNG_CACHE_LIMIT = 200;
@@ -192,15 +175,15 @@ export class ChatRoom extends DurableObject {
     reg.register(CHAT_IFC, CHAT_M_GET_SINCE, (_target, ctx) => {
       const p = ctx.openParams(GetSinceParamsReader);
       const items = side.messagesSince(Number(p.since));
-      const b = buildDynamic(ctx.cpp, CHAT_MESSAGE_LIST_SCHEMA);
-      b.set("items", items.map((m) => ({
+      const b = new ChatMessageListBuilder(ctx.cpp);
+      b.items = items.map((m) => ({
         id: BigInt(m.id),
         author: m.author,
         text: m.text,
         ts: BigInt(m.ts),
         image: m.image,
-      })));
-      return b.finalize();
+      }));
+      return b.toBytes();
     });
     return reg;
   }
