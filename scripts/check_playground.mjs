@@ -27,11 +27,23 @@ page.on("console", (msg) => {
   if (msg.type() !== "error") return;
   const text = msg.text();
   // Filter benign / out-of-our-control noise:
-  //  - jsDelivr / unpkg flakes for the runtime CDNs (not loaded on first paint).
+  //  - jsDelivr / unpkg flakes for the runtime CDNs (Python / Ruby
+  //    are lazy-loaded; only fail if the user clicks the tab).
   //  - favicon 404s if the CI server doesn't ship one.
+  //  - generic 'Failed to load resource' lines (Chromium logs these
+  //    for any non-2xx; the network-layer listener below catches the
+  //    real ones we should fail on).
   if (/favicon/.test(text)) return;
   if (/cdn\.jsdelivr\.net/.test(text) || /unpkg\.com/.test(text)) return;
+  if (/Failed to load resource/.test(text)) return;
   errors.push(`console error: ${text}`);
+});
+page.on("response", (resp) => {
+  // Hard-fail on 5xx for any same-origin asset; tolerate 404s on the
+  // data files because the build now falls back to a built-in sample
+  // when the cloudflare-openapi schema is unreachable.
+  if (resp.status() < 500) return;
+  errors.push(`http ${resp.status()} on ${resp.url()}`);
 });
 page.on("pageerror", (err) => errors.push(`page error: ${err.message}`));
 
