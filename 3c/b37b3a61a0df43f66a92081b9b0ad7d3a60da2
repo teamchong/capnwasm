@@ -1,0 +1,43 @@
+web/src/playground/runtime-go.ts
+  a40863a2008f4bc3 1-82
+web/src/playground/runtime-ruby.ts
+  a40863a2008f4bc3 1-108
+web/dist/assets/playground-DuovyzEO.js
+  a40863a2008f4bc3 2,4-9,13-14,19,23-24,28,32-33,38,49,59,67,72,75,77
+web/dist/playground.html
+  a40863a2008f4bc3 17
+web/dist/assets/runtime-ruby-gxKXHL-Z.js
+  a40863a2008f4bc3 1-26
+web/src/playground/globe.ts
+  a40863a2008f4bc3 400-423
+web/src/playground/runtime-python.ts
+  a40863a2008f4bc3 1-120
+web/dist/data/cf-endpoints.json
+  a40863a2008f4bc3 1
+web/dist/assets/runtime-python-DWIE5SfU.js
+  a40863a2008f4bc3 1-8
+web/dist/assets/runtime-go-BEqdLDWa.js
+  a40863a2008f4bc3 1
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "3cb37b3a61a0df43f66a92081b9b0ad7d3a60da2",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 449,
+      "total_deletions": 123,
+      "accepted_lines": 449,
+      "overriden_lines": 0
+    }
+  }
+}
