@@ -20,6 +20,7 @@ import {
   stripRestAnnotations,
   buildRestApisFromAnnotations,
 } from "../js/capnp_text_parser.mjs";
+import { extractOpenapiSource } from "../js/openapi_source_embed.mjs";
 
 const PKG_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 
@@ -519,7 +520,22 @@ export async function parseSchema(schemaPath) {
   const interfaces = compiler.extractInterfaces();
   validateStructs(structs);
   const restApis = buildRestApisFromAnnotations(restAnnotations, interfaces, structs);
-  return { structs, interfaces, restApis, typeInterfaces: [] };
+  // Recover the verbatim OpenAPI source if emit-capnp embedded it. When
+  // present, downstream emit-openapi can return the original bytes
+  // instead of canonicalizing — that's how OpenAPI -> .capnp -> OpenAPI
+  // becomes byte-identical.
+  const openapiSourceText = extractOpenapiSource(text);
+  const model = { structs, interfaces, restApis, typeInterfaces: [] };
+  if (openapiSourceText) {
+    model.openapiSourceText = openapiSourceText;
+    try {
+      model.openapi = JSON.parse(openapiSourceText);
+    } catch {
+      // Embedded blob isn't valid JSON. Fall through; emit-openapi will
+      // reconstruct from the canonical IR like the no-embed case.
+    }
+  }
+  return model;
 }
 
 // `scanRestAnnotations`, `stripRestAnnotations`,
@@ -3844,23 +3860,39 @@ async function cmdConvert(argv) {
     }
     const text = await fs.readFile(input, "utf8");
     let spec;
+    // Carry the original spec as JSON text. For YAML input we re-serialize
+    // the parsed spec to JSON and embed THAT as the "original" — round-trip
+    // preserves the parsed shape, not the YAML formatting.
+    let sourceJsonText;
     if (inExt === ".json") {
       spec = JSON.parse(text);
+      sourceJsonText = text;
     } else {
+      let yaml;
       try {
-        const yaml = await import("yaml");
-        spec = yaml.parse(text);
+        yaml = await import("yaml");
       } catch {
         console.error("YAML input requires the optional 'yaml' package: npm install yaml");
         process.exit(1);
       }
+      spec = yaml.parse(text);
+      sourceJsonText = JSON.stringify(spec, null, 2) + "\n";
     }
     const { parseOpenApi } = await import("../js/openapi_parser.mjs");
     const model = parseOpenApi(spec);
+    // Stash the verbatim source so emit-capnp embeds it as a comment
+    // block. The .capnp -> OpenAPI direction recovers it and returns
+    // the original bytes for byte-identical round-trips.
+    model.openapiSourceText = sourceJsonText;
     const { buildManifest } = await import("../js/manifest.mjs");
     const manifest = buildManifest(model, {
       source: { name: basename(input), format: "openapi", path: resolve(input) },
     });
+    // Format the gzip+base64 embed block here (Node-only, uses
+    // node:zlib). emit-capnp itself stays browser-safe; it just slots in
+    // whatever string we hand it via `manifest.openapiEmbed`.
+    const { embedOpenapiSource } = await import("../js/openapi_source_embed.mjs");
+    manifest.openapiEmbed = embedOpenapiSource(sourceJsonText);
     const { buildCapnp } = await import("../js/emit_capnp.mjs");
     const result = buildCapnp(manifest);
     if (output === "-") {
@@ -3888,20 +3920,45 @@ async function cmdConvert(argv) {
   const manifest = buildManifest(model, {
     source: { name: basename(input), format: "capnp", path: resolve(input) },
   });
-  const { buildOpenApi, buildOpenApiJson } = await import("../js/emit_openapi.mjs");
 
   let outputText;
-  if (wantYaml) {
-    let yaml;
-    try {
-      yaml = await import("yaml");
-    } catch {
-      console.error("YAML output requires the optional 'yaml' package: npm install yaml");
-      process.exit(1);
+  let usedVerbatim = false;
+  if (typeof manifest.openapiSourceText === "string" && manifest.openapiSourceText.length > 0) {
+    // Verbatim path: emit-capnp embedded the original source bytes, the
+    // text parser recovered them, and we now ship them straight back to
+    // disk. Byte-identical for JSON output; YAML output re-serializes
+    // the parsed object so the YAML form is canonical.
+    if (wantYaml) {
+      let yaml;
+      try {
+        yaml = await import("yaml");
+      } catch {
+        console.error("YAML output requires the optional 'yaml' package: npm install yaml");
+        process.exit(1);
+      }
+      outputText = yaml.stringify(JSON.parse(manifest.openapiSourceText));
+    } else {
+      outputText = manifest.openapiSourceText;
     }
-    outputText = yaml.stringify(buildOpenApi(manifest));
+    usedVerbatim = true;
   } else {
-    outputText = buildOpenApiJson(manifest);
+    // No embed available — reconstruct from the canonical manifest. This
+    // is the lossy path: paths and verbs survive, but documentation,
+    // tags, security, descriptions, etc. were dropped at the .capnp
+    // boundary.
+    const { buildOpenApi, buildOpenApiJson } = await import("../js/emit_openapi.mjs");
+    if (wantYaml) {
+      let yaml;
+      try {
+        yaml = await import("yaml");
+      } catch {
+        console.error("YAML output requires the optional 'yaml' package: npm install yaml");
+        process.exit(1);
+      }
+      outputText = yaml.stringify(buildOpenApi(manifest));
+    } else {
+      outputText = buildOpenApiJson(manifest);
+    }
   }
   if (output === "-") {
     process.stdout.write(outputText);
@@ -3912,6 +3969,7 @@ async function cmdConvert(argv) {
   const opCount = (model.interfaces ?? []).reduce((n, i) => n + (i.methods?.length ?? 0), 0)
                 + (model.restApis   ?? []).reduce((n, a) => n + (a.methods?.length ?? 0), 0);
   console.error(`  ${(model.structs ?? []).length} struct(s), ${(model.interfaces ?? []).length} interface(s), ${(model.restApis ?? []).length} REST API(s), ${opCount} operation(s)`);
+  if (usedVerbatim) console.error(`  byte-identical (recovered embedded openapi source)`);
 }
 
 /** Emit canonical .capnp from a manifest. */

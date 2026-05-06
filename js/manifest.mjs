@@ -64,6 +64,13 @@ export function buildManifest(model, opts) {
   if (model.openapi) {
     out.openapi = model.openapi;
   }
+  // The verbatim source bytes (when available) are what makes the
+  // OpenAPI ↔ .capnp round-trip byte-identical: emit-capnp embeds them
+  // as a gzip+base64 comment block, the text parser recovers them, and
+  // emit-openapi returns them verbatim instead of re-canonicalizing.
+  if (typeof model.openapiSourceText === "string" && model.openapiSourceText.length > 0) {
+    out.openapiSourceText = model.openapiSourceText;
+  }
   return out;
 }
 

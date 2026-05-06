@@ -5,6 +5,12 @@
 // emitted .capnp is the hand-off point into the upstream capnp generator
 // ecosystem (capnp-rust, capnp-python, capnp-go, capnp-cxx, capnp-java).
 //
+// When the manifest carries `openapiEmbed` (a pre-formatted comment-block
+// string), the emitter prepends it after the file id so the reverse
+// direction can recover the verbatim OpenAPI source. The actual embed
+// formatting (gzip + base64 + marker lines) lives in the Node-only
+// js/openapi_source_embed.mjs so this module stays browser-safe.
+//
 // Type-system mapping (from docs/unified-surfaces-design.md §1):
 //
 //   OpenAPI                              capnp
@@ -718,6 +724,16 @@ function render(ctx) {
   lines.push(``);
   lines.push(`@${ctx.fileId};`);
   lines.push(``);
+
+  // Embed the verbatim OpenAPI source as a comment block so the reverse
+  // direction (.capnp → OpenAPI) is byte-identical to the input. The
+  // caller (Node CLI) renders the block via openapi_source_embed.mjs
+  // and hands the formatted string back here as `manifest.openapiEmbed`.
+  // We never compute it inline because the encoding (gzip+base64) needs
+  // node:zlib, which Vite cannot bundle for the browser.
+  if (typeof ctx.manifest.openapiEmbed === "string" && ctx.manifest.openapiEmbed.length > 0) {
+    lines.push(ctx.manifest.openapiEmbed);
+  }
 
   // Stable emission order: enums first (no forward refs needed), then
   // structs (alphabetical), then interfaces.
