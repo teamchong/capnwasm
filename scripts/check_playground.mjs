@@ -1,90 +1,86 @@
 #!/usr/bin/env node
-// Smoke the live /playground UI in a real browser. This is intentionally
-// end-to-end: the page must fetch fixtures, render the three protocol table,
-// run the RPC bench, and display finished results.
+// Smoke the live /playground UI (Cloudflare-API-on-a-globe demo) in a
+// real browser. The bench-style page that used to live here moved to
+// /render-bench when /playground was redesigned; that page is checked
+// by scripts/check_render_bench.mjs.
+//
+// Asserts:
+//   * the endpoint index loads (≈ 2920 dots from the Cloudflare schema,
+//     or a small set of sample endpoints when the gitignored fixture
+//     is missing).
+//   * the JS tab executes the live editor and writes a non-error
+//     value to #bubble-preview.
+//   * each language tab can be selected without throwing (we only
+//     verify the JS tab actually executes — Python/Ruby cold-loads
+//     are too slow for a CI gate; their dedicated smoke is
+//     scripts/smoke-globe.mjs).
 
 import { chromium } from "playwright";
 
 const url = process.env.PLAYGROUND_URL || "http://127.0.0.1:8787/playground";
-const target = new URL(url);
-target.searchParams.set("workload", process.env.PLAYGROUND_WORKLOAD || "small");
-target.searchParams.set("count", process.env.PLAYGROUND_COUNT || "10");
-target.searchParams.set("iters", process.env.PLAYGROUND_ITERS || "1");
 
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 1440, height: 1400 } });
+const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
 const errors = [];
 
 page.on("console", (msg) => {
-  if (msg.type() === "error") errors.push(`console error: ${msg.text()}`);
+  if (msg.type() !== "error") return;
+  const text = msg.text();
+  // Filter benign / out-of-our-control noise:
+  //  - jsDelivr / unpkg flakes for the runtime CDNs (not loaded on first paint).
+  //  - favicon 404s if the CI server doesn't ship one.
+  if (/favicon/.test(text)) return;
+  if (/cdn\.jsdelivr\.net/.test(text) || /unpkg\.com/.test(text)) return;
+  errors.push(`console error: ${text}`);
 });
 page.on("pageerror", (err) => errors.push(`page error: ${err.message}`));
 
 try {
-  await page.goto(target.href, { waitUntil: "domcontentloaded" });
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
 
-  // The page auto-runs shortly after DOMContentLoaded. Force the RPC selector
-  // down to one iteration before that timer fires so CI stays quick while
-  // still exercising the RPC UI path.
-  await page.evaluate(() => {
-    const rpcIters = document.getElementById("rpc-iters-selector");
-    if (rpcIters) rpcIters.value = "1";
-  });
+  // Endpoint index loaded.
+  await page.waitForFunction(
+    () => document.querySelectorAll(".endpoint-row").length > 0,
+    null,
+    { timeout: 30_000 },
+  );
+  const rows = await page.locator(".endpoint-row").count();
+  if (rows < 1) errors.push(`#endpoint-list rendered ${rows} rows`);
 
+  // JS tab is the default; the editor runs `format(response)` on every
+  // selection / keystroke and writes to #bubble-preview. A non-error
+  // value means JS-runtime + endpoint-mock plumbing both work.
   await page.waitForFunction(
-    () => document.querySelector("#status")?.textContent?.includes("done"),
+    () => {
+      const t = document.querySelector("#bubble-preview")?.textContent ?? "";
+      return t && t !== "—" && t !== "(empty)" && !t.toLowerCase().startsWith("error");
+    },
     null,
-    { timeout: 120_000 },
-  );
-  await page.waitForFunction(
-    () => document.querySelector("#server-msg")?.textContent?.includes("bench complete"),
-    null,
-    { timeout: 180_000 },
-  );
-  await page.waitForFunction(
-    () => document.querySelector("#general-status")?.textContent?.includes("general suite done"),
-    null,
-    { timeout: 180_000 },
+    { timeout: 15_000 },
   );
 
-  const data = await page.evaluate(() => {
-    const text = (selector) => document.querySelector(selector)?.textContent?.replace(/\s+/g, " ").trim() || "";
-    const idText = (id) => document.getElementById(id)?.textContent?.trim() || "";
-    const cells = Object.fromEntries([
-      "rest-total", "rest-bytes",
-      "cwb-total", "cwb-bytes",
-      "capnp-total", "capnp-bytes",
-      "burst-capnp", "burst-cwb",
-      "pipe-capnp", "pipe-cwb",
-      "blob-capnp", "blob-cwb",
-      "general-small-capnp", "general-small-json", "general-small-ratio", "general-small-bytes",
-      "general-sparse-capnp", "general-sparse-json", "general-sparse-ratio", "general-sparse-bytes",
-      "general-view-capnp", "general-view-json", "general-view-ratio", "general-view-bytes",
-      "general-dynamic-capnp", "general-dynamic-json", "general-dynamic-ratio", "general-dynamic-bytes",
-      "general-list-capnp", "general-list-json", "general-list-ratio", "general-list-bytes",
-    ].map((id) => [id, idText(id)]));
-    return {
-      status: text("#status"),
-      summary: text("#summary"),
-      rpcStatus: text("#rpc-status"),
-      rpcSummary: text("#rpc-summary"),
-      generalStatus: text("#general-status"),
-      generalSummary: text("#general-summary"),
-      server: text("#server-msg"),
-      cells,
-    };
-  });
-
-  for (const [id, value] of Object.entries(data.cells)) {
-    if (!value || value === "—" || value === "running…") {
-      errors.push(`cell ${id} did not finish: ${JSON.stringify(value)}`);
-    }
+  // Verify each language tab can be selected. Stops short of waiting
+  // for the runtime to load (Ruby is ~10 MB cold) but does require the
+  // tab switch to happen without throwing — runtime-{lang}.ts is
+  // dynamically imported and a syntax error there would surface.
+  for (const lang of ["python", "ruby", "go", "js"]) {
+    await page.click(`.lang-tab[data-lang="${lang}"]`);
+    await page.waitForFunction(
+      (l) => document.querySelector(`.lang-tab[data-lang="${l}"]`)?.getAttribute("aria-selected") === "true",
+      lang,
+      { timeout: 5_000 },
+    );
   }
-  if (!data.summary.includes("wins this workload")) errors.push(`missing fetch summary: ${data.summary}`);
-  if (!data.rpcSummary.includes("RPC workloads")) errors.push(`missing RPC summary: ${data.rpcSummary}`);
-  if (!data.generalSummary.includes("General suite complete")) errors.push(`missing general summary: ${data.generalSummary}`);
 
-  console.log(JSON.stringify(data, null, 2));
+  const summary = await page.evaluate(() => ({
+    endpointCount: document.querySelector("#endpoint-count")?.textContent?.trim(),
+    runtimeStatus: document.querySelector("#runtime-status")?.textContent?.trim(),
+    bubble:        document.querySelector("#bubble-preview")?.textContent?.slice(0, 80),
+    detailVerb:    document.querySelector("#detail-verb")?.textContent?.trim(),
+    detailPath:    document.querySelector("#detail-path")?.textContent?.trim(),
+  }));
+  console.log(JSON.stringify(summary, null, 2));
+
   if (errors.length) throw new Error(errors.join("\n"));
 } finally {
   await browser.close();

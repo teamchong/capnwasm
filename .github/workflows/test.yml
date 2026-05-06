@@ -47,10 +47,13 @@ jobs:
       - name: Build web playground
         run: pnpm run build:web
 
-      - name: Check playground UI
+      - name: Check playground (globe demo) and render-bench (wire-format bench)
         run: |
           pnpm exec wrangler dev --local --ip 127.0.0.1 --port 8787 --show-interactive-dev-session=false > /tmp/capnwasm-wrangler.log 2>&1 &
           WRANGLER_PID=$!
           trap 'kill $WRANGLER_PID || true' EXIT
           node -e 'const url="http://127.0.0.1:8787/playground"; let tries=0; async function main(){ while(++tries<=90){ try{ const r=await fetch(url); if(r.ok) return; } catch {} await new Promise(r=>setTimeout(r,1000)); } process.exit(1); } main();'
+          # /playground is now the Cloudflare-globe demo; the bench it
+          # used to host moved to /render-bench.
           PLAYGROUND_URL=http://127.0.0.1:8787/playground pnpm run check:playground
+          RENDER_BENCH_URL=http://127.0.0.1:8787/render-bench pnpm run check:render-bench
