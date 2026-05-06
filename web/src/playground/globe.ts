@@ -397,18 +397,30 @@ async function runJs(source: string, response: unknown): Promise<string> {
   return typeof out === "string" ? out : String(out);
 }
 
-async function runStub(lang: Lang, _code: string): Promise<string> {
-  // Tier-2: real interpreters land here. Until then, signal status and
-  // fall back to a JS-rendered preview of the mocked response so the
-  // page is still useful.
-  const labels: Record<Lang, string> = {
-    js: "JS",
-    python: "micropython.wasm (loading…)",
-    ruby:   "mruby.wasm (loading…)",
-    go:     "yaegi.wasm (loading…)",
-  };
-  setStatus(`${labels[lang]} runtime not yet available; showing mock preview.`);
-  return JSON.stringify(selected?.mock).slice(0, 80) + "…";
+async function runStub(lang: Lang, code: string): Promise<string> {
+  // Each non-JS runtime lives in its own module so its lazy-loaded
+  // payload (micropython ~250 KB gz, ruby ~10 MB raw, go shim ~0) only
+  // hits the wire when the user actually opens that tab.
+  try {
+    if (lang === "python") {
+      const { run, status: statusFn } = await import("./runtime-python.js");
+      setStatus(statusFn());
+      return run(code, selected?.mock ?? null);
+    }
+    if (lang === "ruby") {
+      const { run, status: statusFn } = await import("./runtime-ruby.js");
+      setStatus(statusFn());
+      return run(code, selected?.mock ?? null);
+    }
+    if (lang === "go") {
+      const { run, status: statusFn } = await import("./runtime-go.js");
+      setStatus(statusFn());
+      return run(code, selected?.mock ?? null);
+    }
+  } catch (err) {
+    setStatus(`${lang} runtime error: ${(err as Error).message}`);
+  }
+  return "";
 }
 
 // ---- Tabs --------------------------------------------------------------
