@@ -211,16 +211,25 @@ function selectEndpoint(ep: Endpoint): void {
 // return a string for the bubble. The SDK-shaped imports / client setup
 // are decorative so the snippet reads like real SDK usage.
 
+// SDK templates: each shows what the call looks like in the official
+// Cloudflare SDK for that language as comments at the top, then the
+// only thing that actually runs — a `format(response)` function the
+// user can edit. Keeping the SDK boilerplate as comments avoids
+// runtime errors from undefined Cloudflare classes / unresolvable
+// imports while still showing the user how the call shapes up in
+// real code.
+
 function jsTemplate(ep: Endpoint): string {
   const method = sdkMethodChain(ep);
   return `// Cloudflare TypeScript SDK
-import Cloudflare from "cloudflare";
-const cf = new Cloudflare({ apiToken: "your_token" });
-
-// ${ep.method} ${ep.path}
-// const response = await cf.${method};
-
-export default function format(response) {
+//   import Cloudflare from "cloudflare";
+//   const cf = new Cloudflare({ apiToken: "your_token" });
+//
+//   // ${ep.method} ${ep.path}
+//   const response = await cf.${method};
+//
+// 'response' below is the mocked payload from openapi.json.
+function format(response) {
   return JSON.stringify(response).slice(0, 60) + "…";
 }
 `;
@@ -229,12 +238,13 @@ export default function format(response) {
 function pythonTemplate(ep: Endpoint): string {
   const method = sdkMethodChainPy(ep);
   return `# Cloudflare Python SDK
-from cloudflare import Cloudflare
-cf = Cloudflare(api_token="your_token")
-
-# ${ep.method} ${ep.path}
-# response = cf.${method}
-
+#   from cloudflare import Cloudflare
+#   cf = Cloudflare(api_token="your_token")
+#
+#   # ${ep.method} ${ep.path}
+#   response = cf.${method}
+#
+# 'response' below is the mocked payload from openapi.json.
 def format(response):
     return f"{type(response).__name__}: {str(response)[:60]}…"
 `;
@@ -242,12 +252,13 @@ def format(response):
 
 function rubyTemplate(ep: Endpoint): string {
   return `# Cloudflare Ruby SDK
-require "cloudflare"
-cf = Cloudflare.new(token: "your_token")
-
-# ${ep.method} ${ep.path}
-# response = cf.${sdkMethodChainRb(ep)}
-
+#   require "cloudflare"
+#   cf = Cloudflare.new(token: "your_token")
+#
+#   # ${ep.method} ${ep.path}
+#   response = cf.${sdkMethodChainRb(ep)}
+#
+# 'response' below is the mocked payload from openapi.json.
 def format(response)
   "#{response.class}: #{response.to_s[0..60]}…"
 end
@@ -256,25 +267,18 @@ end
 
 function goTemplate(ep: Endpoint): string {
   return `// Cloudflare Go SDK
-package main
-
-import (
-    "context"
-    "fmt"
-
-    "github.com/cloudflare/cloudflare-go/v3"
-    "github.com/cloudflare/cloudflare-go/v3/option"
-)
-
-// ${ep.method} ${ep.path}
+//   import (
+//       "github.com/cloudflare/cloudflare-go/v3"
+//       "github.com/cloudflare/cloudflare-go/v3/option"
+//   )
+//   cf := cloudflare.NewClient(option.WithAPIToken("your_token"))
+//
+//   // ${ep.method} ${ep.path}
+//   response, _ := cf.${sdkMethodChain(ep).replace(/^[a-z]/, (c) => c.toUpperCase())}
+//
+// The shim only runs the body of \`format\` below.
 func format(response interface{}) string {
-    return fmt.Sprintf("%T: %v", response, response)
-}
-
-func main() {
-    cf := cloudflare.NewClient(option.WithAPIToken("your_token"))
-    _ = cf
-    _ = context.Background()
+    return JSON.stringify(response).slice(0, 60) + "…"
 }
 `;
 }
@@ -497,11 +501,52 @@ function escapeHtml(s: string): string {
   );
 }
 
+// ---- Ambient mode -------------------------------------------------------
+//
+// While the page is idle (no user interaction for ~6s) we fire random
+// endpoints at a slow cadence so the globe always has a heartbeat. Any
+// user activity (click, keystroke, scroll) cancels the next ambient
+// fire and resets the idle timer.
+
+const AMBIENT_INTERVAL_MS = 1700;
+const AMBIENT_IDLE_MS = 6000;
+let ambientTimer: number | undefined;
+let lastActivity = performance.now();
+
+const AMBIENT_BUBBLES = [
+  (ep: Endpoint) => `${ep.method} ${ep.path}`,
+  (ep: Endpoint) => `→ ${ep.tag}`,
+  (ep: Endpoint) => `📍 ${ep.pop}`,
+  (ep: Endpoint) => ep.summary?.slice(0, 48) ?? `${ep.method} ${ep.tag}`,
+];
+
+function ambientTick(): void {
+  // Only fire when the user has been idle. If they're typing in the
+  // editor, clicking dots, or scrolling the list, leave the globe
+  // alone and check again next tick.
+  const idle = performance.now() - lastActivity > AMBIENT_IDLE_MS;
+  if (idle && endpoints.length > 0 && globeHandle) {
+    const ep = endpoints[Math.floor(Math.random() * endpoints.length)];
+    const fmt = AMBIENT_BUBBLES[Math.floor(Math.random() * AMBIENT_BUBBLES.length)];
+    globeHandle.fireBubble(ep.id, fmt(ep));
+  }
+  ambientTimer = window.setTimeout(ambientTick, AMBIENT_INTERVAL_MS);
+}
+
+function bumpActivity(): void {
+  lastActivity = performance.now();
+}
+
 // ---- Boot --------------------------------------------------------------
 
 mountEditor();
 bindLangTabs();
-els.fire.addEventListener("click", () => void runEditor("fire"));
-els.search.addEventListener("input", () => applyFilter(els.search.value));
+els.fire.addEventListener("click", () => { bumpActivity(); void runEditor("fire"); });
+els.search.addEventListener("input", () => { bumpActivity(); applyFilter(els.search.value); });
+els.list.addEventListener("scroll", bumpActivity);
+window.addEventListener("pointerdown", bumpActivity);
+window.addEventListener("keydown", bumpActivity);
+ambientTimer = window.setTimeout(ambientTick, AMBIENT_INTERVAL_MS);
+
 void mountGlobe();
 void loadEndpoints();

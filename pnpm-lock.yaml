@@ -29,6 +29,9 @@ importers:
 
   web:
     dependencies:
+      '@micropython/micropython-webassembly-pyscript':
+        specifier: 1.28.0-6
+        version: 1.28.0-6
       capnweb:
         specifier: ^0.7.0
         version: 0.7.0
@@ -729,6 +732,9 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
+
+  '@micropython/micropython-webassembly-pyscript@1.28.0-6':
+    resolution: {integrity: sha512-eRJw+jOhFPoEClHRI8RmzIBjORpOhVdDFcdrNYHUc0U+EwchuD5cYIfmgvj3RWim7vBnjBK8mYxMBBVduOo8Lw==}
 
   '@poppinss/colors@4.1.6':
     resolution: {integrity: sha512-H9xkIdFswbS8n1d6vmRd8+c10t2Qe+rZITbbDHHkQixH5+2x1FDGmi/0K+WgWiqQFKPSlIYB7jlH6Kpfn6Fleg==}
@@ -1657,6 +1663,8 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@micropython/micropython-webassembly-pyscript@1.28.0-6': {}
 
   '@poppinss/colors@4.1.6':
     dependencies:

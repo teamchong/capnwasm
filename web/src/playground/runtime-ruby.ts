@@ -12,9 +12,14 @@ let rubyVm: any = null;
 let rubyLoading: Promise<any> | null = null;
 let rubyError: Error | null = null;
 
-// `@ruby/wasm-wasi` ships an ESM at this path on jsDelivr.
-const CDN_PKG = "@ruby/wasm-wasi@2.7.1";
-const CDN_BROWSER = `https://cdn.jsdelivr.net/npm/${CDN_PKG}/dist/browser/+esm`;
+// ruby.wasm ships in two npm packages:
+//   • @ruby/wasm-wasi      — the JS bindings + DefaultRubyVM
+//   • @ruby/3.3-wasm-wasi  — the actual ruby+stdlib.wasm (per-version)
+// The bindings package alone has no wasm to load.
+const CDN_BINDINGS = "@ruby/wasm-wasi@2.7.1";
+const CDN_RUBY     = "@ruby/3.3-wasm-wasi@2.7.1";
+const CDN_BROWSER  = `https://cdn.jsdelivr.net/npm/${CDN_BINDINGS}/dist/browser/+esm`;
+const CDN_WASM     = `https://cdn.jsdelivr.net/npm/${CDN_RUBY}/dist/ruby+stdlib.wasm`;
 
 export function status(): string {
   if (rubyError)   return `ruby failed: ${rubyError.message}`;
@@ -30,8 +35,7 @@ export async function load(): Promise<void> {
     const mod = await import(/* @vite-ignore */ CDN_BROWSER);
     // The browser bundle exposes DefaultRubyVM(wasmModule) where the
     // wasm module itself is fetched from the same package.
-    const wasmUrl = `https://cdn.jsdelivr.net/npm/${CDN_PKG}/dist/ruby+stdlib.wasm`;
-    const wasmRes = await fetch(wasmUrl);
+    const wasmRes = await fetch(CDN_WASM);
     if (!wasmRes.ok) throw new Error(`ruby wasm fetch failed (${wasmRes.status})`);
     const wasmBytes = await wasmRes.arrayBuffer();
     const wasmModule = await WebAssembly.compile(wasmBytes);

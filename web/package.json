@@ -17,6 +17,7 @@
     "ws": "^8.20.0"
   },
   "dependencies": {
+    "@micropython/micropython-webassembly-pyscript": "1.28.0-6",
     "capnweb": "^0.7.0",
     "globe.gl": "^2.45.3",
     "highlight.js": "^11.11.1",

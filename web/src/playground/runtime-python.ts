@@ -19,8 +19,7 @@
 let mpInstance: any = null;
 let mpLoading: Promise<any> | null = null;
 let mpError: Error | null = null;
-
-const CDN_URL = "https://cdn.jsdelivr.net/npm/@micropython/micropython-webassembly-pyscript@1.25.0/micropython.mjs";
+let captureBuf = "";
 
 export function status(): string {
   if (mpError)  return `micropython failed: ${mpError.message}`;
@@ -33,25 +32,29 @@ export async function load(): Promise<void> {
   if (mpInstance) return;
   if (mpLoading) { await mpLoading; return; }
   mpLoading = (async () => {
-    // The CDN URL returns an ES module. Vite leaves /* @vite-ignore */
-    // dynamic imports alone, so the network fetch happens at runtime
-    // only when the Python tab is opened.
-    const mod = await import(/* @vite-ignore */ CDN_URL);
-    const factory = mod.default ?? mod.loadMicroPython ?? mod;
-    if (typeof factory !== "function") {
-      throw new Error("micropython module did not export a factory function");
+    // Vite resolves @micropython from node_modules and lazy-chunks the
+    // import so the Python runtime only ships when this function runs.
+    // The package's named `loadMicroPython` export wraps Emscripten's
+    // lower-level Module factory and returns the high-level instance
+    // with `.runPython()` / `.runPythonAsync()` / `.globals`.
+    const [mod, wasmUrl] = await Promise.all([
+      import("@micropython/micropython-webassembly-pyscript"),
+      // ?url tells Vite to ship the wasm as a fingerprinted asset and
+      // give us back the URL string. Without it the loader looks for
+      // /assets/micropython.wasm next to the JS chunk and 404s.
+      // @ts-ignore — Vite-only specifier
+      import("@micropython/micropython-webassembly-pyscript/micropython.wasm?url"),
+    ]);
+    const loadMicroPython = (mod as any).loadMicroPython
+      ?? (mod as any).default?.loadMicroPython;
+    if (typeof loadMicroPython !== "function") {
+      throw new Error("micropython package didn't expose loadMicroPython");
     }
-    let captured = "";
-    mpInstance = await factory({
-      stdout: (text: string) => { captured += text; },
-      // Capture stderr alongside stdout so Python tracebacks land in
-      // the bubble too.
-      stderr: (text: string) => { captured += text; },
-      url: CDN_URL.replace(/\.mjs$/, ".wasm"),
+    mpInstance = await loadMicroPython({
+      stdout: (text: string) => { captureBuf += text + "\n"; },
+      stderr: (text: string) => { captureBuf += text + "\n"; },
+      url: (wasmUrl as any).default,
     });
-    // Stash the capture buffer on the instance so run() can read+reset
-    // it without rebuilding the whole runtime.
-    mpInstance.__captureRef = { get: () => captured, reset: () => { captured = ""; } };
   })();
   try {
     await mpLoading;
@@ -72,8 +75,7 @@ export async function load(): Promise<void> {
 export async function run(code: string, response: unknown): Promise<string> {
   if (!mpInstance) await load();
   const py = mpInstance;
-  const cap = py.__captureRef;
-  cap.reset();
+  captureBuf = "";
 
   // Pass the response as a JSON string the user code parses with
   // `json.loads`. Marshaling a 2.9 MB nested object via JS↔Python proxy
@@ -82,8 +84,9 @@ export async function run(code: string, response: unknown): Promise<string> {
   // Two-stage exec:
   //   1. inject `response` global from JSON.
   //   2. run the user's code (which may define `format`).
-  //   3. if `format` exists, call it; the result is the bubble text.
-  //   4. otherwise return whatever was printed.
+  //   3. if `format` exists, call it; print the result with a marker
+  //      so we can pluck it out of the captured stdout buffer.
+  //   4. otherwise fall back to whatever was printed normally.
   const wrapper =
     "import json as __cw_json\n" +
     `response = __cw_json.loads(${JSON.stringify(respJson)})\n`;
@@ -97,7 +100,6 @@ export async function run(code: string, response: unknown): Promise<string> {
   } catch (err) {
     return `python error: ${(err as Error).message}`;
   }
-  // Try to call `format(response)` if it's defined.
   let formatted: string | null = null;
   try {
     py.runPython(
@@ -107,14 +109,13 @@ export async function run(code: string, response: unknown): Promise<string> {
       "    if not isinstance(__cw_out, str): __cw_out = str(__cw_out)\n" +
       "    print('\\u0000__cw_marker__\\u0000' + __cw_out)\n"
     );
-    const captured = cap.get();
     const marker = "\u0000__cw_marker__\u0000";
-    const idx = captured.lastIndexOf(marker);
-    if (idx >= 0) formatted = captured.slice(idx + marker.length).trimEnd();
+    const idx = captureBuf.lastIndexOf(marker);
+    if (idx >= 0) formatted = captureBuf.slice(idx + marker.length).trimEnd();
   } catch (err) {
     return `python format error: ${(err as Error).message}`;
   }
   if (formatted !== null) return formatted;
   // Fall back to print()-captured output.
-  return cap.get().trimEnd();
+  return captureBuf.trimEnd();
 }
