@@ -14,14 +14,14 @@
   <meta name="twitter:description" content="Live three-way bench, your browser." />
   <meta name="twitter:image" content="/og-image.svg" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <script type="module" crossorigin src="/assets/playground-BcFJu8J4.js"></script>
+  <script type="module" crossorigin src="/assets/playground-_gKg1Zz4.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/main-Cu9W4HMG.js">
   <link rel="modulepreload" crossorigin href="/assets/browser--mmGreQ4.js">
   <link rel="modulepreload" crossorigin href="/assets/users.capnp.gen-B_PYXIF4.js">
   <link rel="modulepreload" crossorigin href="/assets/conformance_schema.gen-BBUg5-4R.js">
   <link rel="modulepreload" crossorigin href="/assets/index-DowZK3Ip.js">
   <link rel="stylesheet" crossorigin href="/assets/main-DrXRrRXI.css">
-  <link rel="stylesheet" crossorigin href="/assets/playground-D8mJPqYi.css">
+  <link rel="stylesheet" crossorigin href="/assets/playground-TMVGuDrd.css">
 </head>
 <body>
   <aside class="network-tip" aria-label="Network throttle tip">
@@ -231,7 +231,7 @@
       <table class="metrics general-metrics">
         <thead>
           <tr>
-            <th>workload &amp; code paths</th>
+            <th>workload</th>
             <th>capnwasm</th>
             <th>JSON</th>
             <th>ratio</th>
@@ -239,67 +239,96 @@
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <th>
-              <div class="row-title">Small struct &mdash; 5 fields, full read</div>
-              <code class="row-code"><span class="row-code-tag">capnwasm</span>const r = openUser(cpp, bytes);
-const v = Number(r.id) + r.name.length + r.email.length + (r.active ? 1 : 0) + r.avatar.length;
-r.dispose();</code>
-              <code class="row-code"><span class="row-code-tag">JSON</span>const o = JSON.parse(text);
-return o.id + o.name.length + o.email.length + (o.active ? 1 : 0) + o.avatar.length;</code>
-            </th>
+          <tr class="row-numbers">
+            <th><span class="row-title">Small struct &mdash; 5 fields, full read</span></th>
             <td id="general-small-capnp">&mdash;</td>
             <td id="general-small-json">&mdash;</td>
             <td id="general-small-ratio">&mdash;</td>
             <td id="general-small-bytes">&mdash;</td>
           </tr>
-          <tr>
-            <th>
-              <div class="row-title">Sparse struct &mdash; 17 fields present, 5 read</div>
-              <code class="row-code"><span class="row-code-tag">capnwasm</span>const r = openPrimitives(cpp, bytes);
-const sum = r.u8 + r.u32 + r.f64 + (r.flag0 ? 1 : 0) + r.text.length;
-r.dispose();</code>
-              <code class="row-code"><span class="row-code-tag">JSON</span>const o = JSON.parse(text);
-return o.u8 + o.u32 + o.f64 + (o.flag0 ? 1 : 0) + o.text.length;</code>
-            </th>
+          <tr class="row-code-pair">
+            <td colspan="5">
+              <div class="code-pair">
+                <pre class="code-pair-pane"><span class="code-pair-tag tag-capnwasm">capnwasm</span><code>const r = openUser(cpp, bytes);
+const v = Number(r.id) + r.name.length + r.email.length
+        + (r.active ? 1 : 0) + r.avatar.length;
+r.dispose();</code></pre>
+                <pre class="code-pair-pane"><span class="code-pair-tag tag-json">JSON</span><code>const o = JSON.parse(text);
+return o.id + o.name.length + o.email.length
+     + (o.active ? 1 : 0) + o.avatar.length;</code></pre>
+              </div>
+            </td>
+          </tr>
+
+          <tr class="row-numbers">
+            <th><span class="row-title">Sparse struct &mdash; 17 fields present, 5 read</span></th>
             <td id="general-sparse-capnp">&mdash;</td>
             <td id="general-sparse-json">&mdash;</td>
             <td id="general-sparse-ratio">&mdash;</td>
             <td id="general-sparse-bytes">&mdash;</td>
           </tr>
-          <tr>
-            <th>
-              <div class="row-title">Numeric list &mdash; 1000 f64s, sum</div>
-              <code class="row-code"><span class="row-code-tag">capnwasm</span>const r = openNumericProbe(cpp, bytes);
-const v = r.f64s.view();              // zero-copy Float64Array on WebAssembly.Memory
-let sum = 0;
-for (let i = 0; i &lt; v.length; i++) sum += v[i];
-r.dispose();</code>
-              <code class="row-code"><span class="row-code-tag">JSON</span>const o = JSON.parse(text);
-let sum = 0;
-for (let i = 0; i &lt; o.f64s.length; i++) sum += o.f64s[i];</code>
-            </th>
+          <tr class="row-code-pair">
+            <td colspan="5">
+              <div class="code-pair">
+                <pre class="code-pair-pane"><span class="code-pair-tag tag-capnwasm">capnwasm</span><code>const r = openPrimitives(cpp, bytes);
+const sum = r.u8 + r.u32 + r.f64
+          + (r.flag0 ? 1 : 0) + r.text.length;
+r.dispose();</code></pre>
+                <pre class="code-pair-pane"><span class="code-pair-tag tag-json">JSON</span><code>const o = JSON.parse(text);
+return o.u8 + o.u32 + o.f64
+     + (o.flag0 ? 1 : 0) + o.text.length;</code></pre>
+              </div>
+            </td>
+          </tr>
+
+          <tr class="row-numbers">
+            <th><span class="row-title">Numeric list &mdash; 1000 f64s, sum</span></th>
             <td id="general-view-capnp">&mdash;</td>
             <td id="general-view-json">&mdash;</td>
             <td id="general-view-ratio">&mdash;</td>
             <td id="general-view-bytes">&mdash;</td>
           </tr>
-          <tr>
-            <th>
-              <div class="row-title">List scan &mdash; 200 rows, reduce over name + active</div>
-              <code class="row-code"><span class="row-code-tag">capnwasm</span>const r = openUserList(cpp, bytes);
-const sum = r.draft(p =&gt;
-  p.users.reduce((a, u) =&gt; a + u.name.length + (u.active ? 1 : 0), 0),
-);
-r.dispose();</code>
-              <code class="row-code"><span class="row-code-tag">JSON</span>const o = JSON.parse(text);
+          <tr class="row-code-pair">
+            <td colspan="5">
+              <div class="code-pair">
+                <pre class="code-pair-pane"><span class="code-pair-tag tag-capnwasm">capnwasm</span><code>const r = openNumericProbe(cpp, bytes);
+const v = r.f64s.view();    // zero-copy Float64Array
 let sum = 0;
-for (let i = 0; i &lt; o.users.length; i++) sum += o.users[i].name.length + (o.users[i].active ? 1 : 0);</code>
-            </th>
+for (let i = 0; i &lt; v.length; i++) sum += v[i];
+r.dispose();</code></pre>
+                <pre class="code-pair-pane"><span class="code-pair-tag tag-json">JSON</span><code>const o = JSON.parse(text);
+let sum = 0;
+for (let i = 0; i &lt; o.f64s.length; i++) sum += o.f64s[i];</code></pre>
+              </div>
+            </td>
+          </tr>
+
+          <tr class="row-numbers">
+            <th><span class="row-title">List scan &mdash; 200 rows, reduce over name + active</span></th>
             <td id="general-list-capnp">&mdash;</td>
             <td id="general-list-json">&mdash;</td>
             <td id="general-list-ratio">&mdash;</td>
             <td id="general-list-bytes">&mdash;</td>
+          </tr>
+          <tr class="row-code-pair">
+            <td colspan="5">
+              <div class="code-pair">
+                <pre class="code-pair-pane"><span class="code-pair-tag tag-capnwasm">capnwasm</span><code>const r = openUserList(cpp, bytes);
+const sum = r.draft(p =&gt;
+  p.users.reduce(
+    (a, u) =&gt; a + u.name.length + (u.active ? 1 : 0),
+    0,
+  ),
+);
+r.dispose();</code></pre>
+                <pre class="code-pair-pane"><span class="code-pair-tag tag-json">JSON</span><code>const o = JSON.parse(text);
+let sum = 0;
+for (let i = 0; i &lt; o.users.length; i++) {
+  sum += o.users[i].name.length
+       + (o.users[i].active ? 1 : 0);
+}</code></pre>
+              </div>
+            </td>
           </tr>
         </tbody>
       </table>

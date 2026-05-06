@@ -386,70 +386,101 @@ nav a:hover {
   text-align: right;
 }
 
-.general-metrics tbody th {
-  color: #b9c5cc;
+/* General-suite layout. Each workload occupies two table rows:
+ *   • a "row-numbers" row with the workload title + 4 numeric columns,
+ *     so the times/ratios/wire-bytes line up cleanly across workloads;
+ *   • a "row-code-pair" row with colspan=5 holding two side-by-side
+ *     code panes (capnwasm and JSON) so the literal expressions being
+ *     timed are visible without taking width away from the numbers.
+ */
+.general-metrics tbody tr.row-numbers th {
+  color: #e6edf2;
   font-weight: 600;
-  /* Row label cell holds title + literal code blocks; align everything
-     to the top so the numeric cells line up with the row title. */
-  vertical-align: top;
-  width: 60%;
+  vertical-align: middle;
 }
 
 .general-metrics tbody td {
-  vertical-align: top;
+  vertical-align: middle;
   text-align: right;
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 0.85rem;
   color: #e0e0e0;
 }
 
-.general-metrics tbody tr + tr th,
-.general-metrics tbody tr + tr td {
+.general-metrics tbody tr.row-code-pair td {
+  text-align: left;
+  padding: 6px 12px 14px 12px;
+  border-bottom: 1px solid #1d2730;
+}
+
+.general-metrics tbody tr.row-numbers + tr.row-code-pair td {
+  border-top: 0;
+}
+
+/* Visual seam between workloads — the numbers row of every workload
+ * (except the first) gets a stronger top border. */
+.general-metrics tbody tr.row-code-pair + tr.row-numbers th,
+.general-metrics tbody tr.row-code-pair + tr.row-numbers td {
   border-top: 1px solid #1d2730;
+  padding-top: 12px;
 }
 
 .row-title {
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   color: #e6edf2;
-  font-weight: 600;
-  margin-bottom: 6px;
 }
 
-/* Each row has two `<code class="row-code">` blocks (capnwasm + JSON). They
-   need to wrap, not hscroll, so the page reads cleanly on a phone. */
-.row-code {
-  display: block;
+/* Two-pane code layout. Side-by-side on desktop, stacked on narrow
+ * widths. Each pane wraps its code, never hscrolls. */
+.code-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 800px) {
+  .code-pair { grid-template-columns: 1fr; }
+}
+
+.code-pair-pane {
+  position: relative;
   background: #0b1116;
   border: 1px solid #1a2530;
   border-radius: 6px;
-  padding: 6px 8px 6px 64px;
-  position: relative;
+  padding: 22px 10px 8px 10px;
+  margin: 0;
   font-size: 0.74rem;
   font-family: ui-monospace, SFMono-Regular, monospace;
   color: #cfd8df;
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
-  margin-top: 4px;
+  overflow-x: auto;
+  min-width: 0;
 }
 
-.row-code-tag {
+.code-pair-pane code {
+  background: transparent;
+  padding: 0;
+  display: block;
+  font: inherit;
+  color: inherit;
+}
+
+.code-pair-tag {
   position: absolute;
-  left: 6px;
+  left: 8px;
   top: 6px;
-  width: 52px;
-  font-size: 0.66rem;
+  font-size: 0.65rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-weight: 700;
-  color: #4fc3f7;
   text-align: left;
 }
 
-.row-code + .row-code .row-code-tag {
-  color: #ffa726;
-}
+.code-pair-tag.tag-capnwasm { color: #4fc3f7; }
+.code-pair-tag.tag-json     { color: #ffa726; }
 
 .summary-title {
   text-align: center;
