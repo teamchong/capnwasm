@@ -165,8 +165,21 @@ nav a:hover {
 
 .protocol-tag {
   font-size: 0.7rem;
-  color: #666;
+  color: #888;
   font-family: ui-monospace, SFMono-Regular, monospace;
+  /* Long code-y tags should wrap rather than push the header off-grid. */
+  text-align: right;
+  max-width: 60%;
+  line-height: 1.4;
+}
+
+.protocol-tag code {
+  background: #0a0a0a;
+  border: 1px solid #1d1d1d;
+  border-radius: 4px;
+  padding: 0 4px;
+  color: #c5cfd6;
+  font-size: inherit;
 }
 
 .metrics {
@@ -376,6 +389,66 @@ nav a:hover {
 .general-metrics tbody th {
   color: #b9c5cc;
   font-weight: 600;
+  /* Row label cell holds title + literal code blocks; align everything
+     to the top so the numeric cells line up with the row title. */
+  vertical-align: top;
+  width: 60%;
+}
+
+.general-metrics tbody td {
+  vertical-align: top;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.85rem;
+  color: #e0e0e0;
+}
+
+.general-metrics tbody tr + tr th,
+.general-metrics tbody tr + tr td {
+  border-top: 1px solid #1d2730;
+}
+
+.row-title {
+  font-size: 0.9rem;
+  color: #e6edf2;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+/* Each row has two `<code class="row-code">` blocks (capnwasm + JSON). They
+   need to wrap, not hscroll, so the page reads cleanly on a phone. */
+.row-code {
+  display: block;
+  background: #0b1116;
+  border: 1px solid #1a2530;
+  border-radius: 6px;
+  padding: 6px 8px 6px 64px;
+  position: relative;
+  font-size: 0.74rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: #cfd8df;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  margin-top: 4px;
+}
+
+.row-code-tag {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  width: 52px;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  color: #4fc3f7;
+  text-align: left;
+}
+
+.row-code + .row-code .row-code-tag {
+  color: #ffa726;
 }
 
 .summary-title {

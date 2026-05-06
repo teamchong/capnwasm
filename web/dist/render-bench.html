@@ -6,15 +6,15 @@
   <title>capnwasm &mdash; render bench (full pipeline, no cherry-picking)</title>
   <meta name="description" content="End-to-end RPC bench across capnweb vs capnwasm × WS vs HTTP × small/medium/large × cold/warm. Measures the full pipeline from cap.method() to forced DOM layout. Wins, losses, ties — all in one place." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <script type="module" crossorigin src="/assets/renderBench-4ShaB0DL.js"></script>
+  <script type="module" crossorigin src="/assets/renderBench-DzryK0rl.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/main-Cu9W4HMG.js">
   <link rel="modulepreload" crossorigin href="/assets/browser--mmGreQ4.js">
-  <link rel="modulepreload" crossorigin href="/assets/users.capnp.gen-DXMVdlev.js">
-  <link rel="modulepreload" crossorigin href="/assets/typed_schema.gen-BGDMuIU3.js">
+  <link rel="modulepreload" crossorigin href="/assets/users.capnp.gen-B_PYXIF4.js">
+  <link rel="modulepreload" crossorigin href="/assets/typed_schema.gen-BicNLP64.js">
   <link rel="modulepreload" crossorigin href="/assets/index-DowZK3Ip.js">
   <link rel="modulepreload" crossorigin href="/assets/http_batch-C_4FzhIh.js">
   <link rel="stylesheet" crossorigin href="/assets/main-DrXRrRXI.css">
-  <link rel="stylesheet" crossorigin href="/assets/renderBench-BIJMd1Xl.css">
+  <link rel="stylesheet" crossorigin href="/assets/renderBench-DmvLH1Q6.css">
 </head>
 <body>
   <aside class="network-tip" aria-label="Network throttle tip">
@@ -94,9 +94,17 @@
       </p>
       <p class="api-note">
         Same app output: render <code>id</code>, <code>name</code>, <code>email</code>, and <code>active</code> for every row.
-        capnweb reads plain object properties; capnwasm uses one <code>draft()</code> projection with
-        normal list <code>.map(...)</code> syntax to batch per-row field materialization.
+        Below is the literal client code timed in each cell &mdash; everything else (request, transport, render, layout) is identical.
       </p>
+      <pre class="code-path"><code><span class="code-path-tag tag-cwb">capnweb</span>const arr = await session.getUserList(n);
+for (const u of arr) renderRow(u.id, u.name, u.email, u.active);</code></pre>
+      <pre class="code-path"><code><span class="code-path-tag tag-cwm">capnwasm</span>const rows = await call.send({
+  resultsReader: UserListReader,
+  extract: (rdr) =&gt; rdr.draft(r =&gt; r.users.map(u =&gt; ({
+    id: u.id, name: u.name, email: u.email, active: u.active,
+  }))),
+}).promise;
+for (const u of rows) renderRow(u.id, u.name, u.email, u.active);</code></pre>
       <div id="bench-list" class="bench-block"></div>
     </section>
 
@@ -105,16 +113,25 @@
       <p>
         Server returns a 32-field metadata struct. Client reads only 3 fields and renders them.
         Cap&apos;n Proto&rsquo;s schema-evolved layout lets capnwasm skip the other 29 and batch the
-        selected reads through <code>draft()</code>; capnweb&apos;s JSON round-trip materializes all 32 upfront.
-        The size axis here is the number of consecutive requests fired in the same tick
-        (testing batching).
+        selected reads through planned <code>draft()</code>; capnweb&apos;s JSON round-trip materializes all 32 upfront.
+        The size axis is the number of consecutive requests fired in the same tick (testing batching).
       </p>
       <p class="api-note">
-        This is intentionally a partial-read workload. Same app output: render only
-        <code>field0</code>, <code>field5</code>, and <code>field10</code>. capnwasm uses
-        <code>draft(m =&gt; ({ field0: m.field0, field5: m.field5, field10: m.field10 }))</code>;
-        capnweb still pays for parsing the full JSON object.
+        Same app output: render <code>field0</code>, <code>field5</code>, and <code>field10</code>.
+        Literal client code per cell:
       </p>
+      <pre class="code-path"><code><span class="code-path-tag tag-cwb">capnweb</span>const o = await session.getMetadata();
+render([o.field0, o.field5, o.field10]);</code></pre>
+      <pre class="code-path"><code><span class="code-path-tag tag-cwm">capnwasm</span>const out = await call.send({
+  resultsReader: WideUserDataReader,
+  extract: (rdr) =&gt; {
+    const p = rdr.draft(m =&gt; ({
+      field0: m.field0, field5: m.field5, field10: m.field10,
+    }));
+    return [p.field0, p.field5, p.field10];
+  },
+}).promise;
+render(out);</code></pre>
       <div id="bench-sparse" class="bench-block"></div>
     </section>
 
@@ -123,12 +140,24 @@
       <p>
         Same metadata struct, but the client reads every field and renders all 32 to the DOM.
         capnweb&apos;s eager-decode model turns every field into a plain JS property read.
-        capnwasm uses <code>draft()</code> here so the 32 reads are batched before rendering.
+        capnwasm uses one <code>draft()</code> projection over all 32 fields so the per-field reads cross
+        the wasm boundary in a single batch.
       </p>
       <p class="api-note">
-        This is the full-read counterpart to sparse. Same app output: render all 32 fields.
-        capnwasm uses one <code>draft()</code> projection over all 32 fields; capnweb reads all object properties.
+        Same app output as sparse, but every <code>field0&hellip;field31</code> is read. Literal client code per cell:
       </p>
+      <pre class="code-path"><code><span class="code-path-tag tag-cwb">capnweb</span>const o = await session.getMetadata();
+render(Array.from({ length: 32 }, (_, i) =&gt; o["field" + i]));</code></pre>
+      <pre class="code-path"><code><span class="code-path-tag tag-cwm">capnwasm</span>const out = await call.send({
+  resultsReader: WideUserDataReader,
+  extract: (rdr) =&gt; {
+    const p = rdr.draft(m =&gt; {
+      const o = {}; for (const n of DENSE_FIELDS) o[n] = m[n]; return o;
+    });
+    return DENSE_FIELDS.map(n =&gt; p[n]);
+  },
+}).promise;
+render(out);</code></pre>
       <div id="bench-dense" class="bench-block"></div>
     </section>
 
@@ -137,15 +166,20 @@
       <p>
         After one fetch, read 10 fields N times each (simulating a re-render loop or per-frame
         animation). Both paths materialize the 10 fields once, then re-read plain JS values
-        in the hot loop. Picks N = small/medium/large. Each timed cell includes one fetch
-        followed by repeated reads; increasing N makes the post-fetch read cost dominate
-        the single fetch.
+        in the hot loop. Each timed cell includes one fetch followed by repeated reads; increasing N
+        makes the post-fetch read cost dominate the single fetch.
       </p>
       <p class="api-note">
-        Same app output: repeatedly read the same 10 logical fields after one response.
-        capnwasm first materializes those 10 fields with <code>draft()</code>, then rereads the cached JS values;
-        capnweb rereads the JS object values it already materialized during JSON decode.
+        Same app output: repeatedly read the same 10 logical fields after one response. Literal client code:
       </p>
+      <pre class="code-path"><code><span class="code-path-tag tag-cwb">capnweb</span>const o = await session.getMetadata();
+const read = (() =&gt; { let i = 0; return () =&gt; o[FIELDS[i++ % 10]]; })();
+for (let k = 0; k &lt; N; k++) acc += read();</code></pre>
+      <pre class="code-path"><code><span class="code-path-tag tag-cwm">capnwasm</span>const { bytes } = await call.send().promise;
+const reader = openWideUserData(cpp, bytes);
+const picked = reader.draft(m =&gt; { const o = {}; for (const n of FIELDS) o[n] = m[n]; return o; });
+const read = (() =&gt; { let i = 0; return () =&gt; picked[FIELDS[i++ % 10]]; })();
+for (let k = 0; k &lt; N; k++) acc += read();</code></pre>
       <div id="bench-reread" class="bench-block"></div>
     </section>
 
@@ -158,8 +192,15 @@
       </p>
       <p class="api-note">
         Same app output: display the echoed byte length. This is not a field-read benchmark;
-        it isolates binary transport and decode/deserialize overhead.
+        it isolates binary transport and decode overhead. Literal client code per cell:
       </p>
+      <pre class="code-path"><code><span class="code-path-tag tag-cwb">capnweb</span>const bytes = await session.getBlob(n);
+render(`bytes: ${bytes.length}`);</code></pre>
+      <pre class="code-path"><code><span class="code-path-tag tag-cwm">capnwasm</span>const len = await call.send({
+  resultsReader: BlobReplyReader,
+  extract: (rdr) =&gt; rdr.data.length,
+}).promise;
+render(`bytes: ${len}`);</code></pre>
       <div id="bench-blob" class="bench-block"></div>
     </section>
 
@@ -169,7 +210,7 @@
         <li><strong>Cold</strong> = the very first call against a transport (includes WS handshake / first POST connect, and for capnwasm the wasm fetch + compile if not cached).</li>
         <li><strong>Warm</strong> = median of the configured iter count, after a warmup pass.</li>
         <li><strong>End-to-end</strong> = request construction, Worker dispatch, response encode, transport, decode, field reads, DOM mutation, and forced layout.</li>
-        <li><strong>Same output:</strong> both paths render the same logical fields; capnweb uses eager JS objects, capnwasm uses generated readers plus <code>draft()</code> where batching matters.</li>
+        <li><strong>Same output, different access style:</strong> both paths render the same logical fields; capnweb uses normal eager JS objects, capnwasm uses generated readers plus planned <code>draft()</code> where batching matters.</li>
         <li><strong>Separated cases:</strong> sparse reads 3/32 fields, dense reads 32/32, reread loops over cached values, and blob isolates binary transport cost.</li>
       </ul>
     </section>

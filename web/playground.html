@@ -93,7 +93,7 @@
       <div class="protocol" id="rest-col">
         <div class="protocol-header">
           <span class="protocol-name">REST / JSON</span>
-          <span class="protocol-tag">fetch + JSON.parse</span>
+          <span class="protocol-tag">fetch &rarr; <code>JSON.parse</code> &rarr; <code>o.id</code> / <code>o.name</code> / &hellip;</span>
         </div>
         <table class="metrics">
           <tr><th>fetch</th><td id="rest-fetch">&mdash;</td></tr>
@@ -109,7 +109,7 @@
       <div class="protocol" id="cwb-col">
         <div class="protocol-header">
           <span class="protocol-name">capnweb</span>
-          <span class="protocol-tag">fetch + capnweb.deserialize</span>
+          <span class="protocol-tag">fetch &rarr; <code>capnweb.deserialize</code> &rarr; <code>o.id</code> / <code>o.name</code> / &hellip;</span>
         </div>
         <table class="metrics">
           <tr><th>fetch</th><td id="cwb-fetch">&mdash;</td></tr>
@@ -125,7 +125,7 @@
       <div class="protocol" id="capnp-col">
         <div class="protocol-header">
           <span class="protocol-name">capnwasm</span>
-          <span class="protocol-tag">fetch + Cap'n Proto reader</span>
+          <span class="protocol-tag">fetch &rarr; <code>openUser(cpp, bytes)</code> &rarr; <code>r.id</code> / <code>r.name</code> / &hellip; &rarr; <code>r.dispose()</code></span>
         </div>
         <table class="metrics">
           <tr><th>fetch</th><td id="capnp-fetch">&mdash;</td></tr>
@@ -216,8 +216,9 @@
     <section id="general-bench-section" aria-labelledby="general-bench-title">
       <h2 id="general-bench-title" class="section-title">General workload suite (auto-runs after RPC)</h2>
       <p class="section-copy">
-        Same browser, same wasm runtime, no network. These rows cover the common shapes the fetch demo does not:
-        sparse metadata, numeric <code>view()</code>, dynamic schemas, and list scans.
+        Same browser, same wasm runtime, no network. Each row spells out the
+        <em>exact</em> capnwasm and JSON expressions being timed so the comparison
+        is auditable from the page itself.
       </p>
       <div id="general-controls" class="rpc-controls">
         <span id="general-status" role="status" aria-live="polite" aria-atomic="true">Waiting for RPC bench…</span>
@@ -225,7 +226,7 @@
       <table class="metrics general-metrics">
         <thead>
           <tr>
-            <th>workload</th>
+            <th>workload &amp; code paths</th>
             <th>capnwasm</th>
             <th>JSON</th>
             <th>ratio</th>
@@ -234,35 +235,62 @@
         </thead>
         <tbody>
           <tr>
-            <th>small object</th>
+            <th>
+              <div class="row-title">Small struct &mdash; 5 fields, full read</div>
+              <code class="row-code"><span class="row-code-tag">capnwasm</span>const r = openUser(cpp, bytes);
+const v = Number(r.id) + r.name.length + r.email.length + (r.active ? 1 : 0) + r.avatar.length;
+r.dispose();</code>
+              <code class="row-code"><span class="row-code-tag">JSON</span>const o = JSON.parse(text);
+return o.id + o.name.length + o.email.length + (o.active ? 1 : 0) + o.avatar.length;</code>
+            </th>
             <td id="general-small-capnp">&mdash;</td>
             <td id="general-small-json">&mdash;</td>
             <td id="general-small-ratio">&mdash;</td>
             <td id="general-small-bytes">&mdash;</td>
           </tr>
           <tr>
-            <th>sparse wide object</th>
+            <th>
+              <div class="row-title">Sparse struct &mdash; 17 fields present, 5 read</div>
+              <code class="row-code"><span class="row-code-tag">capnwasm</span>const r = openPrimitives(cpp, bytes);
+const sum = r.u8 + r.u32 + r.f64 + (r.flag0 ? 1 : 0) + r.text.length;
+r.dispose();</code>
+              <code class="row-code"><span class="row-code-tag">JSON</span>const o = JSON.parse(text);
+return o.u8 + o.u32 + o.f64 + (o.flag0 ? 1 : 0) + o.text.length;</code>
+            </th>
             <td id="general-sparse-capnp">&mdash;</td>
             <td id="general-sparse-json">&mdash;</td>
             <td id="general-sparse-ratio">&mdash;</td>
             <td id="general-sparse-bytes">&mdash;</td>
           </tr>
           <tr>
-            <th>numeric list <code>view()</code></th>
+            <th>
+              <div class="row-title">Numeric list &mdash; 1000 f64s, sum</div>
+              <code class="row-code"><span class="row-code-tag">capnwasm</span>const r = openNumericProbe(cpp, bytes);
+const v = r.f64s.view();              // zero-copy Float64Array on WebAssembly.Memory
+let sum = 0;
+for (let i = 0; i &lt; v.length; i++) sum += v[i];
+r.dispose();</code>
+              <code class="row-code"><span class="row-code-tag">JSON</span>const o = JSON.parse(text);
+let sum = 0;
+for (let i = 0; i &lt; o.f64s.length; i++) sum += o.f64s[i];</code>
+            </th>
             <td id="general-view-capnp">&mdash;</td>
             <td id="general-view-json">&mdash;</td>
             <td id="general-view-ratio">&mdash;</td>
             <td id="general-view-bytes">&mdash;</td>
           </tr>
           <tr>
-            <th>dynamic numeric list</th>
-            <td id="general-dynamic-capnp">&mdash;</td>
-            <td id="general-dynamic-json">&mdash;</td>
-            <td id="general-dynamic-ratio">&mdash;</td>
-            <td id="general-dynamic-bytes">&mdash;</td>
-          </tr>
-          <tr>
-            <th>list scan</th>
+            <th>
+              <div class="row-title">List scan &mdash; 200 rows, reduce over name + active</div>
+              <code class="row-code"><span class="row-code-tag">capnwasm</span>const r = openUserList(cpp, bytes);
+const sum = r.draft(p =&gt;
+  p.users.reduce((a, u) =&gt; a + u.name.length + (u.active ? 1 : 0), 0),
+);
+r.dispose();</code>
+              <code class="row-code"><span class="row-code-tag">JSON</span>const o = JSON.parse(text);
+let sum = 0;
+for (let i = 0; i &lt; o.users.length; i++) sum += o.users[i].name.length + (o.users[i].active ? 1 : 0);</code>
+            </th>
             <td id="general-list-capnp">&mdash;</td>
             <td id="general-list-json">&mdash;</td>
             <td id="general-list-ratio">&mdash;</td>

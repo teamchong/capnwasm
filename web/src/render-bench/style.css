@@ -107,6 +107,45 @@ button:disabled { background: #555; color: #aaa; cursor: not-allowed; }
   color: var(--dim);
 }
 
+/* Per-workload literal-code blocks. Two siblings per section: capnweb
+   above, capnwasm below, each labelled in the gutter. Wraps on narrow
+   widths so the page stays readable on a phone. */
+.code-path {
+  margin: 8px 0;
+  padding: 10px 12px 10px 84px;
+  position: relative;
+  background: #0b1116;
+  border: 1px solid #1a2530;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.code-path code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: #cfd8df;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  display: block;
+}
+.code-path-tag {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  width: 64px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  text-align: left;
+}
+.code-path-tag.tag-cwb { color: #ffa726; }
+.code-path-tag.tag-cwm { color: #4fc3f7; }
+
 .bench-block { display: flex; flex-direction: column; gap: 16px; }
 
 table.bench {
