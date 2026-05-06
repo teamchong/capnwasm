@@ -1,0 +1,49 @@
+web/dist/assets/playground-XTs8jlEs.js
+  a40863a2008f4bc3 1-2,6,9-17,20-27,31-37,41-51,53,55,63,68,73
+web/src/playground/globe.ts
+  a40863a2008f4bc3 214-221,225-232,241-247,255-261,270-279,281,504-533,536-539,544-550
+web/dist/assets/runtime-ruby-MYrsStfJ.js
+  a40863a2008f4bc3 1,3,8,23-26
+web/src/playground/runtime-ruby.ts
+  a40863a2008f4bc3 15-22,38
+web/dist/assets/runtime-python-BiBWmJqd.js
+  a40863a2008f4bc3 1-6,11
+web/dist/assets/__vite-browser-external-BIHI7g3E.js
+  a40863a2008f4bc3 1
+scripts/smoke-globe.mjs
+  a40863a2008f4bc3 1-194
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+web/dist/playground.html
+  a40863a2008f4bc3 17
+web/dist/data/cf-endpoints.json
+  a40863a2008f4bc3 1
+web/package.json
+  a40863a2008f4bc3 20
+web/src/playground/runtime-python.ts
+  a40863a2008f4bc3 22,35-51,53-56,78,87-89,113-114,120
+web/dist/assets/micropython-W6vcINjI.js
+  a40863a2008f4bc3 1
+web/dist/assets/micropython-EX1YtlVM.js
+  a40863a2008f4bc3 1-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "05b33bb26e19c25a1af0e8d10b607cd5a9d71946",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 2761,
+      "total_deletions": 186,
+      "accepted_lines": 2761,
+      "overriden_lines": 0
+    }
+  }
+}
