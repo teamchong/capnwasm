@@ -1,0 +1,29 @@
+.github/workflows/test.yml
+  a40863a2008f4bc3 50,56-57,59
+scripts/check_render_bench.mjs
+  a40863a2008f4bc3 1-100
+package.json
+  a40863a2008f4bc3 123
+scripts/check_playground.mjs
+  a40863a2008f4bc3 2-16,23,27-34,39,41,43,45,47-52,54-57,59,62-72,75-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "5a740a589b7e0ccf854904febc580473078dc4a8",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 165,
+      "total_deletions": 5271,
+      "accepted_lines": 165,
+      "overriden_lines": 0
+    }
+  }
+}
