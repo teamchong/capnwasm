@@ -44,16 +44,84 @@ const REPO = resolve(HERE, "..", "..");
 const FIXTURE = resolve(REPO, "test/_fixtures/cloudflare-openapi.json");
 const OUT_DIR = resolve(HERE, "..", "public", "data");
 const OUT = resolve(OUT_DIR, "cf-endpoints.json");
+const SCHEMA_URL = "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json";
 
-const FETCH_HINT = `Run this once to download the schema:
-  curl -sL https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json \\
-       -o test/_fixtures/cloudflare-openapi.json`;
+// Source order:
+//   1. The local fixture (gitignored 9.2 MB) when it exists — fastest,
+//      offline, and what dev / CI typically use.
+//   2. Otherwise, fetch the public schema from cloudflare/api-schemas.
+//      Cloudflare's deploy environment has outbound HTTPS, so a fresh
+//      Pages / Workers build can produce the same index without the
+//      fixture being committed.
+//   3. If both fail, fall back to a small built-in sample so the globe
+//      page still has *something* to render. The sample is intentionally
+//      tiny so a broken network path is obvious in the page.
+//
+// In every case we write web/public/data/cf-endpoints.json so the
+// deployed bundle ships with the index — that's what was missing in
+// production after the redesign.
+let specText = null;
+if (existsSync(FIXTURE)) {
+  specText = await readFile(FIXTURE, "utf8");
+  console.error(`build-globe-data: using local fixture (${(specText.length / 1024 / 1024).toFixed(1)} MB).`);
+} else {
+  console.error(`build-globe-data: fixture missing; fetching ${SCHEMA_URL}…`);
+  try {
+    const res = await fetch(SCHEMA_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    specText = await res.text();
+    console.error(`build-globe-data: fetched ${(specText.length / 1024 / 1024).toFixed(1)} MB.`);
+  } catch (err) {
+    console.error(`build-globe-data: fetch failed (${(err && (err.message || err.code)) || err}).`);
+    console.error("build-globe-data: writing a 3-endpoint fallback so /playground still loads.");
+    await writeFallback();
+    process.exit(0);
+  }
+}
 
-if (!existsSync(FIXTURE)) {
-  console.error(`build-globe-data: fixture not found: ${FIXTURE}`);
-  console.error(FETCH_HINT);
-  console.error("Skipping; the globe page will fall back to a built-in sample.");
-  process.exit(0);
+async function writeFallback() {
+  await mkdir(OUT_DIR, { recursive: true });
+  const fallback = {
+    generatedAt: new Date().toISOString(),
+    stats: { paths: 0, operations: 3, tags: 1 },
+    pops: [{ city: "London", country: "GB", lat: 51.5074, lng: -0.1278 }],
+    endpoints: [
+      {
+        id: "fallback-list-zones",
+        path: "/zones",
+        method: "GET",
+        tag: "Zones",
+        summary: "List zones (fallback sample — fixture missing)",
+        description: null,
+        lat: 51.5074, lng: -0.1278, pop: "London",
+        params: [],
+        mock: { result: [{ id: "0".repeat(32), name: "example.com", status: "active" }], success: true, errors: [], messages: [] },
+      },
+      {
+        id: "fallback-account",
+        path: "/accounts/{id}",
+        method: "GET",
+        tag: "Accounts",
+        summary: "Get account (fallback sample)",
+        description: null,
+        lat: 38.9072, lng: -77.0369, pop: "Washington DC",
+        params: [{ name: "id", in: "path", type: "string", required: true }],
+        mock: { result: { id: "1".repeat(32), name: "Sample Account" }, success: true, errors: [], messages: [] },
+      },
+      {
+        id: "fallback-workers",
+        path: "/accounts/{id}/workers/scripts",
+        method: "GET",
+        tag: "Workers",
+        summary: "List Workers scripts (fallback sample)",
+        description: null,
+        lat: 1.3521, lng: 103.8198, pop: "Singapore",
+        params: [{ name: "id", in: "path", type: "string", required: true }],
+        mock: { result: [{ id: "hello", modified_on: "2024-01-01T00:00:00Z" }], success: true, errors: [], messages: [] },
+      },
+    ],
+  };
+  await writeFile(OUT, JSON.stringify(fallback));
 }
 
 // Cloudflare PoPs (a curated subset; the real list is 300+ but for
@@ -260,9 +328,7 @@ function paramShape(p, spec) {
 // ---- Main ---------------------------------------------------------------
 
 const t0 = Date.now();
-console.error("build-globe-data: reading fixture…");
-const text = await readFile(FIXTURE, "utf8");
-const spec = JSON.parse(text);
+const spec = JSON.parse(specText);
 
 const HTTP_VERBS = ["get", "post", "put", "delete", "patch", "options", "head"];
 const endpoints = [];
