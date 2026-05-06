@@ -412,6 +412,34 @@ body {
   outline: none;
 }
 
+.capnwasm-wire {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid #1a1a1a;
+  padding: 6px 12px;
+  background: #100702;
+  color: #ffa726;
+  font-size: 0.72rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.capnwasm-wire-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  color: #ffa726;
+  flex: 0 0 auto;
+}
+
+.capnwasm-wire-stats {
+  flex: 1 1 auto;
+  color: #cfd8df;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .editor-footer {
   display: flex;
   align-items: center;

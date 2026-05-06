@@ -51,6 +51,8 @@ const els = {
   fire:        $<HTMLButtonElement>("#fire-btn"),
   status:      $<HTMLSpanElement>("#runtime-status"),
   preview:     $<HTMLOutputElement>("#bubble-preview"),
+  wirePanel:   $<HTMLDivElement>("#capnwasm-wire"),
+  wireStats:   $<HTMLSpanElement>("#capnwasm-wire-stats"),
   langTabs:    $$<HTMLButtonElement>(".lang-tab"),
   globeCanvas: $<HTMLDivElement>("#globe-canvas"),
   bubbleLayer: $<HTMLDivElement>("#bubble-layer"),
@@ -60,6 +62,11 @@ let endpoints: Endpoint[] = [];
 let filteredEndpoints: Endpoint[] = [];
 let selected: Endpoint | null = null;
 let currentLang: Lang = "js";
+
+// capnwasm-encoded view of the selected endpoint's mock. JS users get
+// the live Reader; other runtimes get the JSON until a cross-language
+// Reader bridge lands.
+let prepared: { reader: any; json: unknown; bytes: Uint8Array } | null = null;
 
 // Per-language editor source so switching tabs preserves what the user
 // typed. Seeded with the SDK template for the current endpoint each time
@@ -199,8 +206,30 @@ function selectEndpoint(ep: Endpoint): void {
   editorSources.go     = goTemplate(ep);
   setEditor(editorSources[currentLang]);
   els.fire.disabled = false;
-  void runEditor("select");
   globeHandle?.focus(ep.id);
+  // Encode the mock through capnwasm before the editor runs. The
+  // user's JS `format(response)` gets the resulting Reader so the
+  // call chain literally goes through capnwasm.wasm. Promise resolves
+  // before runEditor("select") so the JS path sees the Reader.
+  void encodeAndRun(ep);
+}
+
+async function encodeAndRun(ep: Endpoint): Promise<void> {
+  prepared = null;
+  els.wirePanel.hidden = true;
+  try {
+    const mod = await import("./runtime-capnwasm.js");
+    const out = await mod.prepareResponse(ep.id, ep.mock);
+    prepared = { reader: out.reader, json: out.json, bytes: out.bytes };
+    els.wireStats.textContent = mod.formatStats(out.stats);
+    els.wirePanel.hidden = false;
+  } catch (err) {
+    // capnwasm itself failing is a real bug; surface but don't block
+    // the editor — fall back to the plain JSON path.
+    els.wireStats.textContent = `capnwasm encode failed: ${(err as Error).message}`;
+    els.wirePanel.hidden = false;
+  }
+  await runEditor("select");
 }
 
 // ---- SDK code templates -----------------------------------------------
@@ -226,11 +255,15 @@ function jsTemplate(ep: Endpoint): string {
 //   const cf = new Cloudflare({ apiToken: "your_token" });
 //
 //   // ${ep.method} ${ep.path}
-//   const response = await cf.${method};
+//   const apiResponse = await cf.${method};
 //
-// 'response' below is the mocked payload from openapi.json.
+// The 'response' below is the mocked openapi.json payload re-encoded
+// as Cap'n Proto wire bytes by capnwasm and decoded back into a
+// capnwasm Reader. So 'response.success' and 'response.resultJson'
+// are real wasm reads — capnwasm is on the live-edit path.
 function format(response) {
-  return JSON.stringify(response).slice(0, 60) + "…";
+  const result = JSON.parse(new TextDecoder().decode(response.resultJson));
+  return result === null ? "no result" : JSON.stringify(result).slice(0, 60) + "…";
 }
 `;
 }
@@ -367,7 +400,11 @@ async function runEditor(reason: "select" | "input" | "fire"): Promise<string> {
   let result: string;
   try {
     if (currentLang === "js") {
-      result = await runJs(code, selected.mock);
+      // JS gets the live capnwasm Reader so `response.success`,
+      // `response.resultJson`, etc. are real wasm reads. Falls back to
+      // the JSON object only if capnwasm encode itself failed.
+      const value = prepared?.reader ?? selected.mock;
+      result = await runJs(code, value);
     } else {
       result = await runStub(currentLang, code);
     }

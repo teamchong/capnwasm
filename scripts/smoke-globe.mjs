@@ -130,13 +130,18 @@ try {
     await page.click(`.lang-tab[data-lang="${lang}"]`);
     await page.click("#fire-btn");
     try {
-      await page.waitForFunction(
-        () => {
-          const t = document.querySelector("#bubble-preview")?.textContent ?? "";
-          return t && t !== "—" && t !== "(empty)" && !t.startsWith("loading ");
-        },
-        { timeout: langTimeout[lang] },
-      );
+    await page.waitForFunction(
+      () => {
+        const t = document.querySelector("#bubble-preview")?.textContent ?? "";
+        return t && t !== "—" && t !== "(empty)" && !t.startsWith("loading ");
+      },
+      { timeout: 30_000 },
+    );
+    // Surface the capnwasm wire panel so we can tell whether capnwasm
+    // is on the read path or the page fell back to the plain-mock
+    // shortcut.
+    const wireText = await page.locator("#capnwasm-wire-stats").textContent().catch(() => "");
+    if (wireText) console.log(`smoke-globe: capnwasm wire = ${JSON.stringify(wireText)}`);
       const preview = (await page.locator("#bubble-preview").textContent()) ?? "";
       const trimmed = preview.length > 80 ? preview.slice(0, 80) + "…" : preview;
       console.log(`smoke-globe: ${lang.padEnd(7)} → ${JSON.stringify(trimmed)}`);
