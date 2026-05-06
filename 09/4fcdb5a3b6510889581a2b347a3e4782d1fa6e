@@ -1,0 +1,31 @@
+web/dist/data/countries.geojson
+  a40863a2008f4bc3 1
+web/dist/metrics/build.json
+  a40863a2008f4bc3 2
+web/src/playground/globe-renderer.ts
+  a40863a2008f4bc3 45,47,49-58,91-99,103-104,109,113-125,148-154,160-168,188-189
+web/dist/playground.html
+  a40863a2008f4bc3 17
+web/dist/data/cf-endpoints.json
+  a40863a2008f4bc3 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "094fcdb5a3b6510889581a2b347a3e4782d1fa6e",
+  "prompts": {
+    "a40863a2008f4bc3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2155161a6ffey5envZOwE0ngec",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "teamchong",
+      "messages": [],
+      "total_additions": 296,
+      "total_deletions": 265,
+      "accepted_lines": 296,
+      "overriden_lines": 0
+    }
+  }
+}
