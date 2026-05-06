@@ -11,7 +11,7 @@
   <meta property="og:type" content="website" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="capnwasm — Cap'n Proto for the browser" />
-  <meta name="twitter:description" content="Real Cap'n Proto C++ in the browser. Live RPC bench in the playground." />
+  <meta name="twitter:description" content="Real Cap'n Proto C++ in the browser. Cloudflare's API on a globe in the playground." />
   <meta name="twitter:image" content="/og-image.svg" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="stylesheet" href="./src/site-nav.css" />
@@ -154,13 +154,15 @@
       </a>
 
       <a href="./playground" class="demo-card">
-        <div class="demo-icon">&#x26A1;</div>
-        <div class="demo-title">Fetch + RPC details</div>
+        <div class="demo-icon">&#x1F30D;</div>
+        <div class="demo-title">Cloudflare API on a globe</div>
         <div class="demo-desc">
-          The landing page runs the quick version. Open the playground for the full
-          fetch/decode/render table; use the RPC page when you need longer WebSocket runs.
+          All 2,920 Cloudflare API endpoints as dots on the globe. Pick one,
+          write a formatter in JS / Python / Ruby / Go, watch the result
+          bubble out at that PoP. Mocked responses are encoded + decoded
+          through <code>capnp.slim.wasm</code> so capnwasm is on the live read path.
         </div>
-        <span class="demo-tag">Live benches</span>
+        <span class="demo-tag">Live demo</span>
       </a>
 
       <a href="./chat" class="demo-card">

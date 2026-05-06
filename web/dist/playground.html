@@ -3,26 +3,33 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>capnwasm playground &mdash; Cloudflare API on a globe</title>
-  <meta name="description" content="Cloudflare's API as a globe of endpoints. Pick one, write a function in JS / Python / Ruby / Go, watch the result bubble out at that endpoint's geographic spot." />
-  <meta property="og:title" content="capnwasm playground — Cloudflare API on a globe" />
-  <meta property="og:description" content="One OpenAPI spec, four languages, live in your browser." />
+  <title>capnwasm playground &mdash; multi-language chatroom over Cap'n Proto</title>
+  <meta name="description" content="A chatroom where every agent runs in a different language (TS, Python, Ruby, Go, Java). They all decode the same Cap'n Proto wire bytes via capnwasm and reply in their own idiom. Language doesn't matter for interop." />
+  <meta property="og:title" content="capnwasm playground — multi-language chatroom over Cap'n Proto" />
+  <meta property="og:description" content="Each agent randomly assigned a language. They talk to each other. The wire is the lingua franca." />
   <meta property="og:image" content="/og-image.svg" />
   <meta property="og:type" content="website" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="capnwasm playground" />
-  <meta name="twitter:description" content="Cloudflare's API on an orange globe." />
+  <meta name="twitter:description" content="A chatroom where every agent speaks a different language. They all speak Cap'n Proto." />
   <meta name="twitter:image" content="/og-image.svg" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <script type="module" crossorigin src="/assets/playground-DeQ2hiJP.js"></script>
+  <script type="module" crossorigin src="/assets/playground-DlZt16SW.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/main-Cu9W4HMG.js">
-  <link rel="modulepreload" crossorigin href="/assets/preload-helper-CLcXU_4U.js">
+  <link rel="modulepreload" crossorigin href="/assets/browser--mmGreQ4.js">
+  <link rel="modulepreload" crossorigin href="/assets/dynamic-D4jjy1bG.js">
   <link rel="stylesheet" crossorigin href="/assets/main-DrXRrRXI.css">
-  <link rel="stylesheet" crossorigin href="/assets/playground-DQaqtJPA.css">
+  <link rel="stylesheet" crossorigin href="/assets/playground-B86vJHTe.css">
 </head>
 <body>
-  <header id="globe-header">
+  <header id="chat-header">
     <h1><a href="./"><span class="brand-capn">capn</span><span class="brand-wasm">wasm</span></a> <span class="page-title">playground</span></h1>
+    <p class="subtitle">
+      A chatroom where every agent runs in a different language. They all decode
+      the same Cap&apos;n Proto wire bytes through capnwasm and reply in their own
+      runtime&apos;s idiom. Pythons, Rubys, Gos, JavaScripts and friends — different
+      languages, one wire format, one conversation.
+    </p>
     <nav class="site-nav" aria-label="Site sections">
       <a href="./">&larr; Landing</a><span class="sep">&middot;</span>
       <a href="./playground" aria-current="page">Playground</a><span class="sep">&middot;</span>
@@ -39,7 +46,7 @@
 
   <noscript>
     <p style="background:#2a1a16;border:1px solid #5a2c1f;border-radius:10px;padding:12px 16px;color:#ffa726;font-size:0.85rem;margin:16px;">
-      JavaScript is required for the globe demo. The rest of the site
+      JavaScript is required for the chatroom. The rest of the site
       (<a href="./" style="color:inherit;text-decoration:underline">landing</a>,
       <a href="./vs-capnweb" style="color:inherit;text-decoration:underline">vs capnweb</a>,
       <a href="./inspect" style="color:inherit;text-decoration:underline">wire inspector</a>)
@@ -47,61 +54,48 @@
     </p>
   </noscript>
 
-  <main id="globe-app">
-    <!-- Three.js / globe.gl mounts here. -->
-    <div id="globe-canvas" aria-label="Globe of Cloudflare API endpoints"></div>
-
-    <!-- Inspector panel: search + selected-endpoint detail. -->
-    <aside id="inspector" aria-label="Endpoint inspector">
-      <header class="inspector-header">
-        <input type="search" id="endpoint-search" placeholder="Filter endpoints (path, tag, operation)" autocomplete="off" />
-        <span id="endpoint-count" class="endpoint-count">&hellip;</span>
-      </header>
-      <div id="endpoint-list" class="endpoint-list" role="listbox" aria-label="Endpoints"></div>
-      <div id="endpoint-detail" class="endpoint-detail" hidden>
-        <div class="endpoint-detail-header">
-          <span id="detail-verb" class="verb"></span>
-          <code id="detail-path" class="path"></code>
-        </div>
-        <p id="detail-summary" class="summary"></p>
-        <div id="detail-tags" class="tags"></div>
-      </div>
+  <main id="chat-app">
+    <aside id="chat-roster" aria-label="Agents in the room">
+      <h2 class="roster-heading">In the room</h2>
+      <ul id="roster-list" class="roster-list"></ul>
+      <button id="roster-shuffle" type="button" class="roster-shuffle" title="Re-roll language assignments">
+        Re-roll languages
+      </button>
+      <p class="roster-note">
+        Each agent picks a language at page load. Re-roll to see another assignment.
+        All agents speak Cap&apos;n Proto regardless of which language they run.
+      </p>
     </aside>
 
-    <!-- Editor panel: language tabs + Monaco editor + bubble preview. -->
-    <section id="editor-panel" aria-label="Live SDK editor">
-      <header class="editor-header">
-        <div class="lang-tabs" role="tablist" aria-label="Language">
-          <button role="tab" data-lang="js"     class="lang-tab" aria-selected="true">JavaScript</button>
-          <button role="tab" data-lang="python" class="lang-tab">Python</button>
-          <button role="tab" data-lang="ruby"   class="lang-tab">Ruby</button>
-          <button role="tab" data-lang="go"     class="lang-tab">Go</button>
-        </div>
-        <div class="editor-status">
-          <span id="runtime-status" class="runtime-status">JS runtime ready.</span>
-          <button id="fire-btn" class="fire-btn" disabled>Fire</button>
-        </div>
-      </header>
-      <div id="editor-mount" class="editor-mount"></div>
-      <div id="capnwasm-wire" class="capnwasm-wire" hidden>
-        <span class="capnwasm-wire-label">capnwasm wire:</span>
-        <span id="capnwasm-wire-stats" class="capnwasm-wire-stats">—</span>
-      </div>
-      <footer class="editor-footer">
-        <span class="footer-label">Bubble output:</span>
-        <output id="bubble-preview" class="bubble-preview">&mdash;</output>
-      </footer>
+    <section id="chat-thread" aria-live="polite" aria-label="Chat thread">
+      <p id="chat-empty" class="chat-empty">
+        Send a message. Every agent decodes it from Cap&apos;n Proto wire bytes,
+        replies in its own language, and other agents may chime in on what was
+        said. Language is randomized on every page load.
+      </p>
     </section>
 
-    <!-- Bubble layer: HTML overlays positioned over the globe. -->
-    <div id="bubble-layer" aria-hidden="true"></div>
-  </main>
+    <form id="chat-form" autocomplete="off">
+      <input
+        id="chat-input"
+        type="text"
+        name="message"
+        placeholder="Say something..."
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        required
+      />
+      <button id="chat-send" type="submit">Send</button>
+    </form>
 
-  <p id="globe-disclaimer" class="globe-disclaimer">
-    Mocked responses come from <code>openapi.json</code>'s own examples; no
-    real Cloudflare API call is made. Want real calls? Run the generated SDK
-    locally with your token.
-  </p>
+    <p id="chat-disclaimer" class="chat-disclaimer">
+      Each agent runs its language&apos;s wasm runtime; the wire format between
+      every participant is Cap&apos;n Proto encoded by
+      <code>capnp.slim.wasm</code>. Same schema, different decoders.
+      <span id="wire-stats" class="wire-stats"></span>
+    </p>
+  </main>
 
 </body>
 </html>
